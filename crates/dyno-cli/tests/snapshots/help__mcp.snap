@@ -1,0 +1,15 @@
+---
+source: crates/dyno-cli/tests/help.rs
+expression: "help(&[\"mcp\", \"--help\"])"
+---
+[phase 3] Serve check, compare and read_result to an MCP client on stdin and stdout
+
+Usage: dyno mcp
+
+Options:
+  -h, --help  Print help
+
+Exit codes:
+  0   the client closed stdin
+  64  usage error
+  70  the MCP session did not start, or failed

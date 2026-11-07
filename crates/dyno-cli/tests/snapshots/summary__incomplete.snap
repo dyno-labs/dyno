@@ -1,0 +1,14 @@
+---
+source: crates/dyno-cli/tests/summary.rs
+expression: summary(&outcome)
+---
+dyno check: incomplete: static.render.antialias is missing (no render config found in the scripts), and 4 more causes
+estimated from the build:
+  textures decoded: 0.0 MB
+  audio decoded at 48 kHz: at least 0.0 MB
+  audio decoded at 24 kHz: at least 0.0 MB
+  canvas: missing (no render config found in the scripts)
+  files: 3, build size: under 0.1 MB, compressed text: under 0.1 MB
+budgets: no budget file, so the rules use their default limits
+full result: the JSON on stdout. Use --out FILE to write it to a file.
+result_hash: [hash]

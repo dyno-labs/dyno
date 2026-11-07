@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-54.38 -64 673 414" width="673" height="414" role="img" aria-labelledby="t">
+<title id="t">dyno</title>
+<defs>
+  <linearGradient id="dyno-heat" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="544" y2="0"><stop offset="0" stop-color="#7A1006"/><stop offset="0.28" stop-color="#D2230E"/><stop offset="0.52" stop-color="#FF6A16"/><stop offset="0.74" stop-color="#FFB640"/><stop offset="0.9" stop-color="#FFE7A6"/><stop offset="1" stop-color="#FFF8E6"/></linearGradient>
+  <linearGradient id="dyno-core" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="544" y2="0"><stop offset="0" stop-color="#FFC27A" stop-opacity="0"/><stop offset=".45" stop-color="#FFD9A0" stop-opacity=".25"/><stop offset="1" stop-color="#FFFFFF" stop-opacity=".95"/></linearGradient>
+  <filter id="dyno-glow" x="-.2" y="-.3" width="1.4" height="1.6" color-interpolation-filters="sRGB">
+    <feGaussianBlur in="SourceGraphic" stdDeviation="18" result="wide"/>
+    <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="near"/>
+    <feMerge><feMergeNode in="wide"/><feMergeNode in="near"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+  <filter id="dyno-soft" x="-.1" y="-.1" width="1.2" height="1.2"><feGaussianBlur stdDeviation="3"/></filter>
+</defs>
+<g filter="url(#dyno-glow)">
+<g fill="url(#dyno-heat)">
+<g transform="translate(35.27 0) skewX(-10)">
+<path d="M0 140a60 60 0 1 1 120 0a60 60 0 1 1-120 0ZM32 140a28 28 0 1 0 56 0a28 28 0 1 0-56 0Z" fill-rule="evenodd"/>
+  <path d="M88 0H120V200H88Z"/>
+  <path d="M142 80H174V141H142Z"/>
+  <path d="M142 140A60 60 0 0 0 262 140H230A28 28 0 0 1 174 140Z"/>
+  <path d="M230 80H262V227H230Z"/>
+  <path d="M262 226A60 60 0 0 1 202 286V254A28 28 0 0 0 230 226Z"/>
+  <path d="M170 254H203V286H170Z"/>
+  <path d="M284 139H316V200H284Z"/>
+  <path d="M372 139H404V200H372Z"/>
+  <path d="M284 140A60 60 0 0 1 404 140H372A28 28 0 0 0 316 140Z"/>
+</g>
+<g transform="translate(10.58 0) rotate(10 484 140)">
+  <path d="M441.57 182.43A60 60 0 0 1 526.43 97.57L503.8 120.2A28 28 0 0 0 464.2 159.8Z"/>
+  <path d="M533.15 105.59A60 60 0 0 1 526.43 182.43L503.8 159.8A28 28 0 0 0 506.94 123.94Z"/>
+  <path d="M485.04 144.89L507.54 140.11L505.46 130.33L482.96 135.11Z"/>
+  <path d="M473 140a11 11 0 1 1 22 0a11 11 0 1 1 -22 0Z"/>
+</g>
+</g>
+<g fill="none" stroke="url(#dyno-core)" stroke-width="9" filter="url(#dyno-soft)"><g transform="translate(35.27 0) skewX(-10)"><circle cx="60" cy="140" r="44"/><path d="M104 0V200"/><path d="M158 80V140A44 44 0 0 0 246 140"/><path d="M246 80V226A44 44 0 0 1 202 270H170"/><path d="M300 200V140A44 44 0 0 1 388 140V200"/></g><g transform="translate(10.58 0) rotate(10 484 140)"><path d="M452.89 171.11A44 44 0 0 1 515.11 108.89"/><path d="M520.04 114.76A44 44 0 0 1 515.11 171.11"/></g></g>
+<g fill="none" stroke="#FFFFFF" stroke-opacity=".85" stroke-width="3" stroke-linecap="round" filter="url(#dyno-soft)"><g transform="translate(10.58 0) rotate(10 484 140)"><path d="M484 140L504.54 135.63"/></g></g>
+</g>
+</svg>

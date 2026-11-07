@@ -1,0 +1,239 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Budget",
+  "description": "A budget file.",
+  "type": "object",
+  "properties": {
+    "audio": {
+      "$ref": "#/$defs/AudioBudget",
+      "default": {
+        "decoded_mb": null,
+        "silence_saving_mb": null,
+        "silence_share_bp": null,
+        "stereo_saving_mb": null
+      }
+    },
+    "files": {
+      "$ref": "#/$defs/FilesBudget",
+      "default": {
+        "duplicate": null
+      }
+    },
+    "name": {
+      "description": "A name to recognise the file by. The result records it.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "render": {
+      "$ref": "#/$defs/RenderBudget",
+      "default": {
+        "antialias": null,
+        "resolution_uncapped": null
+      }
+    },
+    "schema_version": {
+      "description": "The file format version. Must equal the schema version this dyno reads.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "textures": {
+      "$ref": "#/$defs/TextureBudget",
+      "default": {
+        "decoded_mb": null
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "schema_version"
+  ],
+  "$defs": {
+    "AudioBudget": {
+      "description": "Audio budgets.",
+      "type": "object",
+      "properties": {
+        "decoded_mb": {
+          "description": "Decoded audio at 48 kHz, in MB.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SizeLimit"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "silence_saving_mb": {
+          "description": "The `audio.silence_share` rule's threshold on the decoded MB at 48 kHz in a sprite map's\nuncovered time.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SizeLimit"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "silence_share_bp": {
+          "description": "The `audio.silence_share` rule's threshold on a sprite map's share of time that no sprite\ncovers. A map is over it only when it is also over `silence_saving_mb`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ShareLimit"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "stereo_saving_mb": {
+          "description": "The `audio.stereo` rule's threshold: decoded MB at 48 kHz that a mono export of every\nstereo sound would save.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SizeLimit"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "FilesBudget": {
+      "description": "Rule thresholds for the build's files.",
+      "type": "object",
+      "properties": {
+        "duplicate": {
+          "description": "The `files.duplicate` rule's outcome when two or more files have the same SHA-256.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Severity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "RenderBudget": {
+      "description": "Render config budgets.",
+      "type": "object",
+      "properties": {
+        "antialias": {
+          "description": "The verdict when the bundle turns antialias on.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Severity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "resolution_uncapped": {
+          "description": "The verdict when the bundle leaves the resolution uncapped.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Severity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "Severity": {
+      "description": "The verdict a flag gives when it is on.",
+      "type": "string",
+      "enum": [
+        "allow",
+        "warn",
+        "fail"
+      ]
+    },
+    "ShareLimit": {
+      "description": "A share limit in basis points: 10,000 is 100%. A value above `warn` warns, and a value above\n`fail` fails.",
+      "type": "object",
+      "properties": {
+        "fail": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "default": null,
+          "minimum": 0
+        },
+        "warn": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "default": null,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "SizeLimit": {
+      "description": "A size limit in whole MB. A value above `warn` warns, and a value above `fail` fails.",
+      "type": "object",
+      "properties": {
+        "fail": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "default": null,
+          "minimum": 0
+        },
+        "warn": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "default": null,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "TextureBudget": {
+      "description": "Texture budgets.",
+      "type": "object",
+      "properties": {
+        "decoded_mb": {
+          "description": "Decoded textures, one copy, in MB.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SizeLimit"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

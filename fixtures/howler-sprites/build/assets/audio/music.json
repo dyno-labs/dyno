@@ -1,0 +1,7 @@
+{
+  "src": ["assets/audio/music.m4a"],
+  "sprite": {
+    "base": [0, 4000, true],
+    "bonus": [5000, 2000, true]
+  }
+}

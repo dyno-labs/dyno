@@ -1,0 +1,120 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+# The CDP feasibility spike is its own Cargo package and never joins the workspace.
+exclude = ["spikes"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "MIT OR Apache-2.0"
+# Nothing goes to crates.io yet: cargo-dist releases the binary only.
+publish = false
+# cargo-dist names it in release links.
+repository = "https://github.com/dyno-labs/dyno"
+
+[workspace.dependencies]
+# Our crates.
+dyno-cdp = { path = "crates/dyno-cdp" }
+dyno-ios = { path = "crates/dyno-ios" }
+dyno-run = { path = "crates/dyno-run" }
+dyno-schema = { path = "crates/dyno-schema" }
+dyno-score = { path = "crates/dyno-score" }
+dyno-static = { path = "crates/dyno-static" }
+
+# Used by the skeleton.
+clap = { version = "4.6.7", features = ["derive"] }
+humantime = "2.4.0"
+schemars = "1.2.3"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+serde_json_canonicalizer = "0.4.1"
+sha2 = "0.11.1"
+thiserror = "2.0.21"
+toml = "1.2.0"
+ts-rs = "12.0.1"
+url = "2.5.8"
+
+# Test only.
+insta = { version = "1.49.0", features = ["json", "redactions"] }
+tempfile = "3.27.0"
+
+# The static scan, from docs/design/static-scan.md section 10. oxc changes its API between
+# minor versions, so its crates are pinned exactly.
+brotli = "9.1.1"
+flate2 = "1.1.10"
+html5gum = "0.9.1"
+imagesize = "0.15.0"
+ktx2 = "0.5.0"
+memchr = "2.8.3"
+oxc_allocator = "=0.157.0"
+oxc_ast = "=0.157.0"
+oxc_ast_visit = "=0.157.0"
+oxc_parser = "=0.157.0"
+oxc_semantic = "=0.157.0"
+oxc_span = "=0.157.0"
+walkdir = "2.5.0"
+# Reads deflate zips through flate2. zip's "deflate" feature would switch flate2 to zlib-rs, and
+# the fixtures' gzip sizes assume flate2's default miniz_oxide backend.
+zip = { version = "9.4.0", default-features = false, features = ["deflate-flate2"] }
+# Decodes audio for the stereo and silence analysis. MPL-2.0: its files are used unmodified, and
+# THIRD_PARTY_NOTICES.md says where their source is. Only the codecs and containers the audio scan
+# reads; symphonia has no Opus decoder.
+symphonia = { version = "0.6.1", default-features = false, features = ["aac", "adpcm", "isomp4", "mkv", "mp3", "ogg", "pcm", "vorbis", "wav"] }
+
+# Planned for later steps. Declared here so parallel work
+# does not edit this file. Unused entries are not built.
+chromiumoxide_cdp = "0.9.1"
+quick-xml = "0.42.0"
+
+# The CDP driver. Raw CDP over one WebSocket, with our own message envelope: the CDP feasibility
+# test found that chromiumoxide_types drops the top-level sessionId of flat sessions.
+futures-util = { version = "0.3.31", default-features = false, features = ["sink", "std"] }
+tokio = { version = "1.54.1", features = ["io-util", "macros", "net", "process", "rt", "sync", "time"] }
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect"] }
+
+# `dyno mcp`, the MCP server: the official MCP Rust SDK. Only the server, its
+# tool macros and the stdio transport.
+rmcp = { version = "3.9.0", default-features = false, features = ["macros", "server", "transport-io"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+# The release build cargo-dist makes.
+[profile.dist]
+inherits = "release"
+lto = "thin"
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+# The byte scan compresses every text file with brotli at quality 11 and gzip at level 9. Without
+# optimisation the byte tests take twice as long in a debug build.
+[profile.dev.package.brotli]
+opt-level = 3
+
+[profile.dev.package.alloc-no-stdlib]
+opt-level = 3
+
+[profile.dev.package.miniz_oxide]
+opt-level = 3
+
+# The audio analysis decodes every fixture sound, which is slow without optimisation.
+[profile.dev.package.symphonia-core]
+opt-level = 3
+
+[profile.dev.package.symphonia-bundle-mp3]
+opt-level = 3
+
+[profile.dev.package.symphonia-codec-vorbis]
+opt-level = 3
+
+[profile.dev.package.symphonia-codec-aac]
+opt-level = 3

@@ -1,0 +1,18 @@
+---
+source: crates/dyno-cli/tests/summary.rs
+expression: summary(&outcome)
+---
+dyno check: warn: 1 rule warns
+estimated from the build:
+  textures decoded: 0.0 MB to 0.2 MB
+  audio decoded at 48 kHz: at least 0.1 MB
+  audio decoded at 24 kHz: at least 0.0 MB
+  canvas: unsupported (no canvas: the game draws with HTML and CSS)
+  files: 11, build size: under 0.1 MB, compressed text: under 0.1 MB
+warn files.duplicate: some files are copies of other files
+  audio/click-old.mp3 and its copies: keep only the one the game loads, saves under 0.1 MB to download and 0.1 MB decoded
+  a/coin.png and its copies: keep only the one the game loads, saves under 0.1 MB to download and under 0.1 MB decoded
+  data/config.backup.json and its copies: keep only the one the game loads, saves under 0.1 MB to download and 0.0 MB decoded
+budgets: no budget file, so the rules use their default limits
+full result: the JSON on stdout. Use --out FILE to write it to a file.
+result_hash: [hash]

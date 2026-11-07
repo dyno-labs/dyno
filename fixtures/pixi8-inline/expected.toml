@@ -1,0 +1,305 @@
+# Expected static scan values for fixtures/pixi8-inline/build.
+# Pixi v8 bundle inlined in index.html (SvelteKit style), antialias on, resolution uncapped, web-sdk markers, external URLs.
+# Formulas: docs/design/static-scan.md. Byte counts are integers. File lists are sorted by path
+# (byte order). A Howler src list keeps its written order, because Howler plays the first format it can.
+# Each test reads only its own top-level table. Do not edit by hand without re-deriving.
+fixture = "pixi8-inline"
+input = "build"
+
+[profile]
+# The reference profile: an iPhone 17 frame at DPR 3. Tests pass these to the model, so a profile change only moves numbers.
+dpr_milli = 3000
+frame_css = [402, 874]
+webgpu = false
+
+[inventory]
+file_count = 9
+total_bytes = 722863
+build_id = "1cc000e7cafba3a141931d6ba8411d06343ae5ff1e8154a854eba268396b7519"
+
+[[inventory.file]]
+path = "assets/app.css"
+bytes = 237
+bucket = "css"
+sha256 = "49dab85ab41ae651ce573af8d670ab40a65f42f3e76623ec94301e62d14d2cd6"
+
+[[inventory.file]]
+path = "assets/audio/sounds.json"
+bytes = 95
+bucket = "data"
+sha256 = "d048816246326420d17ce813469423d9d6f4dce1f49e014af5997b0bfc3c5ec5"
+
+[[inventory.file]]
+path = "assets/audio/sounds.m4a"
+bytes = 21015
+bucket = "audio"
+sha256 = "b84a6f6b0ae4e68ff5a4a89e591cc559a9909e729fc1d0b51f88d81a7a84a072"
+
+[[inventory.file]]
+path = "assets/fonts/fixture.woff2"
+bytes = 64
+bucket = "font"
+sha256 = "77f0cff0ba0defa4534099c58466af38d0208351b1da3adc2d3f1fec3da24410"
+
+[[inventory.file]]
+path = "assets/images/bg-1280x720.jpg"
+bytes = 34241
+bucket = "image"
+sha256 = "2d7f5190c296f44c324bafd7d6f9d88c674b213c979d6099fc427dc51527fc00"
+
+[[inventory.file]]
+path = "assets/images/reels-2048x2048.png"
+bytes = 21289
+bucket = "image"
+sha256 = "c44011a97c2f96df698e399ef2517a39d92fd08c7a41b81cc9311537271b76c3"
+
+[[inventory.file]]
+path = "assets/images/symbols-1024x512.webp"
+bytes = 15198
+bucket = "image"
+sha256 = "ff8c94207796f8e1bf59d702a600b282fcb7caa627e1a962d65227ab7ee8d13f"
+
+[[inventory.file]]
+path = "assets/video/loader.mp4"
+bytes = 3644
+bucket = "video"
+sha256 = "6bf30e4da1be12620b300c686d50f6dbc6415fb6d152d779eb20e10bcf6723cb"
+
+[[inventory.file]]
+path = "index.html"
+bytes = 627080
+bucket = "html"
+sha256 = "3ba872aa041248e1625ecc781b01ce94cce5084ec9f3d7f3459c2247418e1e83"
+
+[bytes]
+# gzip: flate2 level 9, gzip member with a 10 byte header and no name. brotli: quality 11, lgwin 22.
+# Compressed sizes exist only for js, css, html and data. They are exact for the pinned crate versions.
+
+[bytes.css]
+files = 1
+bytes = 237
+gzip_bytes = 190
+brotli_bytes = 148
+
+[bytes.html]
+files = 1
+bytes = 627080
+gzip_bytes = 183401
+brotli_bytes = 151705
+
+[bytes.image]
+files = 3
+bytes = 70728
+
+[bytes.audio]
+files = 1
+bytes = 21015
+
+[bytes.video]
+files = 1
+bytes = 3644
+
+[bytes.font]
+files = 1
+bytes = 64
+
+[bytes.data]
+files = 1
+bytes = 95
+gzip_bytes = 105
+brotli_bytes = 94
+
+[audio]
+# decoded_bytes_R = ceil(ticks * R / tick_rate) * channels * 4, for R = 48000 and 24000.
+
+[[audio.file]]
+path = "assets/audio/sounds.m4a"
+status = "estimated"
+container = "mp4"
+codec = "aac"
+channels = 1
+ticks = 132300
+tick_rate = 44100
+decoded_bytes_48k = 576000
+decoded_bytes_24k = 288000
+# A sound group is one sound in several formats (same folder and stem, or one Howler src list).
+# It counts once, at its largest member. Ties go to the first path.
+
+[[audio.group]]
+paths = ["assets/audio/sounds.m4a"]
+representative = "assets/audio/sounds.m4a"
+channels = 1
+decoded_bytes_48k = 576000
+decoded_bytes_24k = 288000
+silence_bp = 1967
+
+[audio.total]
+silence_by_decode_bp = 1967
+status = "estimated"
+decoded_bytes_48k = 576000
+decoded_bytes_24k = 288000
+not_covered = []
+
+[sprites]
+# silence_us = duration_us - union of sprite ranges clipped to the file. duration_us = floor(ticks * 1e6 / tick_rate).
+# silence_bp = floor(silence_us * 10000 / duration_us). silence_bytes_48k = floor(decoded_bytes_48k * silence_us / duration_us).
+
+[[sprites.map]]
+source = "assets/audio/sounds.json"
+kind = "howler"
+status = "estimated"
+audio = ["assets/audio/sounds.m4a"]
+representative = "assets/audio/sounds.m4a"
+sprite_count = 1
+duration_us = 3000000
+covered_us = 2400000
+silence_us = 600000
+silence_bp = 2000
+silence_bytes_48k = 115200
+
+[textures]
+engine_for_mips = "pixi8"
+# gpu_bytes: raster = sum over levels of w * h * 4; Basis (ETC1S, UASTC) = ASTC 4x4 = sum of ceil(w/4) * ceil(h/4) * 16;
+# raw KTX2 = sum of level uncompressed lengths. Mips: Pixi v7 power of two images, Spine pages with a MipMap filter, KTX2 and Basis levels.
+
+[[textures.file]]
+path = "assets/images/bg-1280x720.jpg"
+status = "estimated"
+format = "jpeg"
+width = 1280
+height = 720
+levels = 1
+mips = "none"
+gpu_format = "rgba8"
+gpu_bytes = 3686400
+astc_bytes = 921600
+
+[[textures.file]]
+path = "assets/images/reels-2048x2048.png"
+status = "estimated"
+format = "png"
+width = 2048
+height = 2048
+levels = 1
+mips = "none"
+gpu_format = "rgba8"
+gpu_bytes = 16777216
+astc_bytes = 4194304
+
+[[textures.file]]
+path = "assets/images/symbols-1024x512.webp"
+status = "estimated"
+format = "webp"
+width = 1024
+height = 512
+levels = 1
+mips = "none"
+gpu_format = "rgba8"
+gpu_bytes = 2097152
+astc_bytes = 524288
+
+[textures.total]
+status = "estimated"
+lo_bytes = 22560768
+hi_bytes = 45121536
+top5 = ["assets/images/reels-2048x2048.png", "assets/images/bg-1280x720.jpg", "assets/images/symbols-1024x512.webp"]
+not_covered = []
+
+[bundle]
+scanned = ["index.html"]
+invalid = []
+
+[bundle.versions]
+# A missing key means not detected. web_sdk_version is always unsupported: its packages are 0.0.0.
+pixi = "8.22.0"
+howler = "2.2.4"
+web_sdk = true
+web_sdk_version = "unsupported"
+
+[[bundle.render_site]]
+file = "index.html"
+callee = "init"
+antialias = true
+antialias_from = "literal"
+resolution_milli = 3000
+resolution_from = "devicePixelRatio"
+preference = "webgl"
+modelled_as = "webgl"
+auto_density = true
+size_from = "resizeTo"
+canvas_css = [402, 874]
+canvas_backing = [1206, 2622]
+canvas_pixels = 3162132
+canvas_bytes = 12648528
+
+[bundle.external]
+hosts = ["api.example.invalid", "cdn.example.invalid", "fonts.googleapis.com", "fonts.gstatic.com", "live.example.invalid"]
+dynamic_host_sites = 1
+
+[[bundle.external.url]]
+url = "//cdn.example.invalid/bg/stars.png"
+sources = ["assets/app.css"]
+
+[[bundle.external.url]]
+url = "https://api.example.invalid/v1/config"
+sources = ["index.html"]
+
+[[bundle.external.url]]
+url = "https://cdn.example.invalid/brand/logo.png"
+sources = ["index.html"]
+
+[[bundle.external.url]]
+url = "https://fonts.googleapis.com/css2"
+sources = ["index.html"]
+
+[[bundle.external.url]]
+url = "https://fonts.gstatic.com"
+sources = ["index.html"]
+
+[[bundle.external.url]]
+url = "wss://live.example.invalid/feed"
+sources = ["index.html"]
+
+[duplicates]
+# Groups of byte-identical files (same SHA-256), sorted by first path. Empty files never form a group.
+# wasted_bytes = (n - 1) * size. decoded_bytes_saved = (n - 1) * gpu_bytes (images) or decoded_bytes_48k (audio).
+group_count = 0
+
+[rules]
+# Default thresholds are proposals (docs/design/static-scan.md, section Rules). saved_bytes is what the fix text promises.
+
+[rules."audio.pcm_over_budget"]
+outcome = "pass"
+value_bytes = 576000
+saved_bytes = 288000
+
+[rules."audio.stereo"]
+outcome = "pass"
+value_bytes = 0
+saved_bytes = 0
+items = []
+
+[rules."audio.silence_share"]
+outcome = "pass"
+value_bp = 2000
+saved_bytes = 0
+items = []
+
+[rules."render.antialias_or_resolution"]
+outcome = "warn"
+value_bytes = 12648528
+saved_bytes = 7026960
+items = ["index.html"]
+
+[rules."textures.over_budget"]
+outcome = "pass"
+value_bytes = 22560768
+saved_bytes = 16920576
+items = ["assets/images/reels-2048x2048.png", "assets/images/bg-1280x720.jpg", "assets/images/symbols-1024x512.webp"]
+
+[rules."files.duplicate"]
+outcome = "pass"
+value_groups = 0
+saved_bytes = 0
+saved_decoded_bytes = 0
+items = []

@@ -1,0 +1,20 @@
+# A budget for the CLI tests. It sets every key, so every verdict shows. Rule thresholds give no
+# verdict.
+schema_version = 0
+name = "tiny"
+
+[audio]
+decoded_mb = { warn = 64, fail = 128 }
+stereo_saving_mb = { warn = 4 }
+silence_share_bp = { warn = 1000 }
+silence_saving_mb = { warn = 1 }
+
+[textures]
+decoded_mb = { fail = 256 }
+
+[render]
+antialias = "warn"
+resolution_uncapped = "fail"
+
+[files]
+duplicate = "warn"

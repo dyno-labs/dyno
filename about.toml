@@ -1,0 +1,61 @@
+# cargo-about: the third-party notices that ship with the binary. Regenerate with
+#   cargo about generate --fail about.hbs --output-file THIRD_PARTY_NOTICES.md
+# CI checks that the committed file is current. The allowed licences match deny.toml.
+accepted = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "MIT",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+# Only what ships: dev and build dependencies are not in the binary.
+ignore-dev-dependencies = true
+ignore-build-dependencies = true
+# Our own crates (`publish = false`) are not third-party code, so they get no notice.
+private = { ignore = true }
+
+# symphonia, the audio decoder, is MPL-2.0: used unmodified, with its source linked from the
+# notices. Only these crates may use it, as in deny.toml.
+[symphonia]
+accepted = ["MPL-2.0"]
+
+[symphonia-bundle-mp3]
+accepted = ["MPL-2.0"]
+
+[symphonia-codec-aac]
+accepted = ["MPL-2.0"]
+
+[symphonia-codec-adpcm]
+accepted = ["MPL-2.0"]
+
+[symphonia-codec-pcm]
+accepted = ["MPL-2.0"]
+
+[symphonia-codec-vorbis]
+accepted = ["MPL-2.0"]
+
+[symphonia-common]
+accepted = ["MPL-2.0"]
+
+[symphonia-core]
+accepted = ["MPL-2.0"]
+
+[symphonia-format-isomp4]
+accepted = ["MPL-2.0"]
+
+[symphonia-format-mkv]
+accepted = ["MPL-2.0"]
+
+[symphonia-format-ogg]
+accepted = ["MPL-2.0"]
+
+[symphonia-format-riff]
+accepted = ["MPL-2.0"]
+
+[symphonia-metadata]
+accepted = ["MPL-2.0"]
+

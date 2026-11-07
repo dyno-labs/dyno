@@ -1,0 +1,24 @@
+# An example dyno budget file. Copy it, then change the numbers to your own.
+# The numbers are examples to start from, not agreed limits.
+# Each value is an estimate from the build's files, not a measure of iPhone memory.
+# 1 MB here is 1,048,576 bytes. 1 bp (basis point) is 0.01%.
+# A key marked "rule threshold" tunes a rule's finding, which explains and suggests a fix. The other keys also give a budget verdict. A finding or verdict that warns or fails sets the status.
+
+schema_version = 0  # dyno rejects a format version it does not read, so old files fail loudly.
+name = "example"    # Each result records this name, so a reader knows which budgets applied.
+
+[audio]  # Decoded audio is often the biggest part: one long track can decode to 100 MB.
+decoded_mb = { warn = 64, fail = 128 }  # PCM at 48 kHz. Howler decodes a whole sprite at load, so every second counts.
+stereo_saving_mb = { warn = 4 }  # Rule threshold. A stereo file decodes to twice a mono one, and game sounds rarely need stereo.
+silence_share_bp = { warn = 1000 }  # Rule threshold. Howler decodes a sprite file whole, so time no sprite covers costs memory for nothing.
+silence_saving_mb = { warn = 1 }    # Rule threshold. A sprite map warns only above both silence keys, so a short file with a long gap stays quiet.
+
+[textures]  # Images decode to width x height x 4 bytes, whatever their size on the wire.
+decoded_mb = { warn = 160, fail = 256 }  # One copy, with the mip levels the engine makes. Above this, shrink or GPU-compress textures.
+
+[render]  # Canvas buffers grow with the pixel ratio, and the reference iPhone's is 3.
+antialias = "warn"            # Antialias multiplies the canvas buffer. Warn, because some games need it.
+resolution_uncapped = "warn"  # An uncapped resolution renders at the full 3x. Capping at 2 saves more than half the buffer.
+
+[files]  # Every file costs download bytes, and decoded bytes again when the game loads it.
+duplicate = "warn"  # Rule threshold: the severity when any file has a copy. A copy of a file costs its bytes twice, and its decoded bytes twice if the game loads both.

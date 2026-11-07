@@ -1,0 +1,19 @@
+---
+source: crates/dyno-cli/tests/help.rs
+expression: "help(&[\"doctor\", \"--help\"])"
+---
+[phase 2] Check that this Mac can run the game on an iPhone
+
+Usage: dyno doctor [OPTIONS]
+
+Options:
+      --out <FILE>  [phase 2] Write the JSON report to FILE instead of stdout
+  -h, --help        Print help
+
+Exit codes:
+  0   pass, or warn
+  1   fail: a budget or rule fails
+  2   incomplete: a required measure is missing, or a budget or rule could not be checked
+  3   invalid: a required measure or an input result failed its own check
+  64  usage or config error
+  70  internal or I/O error

@@ -1,0 +1,40 @@
+[package]
+name = "dyno-cli"
+description = "The dyno command line."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+# Every crate has `publish = false`, which cargo-dist reads as "do not release"; the binary is
+# the one thing it does release.
+[package.metadata.dist]
+dist = true
+
+[[bin]]
+name = "dyno"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+dyno-cdp.workspace = true
+dyno-ios.workspace = true
+dyno-run.workspace = true
+dyno-schema.workspace = true
+dyno-score.workspace = true
+dyno-static.workspace = true
+humantime.workspace = true
+rmcp.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

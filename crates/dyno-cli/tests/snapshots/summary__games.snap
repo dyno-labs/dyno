@@ -1,0 +1,9 @@
+---
+source: crates/dyno-cli/tests/summary.rs
+expression: outcome.stderr
+---
+dyno check --games: incomplete
+  games checked: 2
+  tiny: incomplete: static.render.antialias is missing (no render config found in the scripts), and 4 more causes
+  tiny-online: incomplete: lab.audio.context_rate is missing (the cdp driver failed (run): DYNO_CHROMIUM names no-chromium-in-tests, which is not a file), and 16 more causes
+full result: the JSON on stdout. Use --out FILE to write it to a file.

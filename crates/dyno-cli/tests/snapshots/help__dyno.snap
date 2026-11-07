@@ -1,0 +1,31 @@
+---
+source: crates/dyno-cli/tests/help.rs
+expression: "help(&[\"--help\"])"
+---
+Predicts how much memory an HTML5 game in an iframe will use on an iPhone, from its build.
+
+Each command but mcp writes one canonical JSON result to stdout, or to --out. A short summary for people goes to stderr. It has no stable format, so do not parse it.
+
+Usage: dyno <COMMAND>
+
+Commands:
+  check    [phase 1] Check a build folder, a launch URL, or every game in a games file
+  compare  [phase 1] Diff two result files from `dyno check`
+  doctor   [phase 2] Check that this Mac can run the game on an iPhone
+  mcp      [phase 3] Serve check, compare and read_result to an MCP client on stdin and stdout
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+Exit codes:
+  0   pass, or warn
+  1   fail: a budget or rule fails
+  2   incomplete: a required measure is missing, or a budget or rule could not be checked
+  3   invalid: a required measure or an input result failed its own check
+  64  usage or config error
+  70  internal or I/O error

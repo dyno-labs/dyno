@@ -1,0 +1,11 @@
+# A games file for the CLI tests: one build and one launch URL.
+schema_version = 0
+
+[[game]]
+id = "tiny"
+build = "tiny-build"
+release = "v1"
+
+[[game]]
+id = "tiny-online"
+launch_url = "https://games.example/tiny/index.html?session=secret"

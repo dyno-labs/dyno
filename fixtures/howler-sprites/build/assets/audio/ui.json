@@ -1,0 +1,7 @@
+{
+  "resources": ["ui.ogg", "ui.mp3"],
+  "spritemap": {
+    "tap": { "start": 0, "end": 0.25, "loop": false },
+    "error": { "start": 1.25, "end": 1.75, "loop": false }
+  }
+}

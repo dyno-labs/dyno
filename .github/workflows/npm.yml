@@ -1,0 +1,36 @@
+# Publishes the TypeScript types in ts/ to npm as @dyno-labs/schema, from the same tag as the
+# binary release. Off until the repository variable NPM_PUBLISH is "true" and npm trusts this
+# workflow (trusted publishing, so no npm token is stored). See docs/releasing.md.
+name: npm
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish @dyno-labs/schema
+    if: vars.NPM_PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      # npm trusted publishing and provenance.
+      id-token: write
+    defaults:
+      run:
+        working-directory: ts
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+      # The package version must be the release's version, without the "v".
+      - run: test "v$(node -p 'require("./package.json").version')" = "${GITHUB_REF_NAME}"
+        if: github.event_name == 'release'
+      - run: npm publish --provenance --access public

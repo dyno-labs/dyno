@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="9.62 0 545 286" width="545" height="286" role="img" aria-labelledby="t">
+<title id="t">dyno</title>
+<g fill="#0B0B0E">
+<g transform="translate(35.27 0) skewX(-10)">
+<path d="M0 140a60 60 0 1 1 120 0a60 60 0 1 1-120 0ZM32 140a28 28 0 1 0 56 0a28 28 0 1 0-56 0Z" fill-rule="evenodd"/>
+  <path d="M88 0H120V200H88Z"/>
+  <path d="M142 80H174V141H142Z"/>
+  <path d="M142 140A60 60 0 0 0 262 140H230A28 28 0 0 1 174 140Z"/>
+  <path d="M230 80H262V227H230Z"/>
+  <path d="M262 226A60 60 0 0 1 202 286V254A28 28 0 0 0 230 226Z"/>
+  <path d="M170 254H203V286H170Z"/>
+  <path d="M284 139H316V200H284Z"/>
+  <path d="M372 139H404V200H372Z"/>
+  <path d="M284 140A60 60 0 0 1 404 140H372A28 28 0 0 0 316 140Z"/>
+</g>
+<g transform="translate(10.58 0) rotate(10 484 140)">
+  <path d="M441.57 182.43A60 60 0 0 1 526.43 97.57L503.8 120.2A28 28 0 0 0 464.2 159.8Z"/>
+  <path d="M533.15 105.59A60 60 0 0 1 526.43 182.43L503.8 159.8A28 28 0 0 0 506.94 123.94Z"/>
+  <path d="M485.04 144.89L507.54 140.11L505.46 130.33L482.96 135.11Z"/>
+  <path d="M473 140a11 11 0 1 1 22 0a11 11 0 1 1 -22 0Z"/>
+</g>
+</g>
+</svg>

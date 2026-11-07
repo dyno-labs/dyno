@@ -1,0 +1,22 @@
+{
+  "name": "@dyno-labs/schema",
+  "version": "0.1.0",
+  "description": "TypeScript types for the JSON that dyno writes: check results, compare results, the runner protocol and the probe events.",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dyno-labs/dyno.git",
+    "directory": "ts"
+  },
+  "type": "module",
+  "types": "./index.ts",
+  "exports": {
+    ".": {
+      "types": "./index.ts"
+    }
+  },
+  "files": [
+    "*.ts"
+  ],
+  "sideEffects": false
+}

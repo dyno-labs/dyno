@@ -1,0 +1,15 @@
+hero.png
+size: 1024, 1024
+filter: Linear, Linear
+pma: true
+body
+bounds: 0, 0, 512, 512
+head
+bounds: 512, 0, 256, 256
+
+hero_2.png
+size: 512, 256
+filter: MipMapLinearLinear, Linear
+pma: true
+cape
+bounds: 0, 0, 512, 256

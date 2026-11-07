@@ -1,0 +1,257 @@
+# Expected static scan values for fixtures/over-budget/build.
+# Small files with large decoded sizes, so the audio, stereo and texture rules fire at the default thresholds.
+# Formulas: docs/design/static-scan.md. Byte counts are integers. File lists are sorted by path
+# (byte order). A Howler src list keeps its written order, because Howler plays the first format it can.
+# Each test reads only its own top-level table. Do not edit by hand without re-deriving.
+fixture = "over-budget"
+input = "build"
+
+[profile]
+# The reference profile: an iPhone 17 frame at DPR 3. Tests pass these to the model, so a profile change only moves numbers.
+dpr_milli = 3000
+frame_css = [402, 874]
+webgpu = false
+
+[inventory]
+file_count = 8
+total_bytes = 367987
+build_id = "f648d882e49d29d7c6f681d124d8fbd4712136870fb2d3d60021795442f30f79"
+
+[[inventory.file]]
+path = "assets/music/loop-stereo.ogg"
+bytes = 36624
+bucket = "audio"
+sha256 = "83a5985ca3421141bdf80be36250b94dfc90fbc6e9ab722b71655638c9c5830b"
+
+[[inventory.file]]
+path = "assets/textures/big-1-4096x4096.png"
+bytes = 75869
+bucket = "image"
+sha256 = "3b6101fcd340811446e26ae6285d517da4b28023e0aeb37da4502b3df1dc8ef0"
+
+[[inventory.file]]
+path = "assets/textures/big-2-4096x4096.png"
+bytes = 75869
+bucket = "image"
+sha256 = "25efaabfe95a68d68ac731653a60d2ac09acde176e7954cab5c6b0a635066027"
+
+[[inventory.file]]
+path = "assets/textures/big-3-4096x4096.png"
+bytes = 75869
+bucket = "image"
+sha256 = "0e3e4927cca3287ac32e0ed268d40190626579afde6dcf3e3b030b98661911ba"
+
+[[inventory.file]]
+path = "assets/textures/big-4-4096x4096.png"
+bytes = 75869
+bucket = "image"
+sha256 = "b4a71efcca0a1e08c414fe1d05c68abb96e4221c71e4d807e62be13fbfd2b2f9"
+
+[[inventory.file]]
+path = "assets/textures/mid-2048x2048.png"
+bytes = 21290
+bucket = "image"
+sha256 = "a2f53635f9cf3f11a5c0bea80c6a66449528f44ddba935a6bebf1f4e54f344e6"
+
+[[inventory.file]]
+path = "assets/textures/small-1024x1024.png"
+bytes = 6540
+bucket = "image"
+sha256 = "a085b24154623698ad52eb2aa376ba27a6778c40dab6d1abc659d65119ac149d"
+
+[[inventory.file]]
+path = "index.html"
+bytes = 57
+bucket = "html"
+sha256 = "46e2cf65dc2cb2f27cc77f36c9aa70c886c1cf94e6b66fa3357e35044cd551dc"
+
+[bytes]
+# gzip: flate2 level 9, gzip member with a 10 byte header and no name. brotli: quality 11, lgwin 22.
+# Compressed sizes exist only for js, css, html and data. They are exact for the pinned crate versions.
+
+[bytes.html]
+files = 1
+bytes = 57
+gzip_bytes = 80
+brotli_bytes = 52
+
+[bytes.image]
+files = 6
+bytes = 331306
+
+[bytes.audio]
+files = 1
+bytes = 36624
+
+[audio]
+# decoded_bytes_R = ceil(ticks * R / tick_rate) * channels * 4, for R = 48000 and 24000.
+
+[[audio.file]]
+path = "assets/music/loop-stereo.ogg"
+status = "estimated"
+container = "ogg"
+codec = "vorbis"
+channels = 2
+ticks = 15876000
+tick_rate = 44100
+decoded_bytes_48k = 138240000
+decoded_bytes_24k = 69120000
+# A sound group is one sound in several formats (same folder and stem, or one Howler src list).
+# It counts once, at its largest member. Ties go to the first path.
+
+[[audio.group]]
+paths = ["assets/music/loop-stereo.ogg"]
+representative = "assets/music/loop-stereo.ogg"
+channels = 2
+decoded_bytes_48k = 138240000
+decoded_bytes_24k = 69120000
+silence_bp = 10000
+stereo_class = "safe_to_make_mono"
+
+[audio.total]
+silence_by_decode_bp = 10000
+status = "estimated"
+decoded_bytes_48k = 138240000
+decoded_bytes_24k = 69120000
+not_covered = []
+
+[textures]
+engine_for_mips = "unknown"
+# gpu_bytes: raster = sum over levels of w * h * 4; Basis (ETC1S, UASTC) = ASTC 4x4 = sum of ceil(w/4) * ceil(h/4) * 16;
+# raw KTX2 = sum of level uncompressed lengths. Mips: Pixi v7 power of two images, Spine pages with a MipMap filter, KTX2 and Basis levels.
+
+[[textures.file]]
+path = "assets/textures/big-1-4096x4096.png"
+status = "estimated"
+format = "png"
+width = 4096
+height = 4096
+levels = 1
+mips = "none"
+gpu_format = "rgba8"
+gpu_bytes = 67108864
+astc_bytes = 16777216
+
+[[textures.file]]
+path = "assets/textures/big-2-4096x4096.png"
+status = "estimated"
+format = "png"
+width = 4096
+height = 4096
+levels = 1
+mips = "none"
+gpu_format = "rgba8"
+gpu_bytes = 67108864
+astc_bytes = 16777216
+
+[[textures.file]]
+path = "assets/textures/big-3-4096x4096.png"
+status = "estimated"
+format = "png"
+width = 4096
+height = 4096
+levels = 1
+mips = "none"
+gpu_format = "rgba8"
+gpu_bytes = 67108864
+astc_bytes = 16777216
+
+[[textures.file]]
+path = "assets/textures/big-4-4096x4096.png"
+status = "estimated"
+format = "png"
+width = 4096
+height = 4096
+levels = 1
+mips = "none"
+gpu_format = "rgba8"
+gpu_bytes = 67108864
+astc_bytes = 16777216
+
+[[textures.file]]
+path = "assets/textures/mid-2048x2048.png"
+status = "estimated"
+format = "png"
+width = 2048
+height = 2048
+levels = 1
+mips = "none"
+gpu_format = "rgba8"
+gpu_bytes = 16777216
+astc_bytes = 4194304
+
+[[textures.file]]
+path = "assets/textures/small-1024x1024.png"
+status = "estimated"
+format = "png"
+width = 1024
+height = 1024
+levels = 1
+mips = "none"
+gpu_format = "rgba8"
+gpu_bytes = 4194304
+astc_bytes = 1048576
+
+[textures.total]
+status = "estimated"
+lo_bytes = 289406976
+hi_bytes = 578813952
+top5 = ["assets/textures/big-1-4096x4096.png", "assets/textures/big-2-4096x4096.png", "assets/textures/big-3-4096x4096.png", "assets/textures/big-4-4096x4096.png", "assets/textures/mid-2048x2048.png"]
+not_covered = []
+
+[bundle]
+scanned = []
+invalid = []
+# A page with no script, engine or external URL draws with HTML and CSS: no canvas.
+draws_with_html = true
+
+[bundle.versions]
+# A missing key means not detected. web_sdk_version is always unsupported: its packages are 0.0.0.
+web_sdk = false
+
+[bundle.external]
+hosts = []
+dynamic_host_sites = 0
+
+[duplicates]
+# Groups of byte-identical files (same SHA-256), sorted by first path. Empty files never form a group.
+# wasted_bytes = (n - 1) * size. decoded_bytes_saved = (n - 1) * gpu_bytes (images) or decoded_bytes_48k (audio).
+group_count = 0
+
+[rules]
+# Default thresholds are proposals (docs/design/static-scan.md, section Rules). saved_bytes is what the fix text promises.
+
+[rules."audio.pcm_over_budget"]
+outcome = "fail"
+value_bytes = 138240000
+saved_bytes = 69120000
+
+[rules."audio.stereo"]
+outcome = "warn"
+value_bytes = 69120000
+saved_bytes = 69120000
+items = ["assets/music/loop-stereo.ogg"]
+
+[rules."audio.silence_share"]
+outcome = "pass"
+value_bp = 0
+saved_bytes = 0
+items = []
+
+[rules."render.antialias_or_resolution"]
+outcome = "pass"
+value_bytes = 0
+saved_bytes = 0
+
+[rules."textures.over_budget"]
+outcome = "fail"
+value_bytes = 289406976
+saved_bytes = 213909504
+items = ["assets/textures/big-1-4096x4096.png", "assets/textures/big-2-4096x4096.png", "assets/textures/big-3-4096x4096.png", "assets/textures/big-4-4096x4096.png", "assets/textures/mid-2048x2048.png"]
+
+[rules."files.duplicate"]
+outcome = "pass"
+value_groups = 0
+saved_bytes = 0
+saved_decoded_bytes = 0
+items = []

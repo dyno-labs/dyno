@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GamesFile",
+  "description": "A games file: the games a catalogue run checks.",
+  "type": "object",
+  "properties": {
+    "game": {
+      "description": "One `[[game]]` table per game.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/GameEntry"
+      }
+    },
+    "schema_version": {
+      "description": "The file format version. Must equal the schema version this dyno reads.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "game"
+  ],
+  "$defs": {
+    "GameEntry": {
+      "description": "One game in a games file. It needs a build, a launch URL or both.",
+      "type": "object",
+      "properties": {
+        "build": {
+          "description": "The build folder or .zip, relative to the games file.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "id": {
+          "description": "Unique in the file. Shards split the games in id order.",
+          "type": "string"
+        },
+        "launch_url": {
+          "description": "An http or https URL, checked when the file loads.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "release": {
+          "description": "The release version label for the result.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id"
+      ]
+    }
+  }
+}

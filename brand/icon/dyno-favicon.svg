@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-labelledby="t">
+<title id="t">dyno</title>
+<defs><linearGradient id="dyno-icon-heat" gradientUnits="userSpaceOnUse" x1="424" y1="200" x2="544" y2="80"><stop offset="0" stop-color="#D2230E"/><stop offset="0.35" stop-color="#FF6A16"/><stop offset="0.65" stop-color="#FFB640"/><stop offset="0.86" stop-color="#FFE7A6"/><stop offset="1" stop-color="#FFF8E6"/></linearGradient></defs>
+<rect width="64" height="64" rx="14" fill="#0B0B0E"/>
+<g transform="translate(-161.6 -24) scale(0.4)"><g fill="url(#dyno-icon-heat)">
+  <g transform="rotate(10 484 140)"><path d="M441.57 182.43A60 60 0 1 1 526.43 182.43L503.8 159.8A28 28 0 1 0 464.2 159.8Z"/><path d="M485.66 147.83L511.1 142.42L507.77 126.77L482.34 132.17Z"/><path d="M470 140a14 14 0 1 1 28 0a14 14 0 1 1 -28 0Z"/></g>
+</g></g>
+</svg>

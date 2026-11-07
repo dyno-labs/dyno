@@ -1,0 +1,6 @@
+{
+  "src": ["./assets/audio/sounds.m4a"],
+  "sprite": {
+    "base_loop": [0, 2400, true]
+  }
+}

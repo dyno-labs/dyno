@@ -1,0 +1,17 @@
+---
+source: crates/dyno-cli/tests/summary.rs
+expression: summary(&outcome)
+---
+dyno check: warn: 1 rule warns
+estimated from the build:
+  textures decoded: 8.9 MB to 18.0 MB
+  audio decoded at 48 kHz: at least 0.0 MB
+  audio decoded at 24 kHz: at least 0.0 MB
+  canvas: at least 12.0 MB
+  files: 5, build size: 0.5 MB, compressed text: 0.1 MB
+warn render.antialias_or_resolution: antialias is on, or the resolution is not capped
+  cap the resolution, saves 6.7 MB
+  turn antialias off, saving not known until a device run
+budgets: no budget file, so the rules use their default limits
+full result: the JSON on stdout. Use --out FILE to write it to a file.
+result_hash: [hash]

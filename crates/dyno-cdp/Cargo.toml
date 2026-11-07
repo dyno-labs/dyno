@@ -1,0 +1,26 @@
+[package]
+name = "dyno-cdp"
+description = "The Rust CDP driver: attaches to the cross-origin game frame and injects the probe."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+dyno-run.workspace = true
+dyno-schema.workspace = true
+futures-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+flate2.workspace = true
+
+[lints]
+workspace = true

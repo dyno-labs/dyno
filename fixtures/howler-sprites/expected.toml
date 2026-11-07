@@ -1,0 +1,293 @@
+# Expected static scan values for fixtures/howler-sprites/build.
+# Three Howler sprite maps with known silence: a literal in the bundle, a Howler JSON and an audiosprite JSON.
+# Formulas: docs/design/static-scan.md. Byte counts are integers. File lists are sorted by path
+# (byte order). A Howler src list keeps its written order, because Howler plays the first format it can.
+# Each test reads only its own top-level table. Do not edit by hand without re-deriving.
+fixture = "howler-sprites"
+input = "build"
+
+[profile]
+# The reference profile: an iPhone 17 frame at DPR 3. Tests pass these to the model, so a profile change only moves numbers.
+dpr_milli = 3000
+frame_css = [402, 874]
+webgpu = false
+
+[inventory]
+file_count = 9
+total_bytes = 237794
+build_id = "9d686f75f211118b698766c9375895ee016f41d7386be856cbbd73c3e858014f"
+
+[[inventory.file]]
+path = "assets/audio/music.json"
+bytes = 120
+bucket = "data"
+sha256 = "5f3e0927dcd3e9343dbb3b3218f2a07c1951d486c9559f24af3bf6b0471dd7dc"
+
+[[inventory.file]]
+path = "assets/audio/music.m4a"
+bytes = 76163
+bucket = "audio"
+sha256 = "687c6f40ce37e0fe9b17ada0cdc12047c5e13f8592d0f9405e02cebbe4ec28ef"
+
+[[inventory.file]]
+path = "assets/audio/sfx.mp3"
+bytes = 72744
+bucket = "audio"
+sha256 = "6080d2f3a921ace7b7cf8d602cd685a2f93d63162a5a9f9e27e014da22cf9224"
+
+[[inventory.file]]
+path = "assets/audio/sfx.webm"
+bytes = 41120
+bucket = "audio"
+sha256 = "a8030836fe1c0ac6dbc8b0a83fedb0b1b7c3e3033589a2720b7c53d2506ac668"
+
+[[inventory.file]]
+path = "assets/audio/ui.json"
+bytes = 176
+bucket = "data"
+sha256 = "964f4fe23fbe27213c1d7476c40c44b40a7b47c1e466e66384e24a76ca9ea35f"
+
+[[inventory.file]]
+path = "assets/audio/ui.mp3"
+bytes = 4524
+bucket = "audio"
+sha256 = "ad950971bb73f09f8476d3c860f74c3d8d09d84636871d9ac71df63a3447ae49"
+
+[[inventory.file]]
+path = "assets/audio/ui.ogg"
+bytes = 4846
+bucket = "audio"
+sha256 = "ecefde7f6cce838a79484697cfdb5c46f97f3ca1134b61baaa020f7ebd739d4f"
+
+[[inventory.file]]
+path = "index.html"
+bytes = 241
+bucket = "html"
+sha256 = "252614aa600f8e65d3a662a4ee8a0dbcca30dbec45a4b18c8f59bae231b46477"
+
+[[inventory.file]]
+path = "main.js"
+bytes = 37860
+bucket = "js"
+sha256 = "99e0fe4f71714cd8f7456482b50154b052bee36023bf431c5aa6d9f56f8251dc"
+
+[bytes]
+# gzip: flate2 level 9, gzip member with a 10 byte header and no name. brotli: quality 11, lgwin 22.
+# Compressed sizes exist only for js, css, html and data. They are exact for the pinned crate versions.
+
+[bytes.js]
+files = 1
+bytes = 37860
+gzip_bytes = 10443
+brotli_bytes = 9377
+
+[bytes.html]
+files = 1
+bytes = 241
+gzip_bytes = 184
+brotli_bytes = 98
+
+[bytes.audio]
+files = 5
+bytes = 199397
+
+[bytes.data]
+files = 2
+bytes = 296
+gzip_bytes = 239
+brotli_bytes = 217
+
+[audio]
+# decoded_bytes_R = ceil(ticks * R / tick_rate) * channels * 4, for R = 48000 and 24000.
+
+[[audio.file]]
+path = "assets/audio/music.m4a"
+status = "estimated"
+container = "mp4"
+codec = "aac"
+channels = 2
+ticks = 352800
+tick_rate = 44100
+decoded_bytes_48k = 3072000
+decoded_bytes_24k = 1536000
+
+[[audio.file]]
+path = "assets/audio/sfx.mp3"
+status = "estimated"
+container = "mp3"
+codec = "mp3"
+channels = 2
+ticks = 264600
+tick_rate = 44100
+decoded_bytes_48k = 2304000
+decoded_bytes_24k = 1152000
+
+[[audio.file]]
+path = "assets/audio/sfx.webm"
+status = "estimated"
+container = "webm"
+codec = "opus"
+channels = 2
+ticks = 6001500
+tick_rate = 1000000
+decoded_bytes_48k = 2304576
+decoded_bytes_24k = 1152288
+
+[[audio.file]]
+path = "assets/audio/ui.mp3"
+status = "estimated"
+container = "mp3"
+codec = "mp3"
+channels = 1
+ticks = 44100
+tick_rate = 22050
+decoded_bytes_48k = 384000
+decoded_bytes_24k = 192000
+
+[[audio.file]]
+path = "assets/audio/ui.ogg"
+status = "estimated"
+container = "ogg"
+codec = "vorbis"
+channels = 1
+ticks = 44100
+tick_rate = 22050
+decoded_bytes_48k = 384000
+decoded_bytes_24k = 192000
+# A sound group is one sound in several formats (same folder and stem, or one Howler src list).
+# It counts once, at its largest member. Ties go to the first path.
+
+[[audio.group]]
+paths = ["assets/audio/music.m4a"]
+representative = "assets/audio/music.m4a"
+channels = 2
+decoded_bytes_48k = 3072000
+decoded_bytes_24k = 1536000
+silence_bp = 2475
+stereo_class = "changes_the_sound"
+
+[[audio.group]]
+paths = ["assets/audio/sfx.mp3", "assets/audio/sfx.webm"]
+representative = "assets/audio/sfx.webm"
+channels = 2
+decoded_bytes_48k = 2304576
+decoded_bytes_24k = 1152288
+decoded_from = "assets/audio/sfx.mp3"
+silence_bp = 6250
+stereo_class = "changes_the_sound"
+
+[[audio.group]]
+paths = ["assets/audio/ui.mp3", "assets/audio/ui.ogg"]
+representative = "assets/audio/ui.mp3"
+channels = 1
+decoded_bytes_48k = 384000
+decoded_bytes_24k = 192000
+silence_bp = 6119
+
+[audio.total]
+silence_by_decode_bp = 4347
+status = "estimated"
+decoded_bytes_48k = 5760576
+decoded_bytes_24k = 2880288
+not_covered = []
+
+[sprites]
+# silence_us = duration_us - union of sprite ranges clipped to the file. duration_us = floor(ticks * 1e6 / tick_rate).
+# silence_bp = floor(silence_us * 10000 / duration_us). silence_bytes_48k = floor(decoded_bytes_48k * silence_us / duration_us).
+
+[[sprites.map]]
+source = "main.js"
+kind = "howler"
+status = "estimated"
+audio = ["assets/audio/sfx.webm", "assets/audio/sfx.mp3"]
+representative = "assets/audio/sfx.webm"
+sprite_count = 3
+duration_us = 6001500
+covered_us = 2250000
+silence_us = 3751500
+silence_bp = 6250
+silence_bytes_48k = 1440576
+
+[[sprites.map]]
+source = "assets/audio/music.json"
+kind = "howler"
+status = "estimated"
+audio = ["assets/audio/music.m4a"]
+representative = "assets/audio/music.m4a"
+sprite_count = 2
+duration_us = 8000000
+covered_us = 6000000
+silence_us = 2000000
+silence_bp = 2500
+silence_bytes_48k = 768000
+
+[[sprites.map]]
+source = "assets/audio/ui.json"
+kind = "audiosprite"
+status = "estimated"
+audio = ["assets/audio/ui.ogg", "assets/audio/ui.mp3"]
+representative = "assets/audio/ui.mp3"
+sprite_count = 2
+duration_us = 2000000
+covered_us = 750000
+silence_us = 1250000
+silence_bp = 6250
+silence_bytes_48k = 240000
+
+[bundle]
+scanned = ["main.js"]
+invalid = []
+# Howler plays audio and draws nothing, and the page has no canvas: it draws with HTML and CSS.
+draws_with_html = true
+
+[bundle.versions]
+# A missing key means not detected. web_sdk_version is always unsupported: its packages are 0.0.0.
+howler = "2.2.4"
+web_sdk = false
+
+[bundle.external]
+hosts = []
+dynamic_host_sites = 0
+
+[duplicates]
+# Groups of byte-identical files (same SHA-256), sorted by first path. Empty files never form a group.
+# wasted_bytes = (n - 1) * size. decoded_bytes_saved = (n - 1) * gpu_bytes (images) or decoded_bytes_48k (audio).
+group_count = 0
+
+[rules]
+# Default thresholds are proposals (docs/design/static-scan.md, section Rules). saved_bytes is what the fix text promises.
+
+[rules."audio.pcm_over_budget"]
+outcome = "pass"
+value_bytes = 5760576
+saved_bytes = 2880288
+
+[rules."audio.stereo"]
+outcome = "pass"
+value_bytes = 2688288
+saved_bytes = 2688288
+items = ["assets/audio/music.m4a", "assets/audio/sfx.webm"]
+
+[rules."audio.silence_share"]
+outcome = "warn"
+value_bp = 6250
+saved_bytes = 1440576
+items = ["main.js"]
+
+[rules."render.antialias_or_resolution"]
+outcome = "pass"
+value_bytes = 0
+saved_bytes = 0
+
+[rules."textures.over_budget"]
+outcome = "pass"
+value_bytes = 0
+saved_bytes = 0
+items = []
+
+[rules."files.duplicate"]
+outcome = "pass"
+value_groups = 0
+saved_bytes = 0
+saved_decoded_bytes = 0
+items = []

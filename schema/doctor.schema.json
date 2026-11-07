@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DoctorReport",
+  "description": "The output of `dyno doctor`.",
+  "type": "object",
+  "properties": {
+    "checks": {
+      "description": "Sorted by check id.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/DoctorCheck"
+      }
+    },
+    "phase": {
+      "description": "The plan phase that builds `doctor`.",
+      "type": "integer",
+      "format": "uint8",
+      "maximum": 255,
+      "minimum": 0
+    },
+    "schema_version": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "status": {
+      "description": "Pass when every check passes. Incomplete while a check is not built.",
+      "$ref": "#/$defs/Status"
+    }
+  },
+  "required": [
+    "schema_version",
+    "phase",
+    "status",
+    "checks"
+  ],
+  "$defs": {
+    "DoctorCheck": {
+      "description": "One doctor check.",
+      "type": "object",
+      "properties": {
+        "detail": {
+          "description": "What the check found, such as the Xcode version. Null when it found nothing.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "$ref": "#/$defs/DoctorCheckId"
+        },
+        "phase": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "reason": {
+          "description": "Why the verdict is incomplete. Null otherwise.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "verdict": {
+          "$ref": "#/$defs/Verdict"
+        }
+      },
+      "required": [
+        "id",
+        "verdict",
+        "phase"
+      ]
+    },
+    "DoctorCheckId": {
+      "description": "The things `doctor` checks. Declared in alphabetical order, so checks sort by name.",
+      "oneOf": [
+        {
+          "description": "An iPhone is connected.",
+          "type": "string",
+          "const": "device_connection"
+        },
+        {
+          "description": "The iPhone trusts this Mac, and Developer Mode and Web Inspector are on.",
+          "type": "string",
+          "const": "device_trust"
+        },
+        {
+          "description": "Xcode and its command line tools, with xctrace and devicectl.",
+          "type": "string",
+          "const": "xcode"
+        }
+      ]
+    },
+    "Status": {
+      "description": "The overall status of a result. The exit code comes from it alone.\n\nWhen several statuses apply, the worst wins. From worst to best: fail, invalid, incomplete,\nwarn, pass. The variants below are not declared in that order.",
+      "oneOf": [
+        {
+          "description": "None of the other statuses applies.",
+          "type": "string",
+          "const": "pass"
+        },
+        {
+          "description": "A budget or a static rule warns. Nothing fails.",
+          "type": "string",
+          "const": "warn"
+        },
+        {
+          "description": "A budget or a static rule fails. Nothing offsets a fail.",
+          "type": "string",
+          "const": "fail"
+        },
+        {
+          "description": "A required measure is missing or absent from the result, a budget could not be checked, or\na static rule could not be checked because a value from the build is missing. Never a pass.",
+          "type": "string",
+          "const": "incomplete"
+        },
+        {
+          "description": "A required measure failed its check, such as a run whose frame DPR was not 3, or a measure\nin the result does not fit the check.",
+          "type": "string",
+          "const": "invalid"
+        }
+      ]
+    },
+    "Verdict": {
+      "description": "The outcome of one budget, rule or doctor check.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "pass",
+            "warn",
+            "fail"
+          ]
+        },
+        {
+          "description": "It could not be checked, because the inputs it needs are missing, invalid or partial.",
+          "type": "string",
+          "const": "incomplete"
+        }
+      ]
+    }
+  }
+}

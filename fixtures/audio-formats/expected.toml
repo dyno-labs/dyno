@@ -1,0 +1,426 @@
+# Expected static scan values for fixtures/audio-formats/build.
+# Every audio format, stereo and mono, from 1 s and 0.5 s tones.
+# Formulas: docs/design/static-scan.md. Byte counts are integers. File lists are sorted by path
+# (byte order). A Howler src list keeps its written order, because Howler plays the first format it can.
+# Each test reads only its own top-level table. Do not edit by hand without re-deriving.
+fixture = "audio-formats"
+input = "build"
+
+[profile]
+# The reference profile: an iPhone 17 frame at DPR 3. Tests pass these to the model, so a profile change only moves numbers.
+dpr_milli = 3000
+frame_css = [402, 874]
+webgpu = false
+
+[inventory]
+file_count = 16
+total_bytes = 327225
+build_id = "e79230a625ae7adf3301d28073936f4b28adf676724a17af3d1643d245a5dfe9"
+
+[[inventory.file]]
+path = "assets/audio/tone-live.webm"
+bytes = 11612
+bucket = "audio"
+sha256 = "3c0dcbd5e23649dc0adb07800106bc7db212bade29cf3bc171922b2274a61b47"
+
+[[inventory.file]]
+path = "assets/audio/tone-mono-22k.mp3"
+bytes = 1998
+bucket = "audio"
+sha256 = "2b7749815462e59fe313f2ca0a042bfa5f9622169f05f33a637d6ff6fc923b73"
+
+[[inventory.file]]
+path = "assets/audio/tone-mono-22k.wav"
+bytes = 22094
+bucket = "audio"
+sha256 = "291233b693dfe129f993402a4df4c03c01b3d3e6aa0668bfe3e029047fa69750"
+
+[[inventory.file]]
+path = "assets/audio/tone-mono.aac"
+bytes = 3543
+bucket = "audio"
+sha256 = "4500d7fa7e3418c7be0f1ea5fa12e8c16d16dee4bf592e453cb4588b3bf6a410"
+
+[[inventory.file]]
+path = "assets/audio/tone-mono.m4a"
+bytes = 4277
+bucket = "audio"
+sha256 = "f0437eaba6ad86ab42ab28952b820a32c01272b8884811dce2b233e9fb151a85"
+
+[[inventory.file]]
+path = "assets/audio/tone-mono.ogg"
+bytes = 4032
+bucket = "audio"
+sha256 = "bb10aef04b201cea7671e7773676d22ee24892bfd1042f71eea052e231174c64"
+
+[[inventory.file]]
+path = "assets/audio/tone-mono.webm"
+bytes = 3519
+bucket = "audio"
+sha256 = "7e1de41f88ead03a260f43b91cb6d9ccef62e9c3a0adb6ed011e613b18a4f15f"
+
+[[inventory.file]]
+path = "assets/audio/tone-noxing.mp3"
+bytes = 16738
+bucket = "audio"
+sha256 = "185349935f470758b941de8fb9d2651192e99bcc55e64dba0f1896b0eef56a32"
+
+[[inventory.file]]
+path = "assets/audio/tone-stereo-44k.wav"
+bytes = 176444
+bucket = "audio"
+sha256 = "b230ab9f8169ab562dd0abec0fbfffb926081e30a5fa25cc37fbe201547f8707"
+
+[[inventory.file]]
+path = "assets/audio/tone-stereo.aac"
+bytes = 16041
+bucket = "audio"
+sha256 = "27b0520cc1ffd97823183cfa4742ec282cd08dc77646583b53b5ca299237eded"
+
+[[inventory.file]]
+path = "assets/audio/tone-stereo.m4a"
+bytes = 16676
+bucket = "audio"
+sha256 = "3c49cad1777179bfd01bc6038f2c24717a5011fe32489b23a1dfe27010f48716"
+
+[[inventory.file]]
+path = "assets/audio/tone-stereo.mp3"
+bytes = 17155
+bucket = "audio"
+sha256 = "d962ec7ecebf306cfe538498dc03290b951a429949123a075fdd5b19c0d2fa4d"
+
+[[inventory.file]]
+path = "assets/audio/tone-stereo.ogg"
+bytes = 7407
+bucket = "audio"
+sha256 = "bfc1183ffceb58d7cf8f7864b56e38121074507e5c3f9546dfd21641c92663d7"
+
+[[inventory.file]]
+path = "assets/audio/tone-stereo.opus"
+bytes = 10973
+bucket = "audio"
+sha256 = "de03f140b6db9e20ef51bc6e4c5f51e31b28064cf19ecd9d414d1533becb8724"
+
+[[inventory.file]]
+path = "assets/audio/tone-stereo.webm"
+bytes = 11675
+bucket = "audio"
+sha256 = "eb68903430f9ffdfcadc89b8e0a33f4b936c37bf8c82495e741ca5b1b5e03dec"
+
+[[inventory.file]]
+path = "assets/audio/voice-mono-opus.ogg"
+bytes = 3041
+bucket = "audio"
+sha256 = "1511437f36d026ca1a06897e014afc83582e770c100ad4648cc0ecb156c643a2"
+
+[bytes]
+# gzip: flate2 level 9, gzip member with a 10 byte header and no name. brotli: quality 11, lgwin 22.
+# Compressed sizes exist only for js, css, html and data. They are exact for the pinned crate versions.
+
+[bytes.audio]
+files = 16
+bytes = 327225
+
+[audio]
+# decoded_bytes_R = ceil(ticks * R / tick_rate) * channels * 4, for R = 48000 and 24000.
+
+[[audio.file]]
+path = "assets/audio/tone-live.webm"
+status = "estimated"
+container = "webm"
+codec = "opus"
+channels = 2
+ticks = 1001500
+tick_rate = 1000000
+decoded_bytes_48k = 384576
+decoded_bytes_24k = 192288
+
+[[audio.file]]
+path = "assets/audio/tone-mono-22k.mp3"
+status = "estimated"
+container = "mp3"
+codec = "mp3"
+channels = 1
+ticks = 11025
+tick_rate = 22050
+decoded_bytes_48k = 96000
+decoded_bytes_24k = 48000
+
+[[audio.file]]
+path = "assets/audio/tone-mono-22k.wav"
+status = "estimated"
+container = "wav"
+codec = "pcm"
+channels = 1
+ticks = 11025
+tick_rate = 22050
+decoded_bytes_48k = 96000
+decoded_bytes_24k = 48000
+
+[[audio.file]]
+path = "assets/audio/tone-mono.aac"
+status = "estimated"
+container = "adts"
+codec = "aac"
+channels = 1
+ticks = 12288
+tick_rate = 22050
+decoded_bytes_48k = 107000
+decoded_bytes_24k = 53500
+
+[[audio.file]]
+path = "assets/audio/tone-mono.m4a"
+status = "estimated"
+container = "mp4"
+codec = "aac"
+channels = 1
+ticks = 11025
+tick_rate = 22050
+decoded_bytes_48k = 96000
+decoded_bytes_24k = 48000
+
+[[audio.file]]
+path = "assets/audio/tone-mono.ogg"
+status = "estimated"
+container = "ogg"
+codec = "vorbis"
+channels = 1
+ticks = 11025
+tick_rate = 22050
+decoded_bytes_48k = 96000
+decoded_bytes_24k = 48000
+
+[[audio.file]]
+path = "assets/audio/tone-mono.webm"
+status = "estimated"
+container = "webm"
+codec = "opus"
+channels = 1
+ticks = 501500
+tick_rate = 1000000
+decoded_bytes_48k = 96288
+decoded_bytes_24k = 48144
+
+[[audio.file]]
+path = "assets/audio/tone-noxing.mp3"
+status = "estimated"
+container = "mp3"
+codec = "mp3"
+channels = 2
+ticks = 46080
+tick_rate = 44100
+decoded_bytes_48k = 401248
+decoded_bytes_24k = 200624
+
+[[audio.file]]
+path = "assets/audio/tone-stereo-44k.wav"
+status = "estimated"
+container = "wav"
+codec = "pcm"
+channels = 2
+ticks = 44100
+tick_rate = 44100
+decoded_bytes_48k = 384000
+decoded_bytes_24k = 192000
+
+[[audio.file]]
+path = "assets/audio/tone-stereo.aac"
+status = "estimated"
+container = "adts"
+codec = "aac"
+channels = 2
+ticks = 46080
+tick_rate = 44100
+decoded_bytes_48k = 401248
+decoded_bytes_24k = 200624
+
+[[audio.file]]
+path = "assets/audio/tone-stereo.m4a"
+status = "estimated"
+container = "mp4"
+codec = "aac"
+channels = 2
+ticks = 44100
+tick_rate = 44100
+decoded_bytes_48k = 384000
+decoded_bytes_24k = 192000
+
+[[audio.file]]
+path = "assets/audio/tone-stereo.mp3"
+status = "estimated"
+container = "mp3"
+codec = "mp3"
+channels = 2
+ticks = 44100
+tick_rate = 44100
+decoded_bytes_48k = 384000
+decoded_bytes_24k = 192000
+
+[[audio.file]]
+path = "assets/audio/tone-stereo.ogg"
+status = "estimated"
+container = "ogg"
+codec = "vorbis"
+channels = 2
+ticks = 44100
+tick_rate = 44100
+decoded_bytes_48k = 384000
+decoded_bytes_24k = 192000
+
+[[audio.file]]
+path = "assets/audio/tone-stereo.opus"
+status = "estimated"
+container = "ogg"
+codec = "opus"
+channels = 2
+ticks = 48000
+tick_rate = 48000
+decoded_bytes_48k = 384000
+decoded_bytes_24k = 192000
+
+[[audio.file]]
+path = "assets/audio/tone-stereo.webm"
+status = "estimated"
+container = "webm"
+codec = "opus"
+channels = 2
+ticks = 1001500
+tick_rate = 1000000
+decoded_bytes_48k = 384576
+decoded_bytes_24k = 192288
+
+[[audio.file]]
+path = "assets/audio/voice-mono-opus.ogg"
+status = "estimated"
+container = "ogg"
+codec = "opus"
+channels = 1
+ticks = 24000
+tick_rate = 48000
+decoded_bytes_48k = 96000
+decoded_bytes_24k = 48000
+# A sound group is one sound in several formats (same folder and stem, or one Howler src list).
+# It counts once, at its largest member. Ties go to the first path.
+
+[[audio.group]]
+paths = ["assets/audio/tone-live.webm"]
+representative = "assets/audio/tone-live.webm"
+channels = 2
+decoded_bytes_48k = 384576
+decoded_bytes_24k = 192288
+not_decoded = "symphonia has no Opus decoder"
+
+[[audio.group]]
+paths = ["assets/audio/tone-mono.aac", "assets/audio/tone-mono.m4a", "assets/audio/tone-mono.ogg", "assets/audio/tone-mono.webm"]
+representative = "assets/audio/tone-mono.aac"
+channels = 1
+decoded_bytes_48k = 107000
+decoded_bytes_24k = 53500
+silence_bp = 0
+
+[[audio.group]]
+paths = ["assets/audio/tone-mono-22k.mp3", "assets/audio/tone-mono-22k.wav"]
+representative = "assets/audio/tone-mono-22k.mp3"
+channels = 1
+decoded_bytes_48k = 96000
+decoded_bytes_24k = 48000
+silence_bp = 0
+
+[[audio.group]]
+paths = ["assets/audio/tone-noxing.mp3"]
+representative = "assets/audio/tone-noxing.mp3"
+channels = 2
+decoded_bytes_48k = 401248
+decoded_bytes_24k = 200624
+silence_bp = 381
+stereo_class = "changes_the_sound"
+
+[[audio.group]]
+paths = ["assets/audio/tone-stereo.aac", "assets/audio/tone-stereo.m4a", "assets/audio/tone-stereo.mp3", "assets/audio/tone-stereo.ogg", "assets/audio/tone-stereo.opus", "assets/audio/tone-stereo.webm"]
+representative = "assets/audio/tone-stereo.aac"
+channels = 2
+decoded_bytes_48k = 401248
+decoded_bytes_24k = 200624
+silence_bp = 190
+stereo_class = "changes_the_sound"
+
+[[audio.group]]
+paths = ["assets/audio/tone-stereo-44k.wav"]
+representative = "assets/audio/tone-stereo-44k.wav"
+channels = 2
+decoded_bytes_48k = 384000
+decoded_bytes_24k = 192000
+silence_bp = 0
+stereo_class = "changes_the_sound"
+
+[[audio.group]]
+paths = ["assets/audio/voice-mono-opus.ogg"]
+representative = "assets/audio/voice-mono-opus.ogg"
+channels = 1
+decoded_bytes_48k = 96000
+decoded_bytes_24k = 48000
+not_decoded = "symphonia has no Opus decoder"
+
+[audio.total]
+silence_by_decode_bp = 144
+status = "estimated"
+decoded_bytes_48k = 1870072
+decoded_bytes_24k = 935036
+not_covered = []
+
+[bundle]
+scanned = []
+invalid = []
+
+[bundle.versions]
+# A missing key means not detected. web_sdk_version is always unsupported: its packages are 0.0.0.
+web_sdk = false
+
+[bundle.external]
+hosts = []
+dynamic_host_sites = 0
+
+[duplicates]
+# Groups of byte-identical files (same SHA-256), sorted by first path. Empty files never form a group.
+# wasted_bytes = (n - 1) * size. decoded_bytes_saved = (n - 1) * gpu_bytes (images) or decoded_bytes_48k (audio).
+group_count = 0
+
+[rules]
+# Default thresholds are proposals (docs/design/static-scan.md, section Rules). saved_bytes is what the fix text promises.
+
+[rules."audio.pcm_over_budget"]
+outcome = "pass"
+value_bytes = 1870072
+saved_bytes = 935036
+
+[rules."audio.stereo"]
+# The three tones decode with 440 Hz left and 660 Hz right, so the text asks for a listen first.
+# The Opus tone does not decode and is judged by its channel count.
+outcome = "pass"
+value_bytes = 785536
+saved_bytes = 785536
+items = ["assets/audio/tone-noxing.mp3", "assets/audio/tone-stereo.aac", "assets/audio/tone-live.webm", "assets/audio/tone-stereo-44k.wav"]
+
+[rules."audio.silence_share"]
+outcome = "pass"
+value_bp = 0
+saved_bytes = 0
+items = []
+
+[rules."render.antialias_or_resolution"]
+outcome = "incomplete"
+reason = "no render config found"
+saved_bytes = 0
+
+[rules."textures.over_budget"]
+outcome = "pass"
+value_bytes = 0
+saved_bytes = 0
+items = []
+
+[rules."files.duplicate"]
+outcome = "pass"
+value_groups = 0
+saved_bytes = 0
+saved_decoded_bytes = 0
+items = []

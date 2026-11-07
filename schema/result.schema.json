@@ -1,0 +1,1645 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CheckResult",
+  "description": "The output of `dyno check` for one target.",
+  "type": "object",
+  "properties": {
+    "deterministic": {
+      "$ref": "#/$defs/Deterministic"
+    },
+    "result_hash": {
+      "description": "Lowercase hex SHA-256 of the RFC 8785 canonical JSON of `deterministic`.",
+      "type": "string"
+    },
+    "run": {
+      "$ref": "#/$defs/RunInfo"
+    },
+    "schema_version": {
+      "description": "Read this first. It bumps only on a breaking change.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "schema_version",
+    "result_hash",
+    "deterministic",
+    "run"
+  ],
+  "$defs": {
+    "BudgetId": {
+      "description": "Every budget a budget file can set. Each id is the key path in the file.",
+      "oneOf": [
+        {
+          "description": "Decoded audio at 48 kHz.",
+          "type": "string",
+          "const": "audio.decoded_mb"
+        },
+        {
+          "description": "Decoded bytes at 48 kHz that a mono export of every stereo sound would save.",
+          "type": "string",
+          "const": "audio.stereo_saving_mb"
+        },
+        {
+          "description": "A sprite map's share of time that no sprite covers.",
+          "type": "string",
+          "const": "audio.silence_share_bp"
+        },
+        {
+          "description": "Decoded bytes at 48 kHz in a sprite map's time that no sprite covers.",
+          "type": "string",
+          "const": "audio.silence_saving_mb"
+        },
+        {
+          "description": "Decoded textures, one copy.",
+          "type": "string",
+          "const": "textures.decoded_mb"
+        },
+        {
+          "description": "Antialias on.",
+          "type": "string",
+          "const": "render.antialias"
+        },
+        {
+          "description": "Resolution uncapped.",
+          "type": "string",
+          "const": "render.resolution_uncapped"
+        },
+        {
+          "description": "Two or more files with the same SHA-256.",
+          "type": "string",
+          "const": "files.duplicate"
+        }
+      ]
+    },
+    "BudgetLimit": {
+      "description": "A budget's limit as a verdict or rule reads it: sizes in bytes, shares in basis points, and\nflags as a severity.",
+      "oneOf": [
+        {
+          "description": "Byte limits. A value above `warn_above` warns, and a value above `fail_above` fails.",
+          "type": "object",
+          "properties": {
+            "fail_above": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "bytes"
+            },
+            "warn_above": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "The verdict when the flag is on.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "flag"
+            },
+            "when_on": {
+              "$ref": "#/$defs/Severity"
+            }
+          },
+          "required": [
+            "kind",
+            "when_on"
+          ]
+        },
+        {
+          "description": "Share limits in basis points. A value above `warn_above` warns, and a value above\n`fail_above` fails.",
+          "type": "object",
+          "properties": {
+            "fail_above": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "basis_points"
+            },
+            "warn_above": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "BudgetRef": {
+      "description": "Which budget file a result used.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "The file's `name`, if it has one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sha256": {
+          "description": "Lowercase hex SHA-256 of the parsed budgets as canonical JSON. The same budgets in TOML\nand JSON give the same hash, and comments do not change it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sha256"
+      ]
+    },
+    "BudgetVerdict": {
+      "description": "The verdict of one budget. Only budgets that `dyno-score` checks get one, never a rule's\nthreshold.",
+      "type": "object",
+      "properties": {
+        "actual": {
+          "description": "The measure's value. Null when it has no usable value: none, a status other than measured\nor estimated, or a bad number.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MeasureValue"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "budget": {
+          "$ref": "#/$defs/BudgetId"
+        },
+        "limit": {
+          "$ref": "#/$defs/BudgetLimit"
+        },
+        "measure": {
+          "$ref": "#/$defs/MeasureId"
+        },
+        "verdict": {
+          "description": "A partial value, one whose scope has a `not_covered` entry, is a floor. It gives a verdict\nonly when the full value could not give a worse one. Otherwise the verdict is incomplete.",
+          "$ref": "#/$defs/Verdict"
+        }
+      },
+      "required": [
+        "budget",
+        "measure",
+        "verdict",
+        "limit"
+      ]
+    },
+    "BuildManifest": {
+      "description": "Every supplied file of one build. `compare` diffs two manifests to find suspect assets.",
+      "type": "object",
+      "properties": {
+        "build_id": {
+          "description": "Lowercase hex SHA-256 over every file's path and SHA-256, sorted by path, so a rename\nchanges it. It is the join key for lab and field rows, and does not cover external URLs.\nNull until the inventory is implemented. docs/design/static-scan.md gives the exact bytes.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "files": {
+          "description": "Sorted by path.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ManifestFile"
+          }
+        }
+      },
+      "required": [
+        "files"
+      ]
+    },
+    "Covers": {
+      "description": "The set of things a value covers.",
+      "oneOf": [
+        {
+          "description": "Every file in the build. An inventory, not an upper bound on memory.",
+          "type": "string",
+          "const": "supplied_files"
+        },
+        {
+          "description": "One load of the game in the harness page, until idle.",
+          "type": "string",
+          "const": "load_to_idle"
+        },
+        {
+          "description": "Spins in a demo-only session.",
+          "type": "string",
+          "const": "demo_spins"
+        },
+        {
+          "description": "Fresh-process runs on the reference iPhone.",
+          "type": "string",
+          "const": "fresh_device_runs"
+        },
+        {
+          "description": "Whatever the model's static and lab inputs cover.",
+          "type": "string",
+          "const": "model_inputs"
+        }
+      ]
+    },
+    "Deterministic": {
+      "description": "Everything the same build, tool version and budget file give on any machine.",
+      "type": "object",
+      "properties": {
+        "build": {
+          "description": "The build's files and id. Null when the check had no build folder, or the inventory has\nnot listed it yet.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BuildManifest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "findings": {
+          "description": "Static rule findings. Sorted by rule id, then by canonical JSON.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Finding"
+          }
+        },
+        "inputs": {
+          "$ref": "#/$defs/Inputs"
+        },
+        "measures": {
+          "description": "Static measures. Sorted by id.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Measure"
+          }
+        },
+        "run_coverage": {
+          "$ref": "#/$defs/RunCoverage"
+        },
+        "status": {
+          "description": "The overall status. The exit code comes from it alone.",
+          "$ref": "#/$defs/Status"
+        },
+        "verdicts": {
+          "description": "One verdict per budget the budget file sets. Sorted by budget id.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BudgetVerdict"
+          }
+        },
+        "versions": {
+          "$ref": "#/$defs/Versions"
+        }
+      },
+      "required": [
+        "versions",
+        "inputs",
+        "status",
+        "run_coverage",
+        "measures",
+        "verdicts",
+        "findings"
+      ]
+    },
+    "DeviceClass": {
+      "description": "The phone class a tier is for.",
+      "oneOf": [
+        {
+          "description": "The Phase 1 reference: an iPhone with 6 GB of memory.",
+          "type": "string",
+          "const": "reference_iphone"
+        }
+      ]
+    },
+    "DriverInfo": {
+      "description": "The browser driver behind a run: the Rust CDP driver, or a fallback subprocess.",
+      "type": "object",
+      "properties": {
+        "browser": {
+          "description": "The browser and its version, such as \"Chromium 140.0.7339.0\".",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ]
+    },
+    "Evidence": {
+      "description": "One piece of evidence for a value.",
+      "type": "object",
+      "properties": {
+        "detail": {
+          "description": "A short plain-English note, such as the files read.",
+          "type": "string"
+        },
+        "method": {
+          "$ref": "#/$defs/Method"
+        }
+      },
+      "required": [
+        "method",
+        "detail"
+      ]
+    },
+    "FileKind": {
+      "description": "The bucket a file counts in, for bytes by type.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "js",
+            "css",
+            "html",
+            "image",
+            "audio",
+            "video",
+            "font",
+            "other"
+          ]
+        },
+        {
+          "description": "GPU texture containers such as KTX2.",
+          "type": "string",
+          "const": "texture"
+        },
+        {
+          "description": "JSON, atlases, sprite maps and other data files.",
+          "type": "string",
+          "const": "data"
+        }
+      ]
+    },
+    "Finding": {
+      "description": "The outcome of one rule, with fixes that clear it.\n\nA static finding counts toward the status. A lab finding is in the run part, so it does not.",
+      "type": "object",
+      "properties": {
+        "fixes": {
+          "description": "Fixes that clear the finding. Sorted by path, then action, then bytes saved, then the\nrest of the fix.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Fix"
+          }
+        },
+        "measures": {
+          "description": "The measures the rule read. Sorted by id.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MeasureId"
+          }
+        },
+        "phase": {
+          "description": "The plan phase that builds this rule: 1 or 2.",
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "reason": {
+          "description": "Why the verdict is incomplete. Null otherwise.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rule": {
+          "$ref": "#/$defs/RuleId"
+        },
+        "verdict": {
+          "$ref": "#/$defs/Verdict"
+        }
+      },
+      "required": [
+        "rule",
+        "verdict",
+        "phase",
+        "measures",
+        "fixes"
+      ]
+    },
+    "Fix": {
+      "description": "One change that clears a finding, and what it saves.",
+      "type": "object",
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/FixAction"
+        },
+        "path": {
+          "description": "The file to change. Null when the fix is in the bundle's code or config.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RelPath"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "saves_bytes": {
+          "description": "Estimated bytes the fix saves, by the same arithmetic as the measure.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "saves_decoded_bytes": {
+          "description": "Decoded bytes the fix also saves, when `saves_bytes` counts download bytes. Removing a\ncopy saves its file's bytes, and the decoded bytes of an image or sound the game loads\nonce per copy. Null for other fixes, whose `saves_bytes` are decoded bytes already.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "action",
+        "saves_bytes"
+      ]
+    },
+    "FixAction": {
+      "description": "What to change. Declared in the alphabetical order of the JSON names, so fixes for the same\npath sort by name.",
+      "oneOf": [
+        {
+          "description": "Cap the renderer's resolution below the device pixel ratio.",
+          "type": "string",
+          "const": "cap_resolution"
+        },
+        {
+          "description": "Mix a stereo file down to mono.",
+          "type": "string",
+          "const": "downmix_to_mono"
+        },
+        {
+          "description": "Keep the one copy the game loads of a set of identical files, and delete the others. The\npath names the set by its first path, when the build does not show which copy loads.",
+          "type": "string",
+          "const": "keep_one_copy"
+        },
+        {
+          "description": "Delete a file that repeats another one.",
+          "type": "string",
+          "const": "remove_duplicate"
+        },
+        {
+          "description": "Play audio through a 24 kHz context, or resample the file to 24 kHz.",
+          "type": "string",
+          "const": "resample_to24k"
+        },
+        {
+          "description": "Use smaller or GPU-compressed textures.",
+          "type": "string",
+          "const": "shrink_textures"
+        },
+        {
+          "description": "Cut the silence out of a sprite map.",
+          "type": "string",
+          "const": "trim_sprite_silence"
+        },
+        {
+          "description": "Turn antialias off.",
+          "type": "string",
+          "const": "turn_off_antialias"
+        }
+      ]
+    },
+    "Inputs": {
+      "description": "What the check was asked to do. Paths and URLs are in `run.target`.",
+      "type": "object",
+      "properties": {
+        "budget": {
+          "description": "Null when no budget file was given.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BudgetRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "build": {
+          "description": "Whether a build folder or a .zip of one was given.",
+          "type": "boolean"
+        },
+        "device": {
+          "description": "Whether `--device` asked for an iPhone run (Phase 2).",
+          "type": "boolean"
+        },
+        "host_profile": {
+          "$ref": "#/$defs/ProfileRef"
+        },
+        "launch_url": {
+          "description": "Whether a launch URL was given.",
+          "type": "boolean"
+        },
+        "scenario": {
+          "$ref": "#/$defs/Scenario"
+        },
+        "spins": {
+          "description": "Spins asked for with `--spins` (Phase 2). Null when none.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "build",
+        "launch_url",
+        "host_profile",
+        "scenario",
+        "device"
+      ]
+    },
+    "Machine": {
+      "description": "The machine dyno ran on. No host name or user name.",
+      "type": "object",
+      "properties": {
+        "arch": {
+          "description": "\"aarch64\" or \"x86_64\".",
+          "type": "string"
+        },
+        "cpus": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "os": {
+          "description": "\"macos\", \"linux\" or \"windows\".",
+          "type": "string"
+        }
+      },
+      "required": [
+        "os",
+        "arch",
+        "cpus"
+      ]
+    },
+    "ManifestFile": {
+      "description": "One supplied file.",
+      "type": "object",
+      "properties": {
+        "bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "kind": {
+          "$ref": "#/$defs/FileKind"
+        },
+        "path": {
+          "$ref": "#/$defs/RelPath"
+        },
+        "sha256": {
+          "description": "Lowercase hex SHA-256 of the file's bytes.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "bytes",
+        "sha256",
+        "kind"
+      ]
+    },
+    "Measure": {
+      "description": "One measure in a result.",
+      "type": "object",
+      "properties": {
+        "evidence": {
+          "description": "How the value was found. Sorted.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          }
+        },
+        "id": {
+          "$ref": "#/$defs/MeasureId"
+        },
+        "items": {
+          "description": "A breakdown of the value, such as one item per file. Sorted by key, then value.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MeasureItem"
+          }
+        },
+        "phase": {
+          "description": "The plan phase that builds this measure: 1 or 2.",
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "reason": {
+          "description": "Why the status is missing, unsupported or invalid. Null otherwise.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "required": {
+          "description": "Whether the result needs this measure. A required measure that is missing or invalid\nstops the result from passing. Phase 2 measures are required only when a flag asks for\nthem.",
+          "type": "boolean"
+        },
+        "scope": {
+          "description": "What the value covers, and what it does not.",
+          "$ref": "#/$defs/Scope"
+        },
+        "source": {
+          "$ref": "#/$defs/Source"
+        },
+        "status": {
+          "$ref": "#/$defs/MeasureStatus"
+        },
+        "uncertainty": {
+          "description": "How close the value is to the truth.",
+          "$ref": "#/$defs/Uncertainty"
+        },
+        "unit": {
+          "$ref": "#/$defs/Unit"
+        },
+        "value": {
+          "description": "The value when the status is measured or estimated. An invalid measure may keep the value\nthat failed its check. Null otherwise.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MeasureValue"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "status",
+        "source",
+        "phase",
+        "required",
+        "unit",
+        "items",
+        "evidence",
+        "scope",
+        "uncertainty"
+      ]
+    },
+    "MeasureId": {
+      "description": "Every measure that Phases 1 and 2 name.",
+      "oneOf": [
+        {
+          "description": "Number of supplied files.",
+          "type": "string",
+          "const": "static.inventory.files"
+        },
+        {
+          "description": "Bytes of every supplied file, with one item per file kind.",
+          "type": "string",
+          "const": "static.bytes.by_type"
+        },
+        {
+          "description": "Gzip bytes of the text files (js, css, html, data), with one item per file kind.",
+          "type": "string",
+          "const": "static.bytes.compressed"
+        },
+        {
+          "description": "Bytes in files that repeat another file byte for byte (same SHA-256), one item per copy.",
+          "type": "string",
+          "const": "static.bytes.duplicates"
+        },
+        {
+          "description": "Decoded texture bytes of all supplied images, one copy: width x height x 4, plus the mip\nlevels the engine or the file makes. The uncertainty gives the range up to two copies.",
+          "type": "string",
+          "const": "static.textures.decoded"
+        },
+        {
+          "description": "Decoded audio bytes at 48 kHz: seconds x channels x 48,000 x 4, one item per sound\ngroup.",
+          "type": "string",
+          "const": "static.audio.decoded_48k"
+        },
+        {
+          "description": "Decoded audio bytes at 24 kHz, one item per sound group.",
+          "type": "string",
+          "const": "static.audio.decoded_24k"
+        },
+        {
+          "description": "Number of stereo sound groups, one item per group's representative file.",
+          "type": "string",
+          "const": "static.audio.stereo_files"
+        },
+        {
+          "description": "Number of stereo sound groups whose two channels match once decoded, so a mono export\nsounds the same. One item per decoded stereo group, with what a mono export does to it:\n`safe_to_make_mono`, `changes_the_sound` or `cancels`.",
+          "type": "string",
+          "const": "static.audio.stereo_mono_safe"
+        },
+        {
+          "description": "Largest share of silence in a Howler sprite map, one item per sprite map.",
+          "type": "string",
+          "const": "static.audio.sprite_silence"
+        },
+        {
+          "description": "Share of the decoded time of every sound group that is silent, in 10 ms windows at or\nbelow -60 dBFS. One item per decoded group.",
+          "type": "string",
+          "const": "static.audio.silence_by_decode"
+        },
+        {
+          "description": "Whether the bundle turns antialias on.",
+          "type": "string",
+          "const": "static.render.antialias"
+        },
+        {
+          "description": "Whether the bundle renders at a resolution above 2, the cap that a fix suggests.",
+          "type": "string",
+          "const": "static.render.resolution_uncapped"
+        },
+        {
+          "description": "The renderer the bundle asks for: webgl, webgl2, webgpu or canvas2d.",
+          "type": "string",
+          "const": "static.render.backend"
+        },
+        {
+          "description": "Canvas bytes: one WebGL context plus the backing store at the bundle's resolution.",
+          "type": "string",
+          "const": "static.render.canvas"
+        },
+        {
+          "description": "Number of libraries found in the bundle, one item per library with its version, keyed\n`<bucket>.<library>` such as `rendering.pixi` (`library::Library`).",
+          "type": "string",
+          "const": "static.bundle.engines"
+        },
+        {
+          "description": "Number of URLs in the bundle that point outside the build, one item per URL.\nThe build id does not cover them.",
+          "type": "string",
+          "const": "static.bundle.external_urls"
+        },
+        {
+          "description": "JavaScript bytes per source module, from source maps.",
+          "type": "string",
+          "const": "static.bundle.source_map"
+        },
+        {
+          "description": "Time from navigation to the game frame's first animation frame.",
+          "type": "string",
+          "const": "lab.time.first_frame"
+        },
+        {
+          "description": "Time from navigation to the host profile's ready message, such as `reels:ready`.",
+          "type": "string",
+          "const": "lab.time.ready"
+        },
+        {
+          "description": "Bytes the game frame loaded by idle, one item per file kind.",
+          "type": "string",
+          "const": "lab.bytes.loaded_by_idle"
+        },
+        {
+          "description": "Bytes the game frame loaded before its playable hook. Unsupported when the game sends no\nplayable hook. The host's ready message is not that signal.",
+          "type": "string",
+          "const": "lab.bytes.to_playable"
+        },
+        {
+          "description": "Audio bytes decoded by idle, at the audio context's rate: length x channels x 4.",
+          "type": "string",
+          "const": "lab.audio.decoded"
+        },
+        {
+          "description": "The audio context's sample rate.",
+          "type": "string",
+          "const": "lab.audio.context_rate"
+        },
+        {
+          "description": "Texture bytes uploaded by idle, re-uploads included. One item per source path, such as\n`/assets/a.png`. An ImageBitmap, a `blob:` object URL or a response made from a\nfetched file keeps that file's path. Uploads with no http source are `empty` (no\npixels), `canvas` (a canvas the game drew) or `other` (data, `data:` URLs, or a field\nprobe that does not tell). A path always starts with `/`, so it never meets these.",
+          "type": "string",
+          "const": "lab.textures.uploaded"
+        },
+        {
+          "description": "Texture bytes the GPU holds at idle: the last upload of each level of each texture the\ngame did not delete.",
+          "type": "string",
+          "const": "lab.textures.resident"
+        },
+        {
+          "description": "Number of canvas rendering contexts the game created.",
+          "type": "string",
+          "const": "lab.canvas.contexts"
+        },
+        {
+          "description": "Canvas buffer bytes from the contexts' sizes, DPR and antialias.",
+          "type": "string",
+          "const": "lab.canvas.bytes"
+        },
+        {
+          "description": "JavaScript heap in use at idle. Chromium's heap, not the iPhone's.",
+          "type": "string",
+          "const": "lab.js_heap"
+        },
+        {
+          "description": "Whether an audio context ran while the frame was inactive.",
+          "type": "string",
+          "const": "lab.inactive.audio_running"
+        },
+        {
+          "description": "Frames per second the game rendered while inactive.",
+          "type": "string",
+          "const": "lab.inactive.frame_rate"
+        },
+        {
+          "description": "Audio decode and texture upload bytes before activation. A diagnostic, never a fail.",
+          "type": "string",
+          "const": "lab.inactive.allocated"
+        },
+        {
+          "description": "The game frame's device pixel ratio, in thousandths. The run is invalid unless it is 3\n(3,000).",
+          "type": "string",
+          "const": "lab.self_check.frame_dpr"
+        },
+        {
+          "description": "Requests the game frame made. The run is invalid when it made none.",
+          "type": "string",
+          "const": "lab.self_check.frame_requests"
+        },
+        {
+          "description": "The WebGL renderer string. CI runners often fall back to a software renderer.",
+          "type": "string",
+          "const": "lab.self_check.webgl_renderer"
+        },
+        {
+          "description": "Modelled iPhone footprint while active: decoded audio at the context rate, textures,\ncanvas buffers, decoded images that are not textures, and k times the JS heap, plus a\nfixed b. The model fit sets k and b.",
+          "type": "string",
+          "const": "model.footprint"
+        },
+        {
+          "description": "Modelled iPhone footprint while inactive, for the preloadable tier.",
+          "type": "string",
+          "const": "model.footprint_inactive"
+        },
+        {
+          "description": "Spins played in the demo-only session.",
+          "type": "string",
+          "const": "play.spins"
+        },
+        {
+          "description": "Peak bytes during the spin loop.",
+          "type": "string",
+          "const": "play.peak"
+        },
+        {
+          "description": "Memory growth per 100 spins (Theil-Sen slope). Negative when memory shrinks.",
+          "type": "string",
+          "const": "play.growth_per_100_spins"
+        },
+        {
+          "description": "Peak bytes during a bonus round.",
+          "type": "string",
+          "const": "play.bonus_peak"
+        },
+        {
+          "description": "Median `phys_footprint` of fresh-process runs on the iPhone, minus the empty harness.",
+          "type": "string",
+          "const": "device.phys_footprint"
+        },
+        {
+          "description": "Fresh-process runs that the iPhone killed, one item per syslog line.",
+          "type": "string",
+          "const": "device.kills"
+        }
+      ]
+    },
+    "MeasureItem": {
+      "description": "One part of a measure's breakdown. Items sort by key, then value.",
+      "type": "object",
+      "properties": {
+        "key": {
+          "description": "A relative path with '/', a file kind, a sprite name, an engine name or a URL.",
+          "type": "string"
+        },
+        "value": {
+          "description": "In the measure's unit, or text for a fact such as an engine version.",
+          "$ref": "#/$defs/MeasureValue"
+        }
+      },
+      "required": [
+        "key",
+        "value"
+      ]
+    },
+    "MeasureStatus": {
+      "description": "How far to trust a measure. \"Not measured\" is never 0.",
+      "oneOf": [
+        {
+          "description": "Observed directly in a browser run or on a phone.",
+          "type": "string",
+          "const": "measured"
+        },
+        {
+          "description": "Computed from the build's files or from the model. Never a measure of iPhone memory.",
+          "type": "string",
+          "const": "estimated"
+        },
+        {
+          "description": "dyno cannot measure this for this target, for example bytes to playable when the game\nsends no playable hook.",
+          "type": "string",
+          "const": "unsupported"
+        },
+        {
+          "description": "There is no value.",
+          "type": "string",
+          "const": "missing"
+        },
+        {
+          "description": "A value failed a check, for example a frame DPR that is not 3. The value stays, unless it\nwas outside the safe integer range.",
+          "type": "string",
+          "const": "invalid"
+        }
+      ]
+    },
+    "MeasureValue": {
+      "description": "A value. Integers carry every number, so float formatting never changes the output. They are\nsigned, because a change such as memory growth can be negative.",
+      "anyOf": [
+        {
+          "type": "integer",
+          "format": "int64"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "Method": {
+      "description": "How a value was found. Declared in alphabetical order, so evidence sorts by name.",
+      "oneOf": [
+        {
+          "description": "Decoding a sound's samples.",
+          "type": "string",
+          "const": "audio_decode"
+        },
+        {
+          "description": "A scan of the JavaScript bundle.",
+          "type": "string",
+          "const": "bundle_scan"
+        },
+        {
+          "description": "A Chrome DevTools Protocol reading, such as the JS heap.",
+          "type": "string",
+          "const": "devtools_protocol"
+        },
+        {
+          "description": "A file's SHA-256.",
+          "type": "string",
+          "const": "file_hash"
+        },
+        {
+          "description": "A file's header, such as image dimensions or audio duration.",
+          "type": "string",
+          "const": "file_header"
+        },
+        {
+          "description": "A file's size.",
+          "type": "string",
+          "const": "file_size"
+        },
+        {
+          "description": "A postMessage between the game frame and the host page.",
+          "type": "string",
+          "const": "host_message"
+        },
+        {
+          "description": "The fitted memory model.",
+          "type": "string",
+          "const": "model"
+        },
+        {
+          "description": "Network events on the game frame's own session.",
+          "type": "string",
+          "const": "network"
+        },
+        {
+          "description": "An event from the in-page probe.",
+          "type": "string",
+          "const": "probe"
+        },
+        {
+          "description": "A Howler sprite map.",
+          "type": "string",
+          "const": "sprite_map"
+        },
+        {
+          "description": "The iPhone syslog.",
+          "type": "string",
+          "const": "syslog"
+        },
+        {
+          "description": "An xctrace recording on the iPhone.",
+          "type": "string",
+          "const": "xctrace"
+        }
+      ]
+    },
+    "ProfileRef": {
+      "description": "Which host profile, and which version of it, a result used.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ]
+    },
+    "RelPath": {
+      "description": "A path relative to the build root, with '/' between parts on every platform.\n\nConstruction normalizes the separators, so the same file gives the same bytes in a result on\nmacOS, Linux and Windows.",
+      "type": "string"
+    },
+    "Release": {
+      "description": "Labels the caller gives. Outside the hash, so two callers who name a release differently\nstill get the same hash.",
+      "type": "object",
+      "properties": {
+        "game": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "RuleId": {
+      "description": "Every rule that Phases 1 and 2 name. Field reports reuse these ids.",
+      "oneOf": [
+        {
+          "description": "Decoded audio is over the audio budget.",
+          "type": "string",
+          "const": "audio.pcm_over_budget"
+        },
+        {
+          "description": "An audio file is stereo.",
+          "type": "string",
+          "const": "audio.stereo"
+        },
+        {
+          "description": "A Howler sprite map is mostly silence.",
+          "type": "string",
+          "const": "audio.silence_share"
+        },
+        {
+          "description": "The bundle turns antialias on or leaves the resolution uncapped.",
+          "type": "string",
+          "const": "render.antialias_or_resolution"
+        },
+        {
+          "description": "Decoded textures are over the texture budget. Names the top 5 files.",
+          "type": "string",
+          "const": "textures.over_budget"
+        },
+        {
+          "description": "Two or more files have the same SHA-256.",
+          "type": "string",
+          "const": "files.duplicate"
+        },
+        {
+          "description": "A supplied file that nothing references. Needs the asset graph.",
+          "type": "string",
+          "const": "files.unreferenced"
+        },
+        {
+          "description": "Flags a ready message that came after the host profile's limit (5 s for Reels), or\nnever came.",
+          "type": "string",
+          "const": "contract.ready_in_time"
+        },
+        {
+          "description": "Flags an audio context that ran before activation.",
+          "type": "string",
+          "const": "contract.no_audio_before_active"
+        },
+        {
+          "description": "Flags rendering that was not throttled while inactive: more than 1 frame a second.",
+          "type": "string",
+          "const": "contract.throttled_while_inactive"
+        },
+        {
+          "description": "Flags audio decode or texture upload work before activation. Never a fail.",
+          "type": "string",
+          "const": "diagnostic.alloc_before_active"
+        }
+      ]
+    },
+    "RunCoverage": {
+      "description": "Whether the browser and device runs that a check asked for gave every required measure.\n\nIt sits in the deterministic part, so the status and exit code never read the run part.",
+      "oneOf": [
+        {
+          "description": "The check asked for no browser or device run.",
+          "type": "string",
+          "const": "not_requested"
+        },
+        {
+          "description": "Every required run measure is present, and every run measure fits the check.",
+          "type": "string",
+          "const": "complete"
+        },
+        {
+          "description": "A required run measure is missing or absent from the result.",
+          "type": "string",
+          "const": "missing"
+        },
+        {
+          "description": "A required run measure is invalid, or a run measure does not fit the check. Invalid wins\nover missing.",
+          "type": "string",
+          "const": "invalid"
+        }
+      ]
+    },
+    "RunInfo": {
+      "description": "What differs between machines and runs. The hash excludes it.",
+      "type": "object",
+      "properties": {
+        "driver": {
+          "description": "The browser driver. Null when there was no browser run.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DriverInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "duration_ms": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "findings": {
+          "description": "Lab rule findings, such as the host contract checks. Sorted by rule id, then by the\nfinding's canonical JSON.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Finding"
+          }
+        },
+        "machine": {
+          "$ref": "#/$defs/Machine"
+        },
+        "measures": {
+          "description": "Browser, device and model measures. Sorted by id.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Measure"
+          }
+        },
+        "release": {
+          "$ref": "#/$defs/Release"
+        },
+        "started_at": {
+          "description": "RFC 3339 UTC time the check started.",
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/Target"
+        },
+        "tier": {
+          "$ref": "#/$defs/TierReport"
+        },
+        "tool_build": {
+          "$ref": "#/$defs/ToolBuild"
+        }
+      },
+      "required": [
+        "started_at",
+        "duration_ms",
+        "machine",
+        "tool_build",
+        "target",
+        "release",
+        "measures",
+        "findings",
+        "tier"
+      ]
+    },
+    "Scenario": {
+      "description": "The harness scenario of a browser run.",
+      "oneOf": [
+        {
+          "description": "The game alone in a fresh harness page (Phase 1).",
+          "type": "string",
+          "const": "alone"
+        },
+        {
+          "description": "The harness page after 10 earlier games (Phase 2).",
+          "type": "string",
+          "const": "aged"
+        },
+        {
+          "description": "One game active while the next one preloads (Phase 2).",
+          "type": "string",
+          "const": "overlap"
+        }
+      ]
+    },
+    "Scope": {
+      "description": "What a value covers, and what it does not.",
+      "type": "object",
+      "properties": {
+        "covers": {
+          "$ref": "#/$defs/Covers"
+        },
+        "not_covered": {
+          "description": "Plain-English parts the value leaves out, such as \"a.ogg: did not decode\". Sorted. Any\nentry makes the value partial, so a budget reads it as a floor.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "covers",
+        "not_covered"
+      ]
+    },
+    "Severity": {
+      "description": "The verdict a flag gives when it is on.",
+      "type": "string",
+      "enum": [
+        "allow",
+        "warn",
+        "fail"
+      ]
+    },
+    "Source": {
+      "description": "Where a value comes from.",
+      "oneOf": [
+        {
+          "description": "Arithmetic on the build's files. The same on every machine.",
+          "type": "string",
+          "const": "static"
+        },
+        {
+          "description": "A Chromium run in the harness page.",
+          "type": "string",
+          "const": "lab"
+        },
+        {
+          "description": "A run on a real iPhone.",
+          "type": "string",
+          "const": "device"
+        },
+        {
+          "description": "The fitted memory model in `dyno-score`.",
+          "type": "string",
+          "const": "model"
+        },
+        {
+          "description": "The injected field probe or the host script.",
+          "type": "string",
+          "const": "field"
+        }
+      ]
+    },
+    "Status": {
+      "description": "The overall status of a result. The exit code comes from it alone.\n\nWhen several statuses apply, the worst wins. From worst to best: fail, invalid, incomplete,\nwarn, pass. The variants below are not declared in that order.",
+      "oneOf": [
+        {
+          "description": "None of the other statuses applies.",
+          "type": "string",
+          "const": "pass"
+        },
+        {
+          "description": "A budget or a static rule warns. Nothing fails.",
+          "type": "string",
+          "const": "warn"
+        },
+        {
+          "description": "A budget or a static rule fails. Nothing offsets a fail.",
+          "type": "string",
+          "const": "fail"
+        },
+        {
+          "description": "A required measure is missing or absent from the result, a budget could not be checked, or\na static rule could not be checked because a value from the build is missing. Never a pass.",
+          "type": "string",
+          "const": "incomplete"
+        },
+        {
+          "description": "A required measure failed its check, such as a run whose frame DPR was not 3, or a measure\nin the result does not fit the check.",
+          "type": "string",
+          "const": "invalid"
+        }
+      ]
+    },
+    "Target": {
+      "description": "The target as given on the command line.",
+      "type": "object",
+      "properties": {
+        "build": {
+          "description": "The build folder or .zip path as given. Null when none.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "launch_url": {
+          "description": "The launch URL without its user info, query string or fragment, which can carry passwords\nand session ids. Null when none.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "Tier": {
+      "description": "A provisional tier. The worst gate sets it.\n\nA line is a modelled footprint limit on the reference iPhone. The proposed lines are 500 MB\nwhile active and 250 MB while inactive. The phone calibration sets them.",
+      "oneOf": [
+        {
+          "description": "Within the line while active, minus the headroom for the worst held-out underprediction.",
+          "type": "string",
+          "const": "playable"
+        },
+        {
+          "description": "Over the line, or killed in 2 of 3 fresh runs of the game alone.",
+          "type": "string",
+          "const": "blocked"
+        },
+        {
+          "description": "Within the inactive line too. Reserved for Phase 2. Phase 1 never gives it.",
+          "type": "string",
+          "const": "preloadable"
+        }
+      ]
+    },
+    "TierReport": {
+      "description": "The provisional Reels tier. Report-only: it decides nothing in Phase 1.",
+      "type": "object",
+      "properties": {
+        "device_class": {
+          "$ref": "#/$defs/DeviceClass"
+        },
+        "phase": {
+          "description": "The plan phase that builds the tier.",
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "reason": {
+          "description": "Why there is no tier. Null otherwise.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "description": "Estimated once the model is calibrated. Unsupported with no launch URL, because the\ntotal needs a JS heap reading.",
+          "$ref": "#/$defs/MeasureStatus"
+        },
+        "tier": {
+          "description": "Null unless the status is estimated.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Tier"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "status",
+        "device_class",
+        "phase"
+      ]
+    },
+    "ToolBuild": {
+      "description": "The dyno binary that made the result.",
+      "type": "object",
+      "properties": {
+        "git_sha": {
+          "description": "The commit the binary was built from. Null for a local build.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "profile": {
+          "description": "\"debug\" or \"release\".",
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "profile"
+      ]
+    },
+    "Uncertainty": {
+      "description": "How close a value is to the truth.",
+      "type": "object",
+      "properties": {
+        "high": {
+          "description": "The highest likely value, in the measure's unit.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64"
+        },
+        "kind": {
+          "$ref": "#/$defs/UncertaintyKind"
+        },
+        "low": {
+          "description": "The lowest likely value, in the measure's unit.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64"
+        },
+        "note": {
+          "description": "A short plain-English note, such as \"0 to 23% below the decoded size\".",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    },
+    "UncertaintyKind": {
+      "description": "The kind of uncertainty.",
+      "oneOf": [
+        {
+          "description": "Exact for what it covers, such as bytes on disk.",
+          "type": "string",
+          "const": "exact"
+        },
+        {
+          "description": "The true value is at or above the value.",
+          "type": "string",
+          "const": "floor"
+        },
+        {
+          "description": "The true value is between low and high.",
+          "type": "string",
+          "const": "range"
+        },
+        {
+          "description": "The model's published error applies.",
+          "type": "string",
+          "const": "model_error"
+        },
+        {
+          "description": "Not known, for example because the value is missing.",
+          "type": "string",
+          "const": "unknown"
+        }
+      ]
+    },
+    "Unit": {
+      "description": "The unit of a value. Sizes are always integer bytes. Only a change in size can be negative.",
+      "oneOf": [
+        {
+          "description": "A size.",
+          "type": "string",
+          "const": "bytes"
+        },
+        {
+          "description": "A change in size, such as growth per 100 spins. It is negative when memory shrinks.",
+          "type": "string",
+          "const": "bytes_change"
+        },
+        {
+          "description": "Milliseconds.",
+          "type": "string",
+          "const": "ms"
+        },
+        {
+          "description": "A number of things.",
+          "type": "string",
+          "const": "count"
+        },
+        {
+          "description": "Times a second, such as a frame rate or an audio sample rate.",
+          "type": "string",
+          "const": "hertz"
+        },
+        {
+          "description": "Hundredths of a percent: 10,000 is 100%.",
+          "type": "string",
+          "const": "basis_points"
+        },
+        {
+          "description": "Thousandths: a device pixel ratio of 3 is 3,000.",
+          "type": "string",
+          "const": "milli"
+        },
+        {
+          "description": "True or false.",
+          "type": "string",
+          "const": "flag"
+        },
+        {
+          "description": "A string, such as a renderer name.",
+          "type": "string",
+          "const": "text"
+        }
+      ]
+    },
+    "Verdict": {
+      "description": "The outcome of one budget, rule or doctor check.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "pass",
+            "warn",
+            "fail"
+          ]
+        },
+        {
+          "description": "It could not be checked, because the inputs it needs are missing, invalid or partial.",
+          "type": "string",
+          "const": "incomplete"
+        }
+      ]
+    },
+    "Versions": {
+      "description": "The versions of everything that shapes a result.",
+      "type": "object",
+      "properties": {
+        "model": {
+          "description": "The fitted memory model's version. Null until the phone calibration sets one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "schema": {
+          "description": "The schema version. `CheckResult::new` sets it.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "scoring": {
+          "description": "The version of the budget and rule logic in `dyno-score`.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "tool": {
+          "description": "The dyno version, such as \"0.1.0\".",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "tool",
+        "scoring"
+      ]
+    }
+  }
+}

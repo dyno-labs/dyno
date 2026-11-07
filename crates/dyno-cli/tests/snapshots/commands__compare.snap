@@ -1,0 +1,46 @@
+---
+source: crates/dyno-cli/tests/commands.rs
+expression: json(&outcome)
+---
+{
+  "deterministic": {
+    "base": {
+      "build_id": "54bc36cfde26ce4949a736033d9f3d251b6f2ba547725ab7e19779f77be911c5",
+      "hash_matches": true,
+      "result_hash": "94c346c658f81c0fd86a1073b620ce31614d99d1ca3705fa24f7ccc189a8895f",
+      "status": "incomplete",
+      "tool": "0.1.0"
+    },
+    "budget": null,
+    "head": {
+      "build_id": "54bc36cfde26ce4949a736033d9f3d251b6f2ba547725ab7e19779f77be911c5",
+      "hash_matches": true,
+      "result_hash": "94c346c658f81c0fd86a1073b620ce31614d99d1ca3705fa24f7ccc189a8895f",
+      "status": "incomplete",
+      "tool": "0.1.0"
+    },
+    "measures": [],
+    "reason": "incomplete: base, head",
+    "scoring": 1,
+    "status": "incomplete",
+    "suspect_assets": [],
+    "tool": "0.1.0",
+    "verdicts": []
+  },
+  "result_hash": "6f8dfdff73f9da7baf925aad99f72693a2781cc1dd85fe0eb4ff00a579c461ba",
+  "run": {
+    "base_release": {
+      "game": null,
+      "version": null
+    },
+    "duration_ms": "[duration_ms]",
+    "head_release": {
+      "game": null,
+      "version": "v2"
+    },
+    "machine": "[machine]",
+    "started_at": "[started_at]",
+    "tool_build": "[tool_build]"
+  },
+  "schema_version": 0
+}

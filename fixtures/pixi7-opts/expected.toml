@@ -1,0 +1,153 @@
+# Expected static scan values for fixtures/pixi7-opts/build.
+# Pixi v7 with the options object in a variable, no antialias key (default off), resolution devicePixelRatio || 1, fixed 720 x 1280 stage.
+# Formulas: docs/design/static-scan.md. Byte counts are integers. File lists are sorted by path
+# (byte order). A Howler src list keeps its written order, because Howler plays the first format it can.
+# Each test reads only its own top-level table. Do not edit by hand without re-deriving.
+fixture = "pixi7-opts"
+input = "build"
+
+[profile]
+# The reference profile: an iPhone 17 frame at DPR 3. Tests pass these to the model, so a profile change only moves numbers.
+dpr_milli = 3000
+frame_css = [402, 874]
+webgpu = false
+
+[inventory]
+file_count = 3
+total_bytes = 503006
+build_id = "7da207bf6c174dc52c46978dd9864ca81f12959b1b3159a1f7f745eb2325bcc6"
+
+[[inventory.file]]
+path = "assets/bg-720x1280.webp"
+bytes = 23956
+bucket = "image"
+sha256 = "105ba145aebdeb970dd887143332bbcd936f0ba762a8500b216af1e976307933"
+
+[[inventory.file]]
+path = "index.html"
+bytes = 237
+bucket = "html"
+sha256 = "401232e52b79fcf7ebbfd487be5d87b021397e9ae4e7a6352329a0d79a3ccf12"
+
+[[inventory.file]]
+path = "main.js"
+bytes = 478813
+bucket = "js"
+sha256 = "78381854b1810f20421bf6cadd87d2f0187cb34553b44cab413e744d6bb554a1"
+
+[bytes]
+# gzip: flate2 level 9, gzip member with a 10 byte header and no name. brotli: quality 11, lgwin 22.
+# Compressed sizes exist only for js, css, html and data. They are exact for the pinned crate versions.
+
+[bytes.js]
+files = 1
+bytes = 478813
+gzip_bytes = 142894
+brotli_bytes = 119353
+
+[bytes.html]
+files = 1
+bytes = 237
+gzip_bytes = 182
+brotli_bytes = 96
+
+[bytes.image]
+files = 1
+bytes = 23956
+
+[textures]
+engine_for_mips = "pixi7"
+# gpu_bytes: raster = sum over levels of w * h * 4; Basis (ETC1S, UASTC) = ASTC 4x4 = sum of ceil(w/4) * ceil(h/4) * 16;
+# raw KTX2 = sum of level uncompressed lengths. Mips: Pixi v7 power of two images, Spine pages with a MipMap filter, KTX2 and Basis levels.
+
+[[textures.file]]
+path = "assets/bg-720x1280.webp"
+status = "estimated"
+format = "webp"
+width = 720
+height = 1280
+levels = 1
+mips = "none"
+gpu_format = "rgba8"
+gpu_bytes = 3686400
+astc_bytes = 921600
+
+[textures.total]
+status = "estimated"
+lo_bytes = 3686400
+hi_bytes = 7372800
+top5 = ["assets/bg-720x1280.webp"]
+not_covered = []
+
+[bundle]
+scanned = ["main.js"]
+invalid = []
+
+[bundle.versions]
+# A missing key means not detected. web_sdk_version is always unsupported: its packages are 0.0.0.
+pixi = "7.4.3"
+web_sdk = false
+
+[[bundle.render_site]]
+file = "main.js"
+callee = "new"
+antialias = false
+antialias_from = "default"
+resolution_milli = 3000
+resolution_from = "devicePixelRatio || 1"
+preference = "webgl"
+modelled_as = "webgl"
+auto_density = false
+size_from = "width and height"
+canvas_css = [720, 1280]
+canvas_backing = [2160, 3840]
+canvas_pixels = 8294400
+canvas_bytes = 33177600
+
+[bundle.external]
+hosts = []
+dynamic_host_sites = 0
+
+[duplicates]
+# Groups of byte-identical files (same SHA-256), sorted by first path. Empty files never form a group.
+# wasted_bytes = (n - 1) * size. decoded_bytes_saved = (n - 1) * gpu_bytes (images) or decoded_bytes_48k (audio).
+group_count = 0
+
+[rules]
+# Default thresholds are proposals (docs/design/static-scan.md, section Rules). saved_bytes is what the fix text promises.
+
+[rules."audio.pcm_over_budget"]
+outcome = "pass"
+value_bytes = 0
+saved_bytes = 0
+
+[rules."audio.stereo"]
+outcome = "pass"
+value_bytes = 0
+saved_bytes = 0
+items = []
+
+[rules."audio.silence_share"]
+outcome = "pass"
+value_bp = 0
+saved_bytes = 0
+items = []
+
+[rules."render.antialias_or_resolution"]
+outcome = "warn"
+value_bytes = 33177600
+saved_bytes = 18432000
+items = ["main.js"]
+
+[rules."textures.over_budget"]
+outcome = "pass"
+value_bytes = 3686400
+saved_bytes = 2764800
+items = ["assets/bg-720x1280.webp"]
+
+[rules."files.duplicate"]
+outcome = "pass"
+value_groups = 0
+saved_bytes = 0
+saved_decoded_bytes = 0
+items = []

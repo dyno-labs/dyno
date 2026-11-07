@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Library",
+  "description": "A library the static scan can detect.",
+  "oneOf": [
+    {
+      "type": "string",
+      "enum": [
+        "pixi",
+        "howler"
+      ]
+    },
+    {
+      "description": "StakeEngine's web-sdk. It bundles its own Pixi, which the scan detects as Pixi.",
+      "type": "string",
+      "const": "web_sdk"
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+[package]
+name = "dyno-static"
+description = "The static scan: what dyno can tell from a build folder without running it."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+brotli.workspace = true
+dyno-schema.workspace = true
+flate2.workspace = true
+html5gum.workspace = true
+imagesize.workspace = true
+ktx2.workspace = true
+memchr.workspace = true
+oxc_allocator.workspace = true
+oxc_ast.workspace = true
+oxc_ast_visit.workspace = true
+oxc_parser.workspace = true
+oxc_semantic.workspace = true
+oxc_span.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+# Decodes audio for the stereo and silence analysis; MPL-2.0, used unmodified.
+symphonia.workspace = true
+thiserror.workspace = true
+walkdir.workspace = true
+zip.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+toml.workspace = true
+
+[lints]
+workspace = true

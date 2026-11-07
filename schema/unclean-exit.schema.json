@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "UncleanExit",
+  "description": "An observed unclean exit: the last page died with game frames live. Never sampled.",
+  "type": "object",
+  "properties": {
+    "frames": {
+      "description": "The game frames that were live when the page died.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/LiveFrame"
+      }
+    },
+    "host_profile": {
+      "description": "The host profile, such as reels version 0.",
+      "$ref": "#/$defs/ProfileRef"
+    },
+    "schema_version": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "schema_version",
+    "host_profile",
+    "frames"
+  ],
+  "$defs": {
+    "FrameState": {
+      "description": "Whether a game frame is the one on screen. Reels calls an inactive frame preloaded.",
+      "oneOf": [
+        {
+          "description": "On screen, after the host's active message.",
+          "type": "string",
+          "const": "active"
+        },
+        {
+          "description": "Mounted but not on screen.",
+          "type": "string",
+          "const": "inactive"
+        }
+      ]
+    },
+    "LiveFrame": {
+      "description": "A game frame that was live when the page died.",
+      "type": "object",
+      "properties": {
+        "build_version": {
+          "description": "From the frame URL, such as \"v12\" from `/v12/`. Null when the URL has none.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "frame_state": {
+          "$ref": "#/$defs/FrameState"
+        },
+        "game_id": {
+          "type": "string"
+        },
+        "mount_age_ms": {
+          "description": "Time since the frame was mounted.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "ready_seen": {
+          "description": "Whether the host saw the game's ready message.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "game_id",
+        "frame_state",
+        "mount_age_ms",
+        "ready_seen"
+      ]
+    },
+    "ProfileRef": {
+      "description": "Which host profile, and which version of it, a result used.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ]
+    }
+  }
+}

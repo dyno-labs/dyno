@@ -1,0 +1,724 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DriverMessage",
+  "description": "One line from a driver. `t_ms` is the time since the driver started the navigation.\n\nThere are two clocks. A driver message's `t_ms` is on the driver's clock. A probe event's\n`t_ms` is `performance.now()` in the game frame, which starts at a different moment.",
+  "oneOf": [
+    {
+      "description": "The first line: the driver and the protocol version it speaks.",
+      "type": "object",
+      "properties": {
+        "driver": {
+          "$ref": "#/$defs/DriverInfo"
+        },
+        "protocol_version": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "type": {
+          "type": "string",
+          "const": "hello"
+        }
+      },
+      "required": [
+        "type",
+        "protocol_version",
+        "driver"
+      ]
+    },
+    {
+      "description": "One event from the probe in the game frame. The event keeps the frame's own clock.",
+      "type": "object",
+      "properties": {
+        "event": {
+          "$ref": "#/$defs/ProbeEvent"
+        },
+        "type": {
+          "type": "string",
+          "const": "probe"
+        }
+      },
+      "required": [
+        "type",
+        "event"
+      ]
+    },
+    {
+      "description": "One finished request on the game frame's own session.",
+      "type": "object",
+      "properties": {
+        "bytes": {
+          "description": "Bytes received over the network for this request.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "mime_type": {
+          "description": "The response's MIME type. Null when it had none.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "t_ms": {
+          "type": "number",
+          "format": "double"
+        },
+        "type": {
+          "type": "string",
+          "const": "request"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "url",
+        "bytes",
+        "t_ms"
+      ]
+    },
+    {
+      "description": "The game frame's JS heap in use.",
+      "type": "object",
+      "properties": {
+        "t_ms": {
+          "type": "number",
+          "format": "double"
+        },
+        "type": {
+          "type": "string",
+          "const": "heap"
+        },
+        "used_bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "used_bytes",
+        "t_ms"
+      ]
+    },
+    {
+      "description": "Self-check readings from inside the game frame.",
+      "type": "object",
+      "properties": {
+        "device_pixel_ratio": {
+          "type": "number",
+          "format": "double"
+        },
+        "frame_clock_at_ms": {
+          "description": "When the game frame's document clock started, on the driver's clock: a probe event\nat frame time `t` happened at `t + frame_clock_at_ms` after the navigation. Null from\na driver that does not read it.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "default": null
+        },
+        "t_ms": {
+          "type": "number",
+          "format": "double"
+        },
+        "type": {
+          "type": "string",
+          "const": "self_check"
+        },
+        "webgl_renderer": {
+          "description": "The unmasked WebGL renderer. Null when WebGL is off.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "device_pixel_ratio",
+        "t_ms"
+      ]
+    },
+    {
+      "description": "A step in the run.",
+      "type": "object",
+      "properties": {
+        "mark": {
+          "$ref": "#/$defs/RunMark"
+        },
+        "t_ms": {
+          "type": "number",
+          "format": "double"
+        },
+        "type": {
+          "type": "string",
+          "const": "mark"
+        }
+      },
+      "required": [
+        "type",
+        "mark",
+        "t_ms"
+      ]
+    },
+    {
+      "description": "The last line of a run that finished.",
+      "type": "object",
+      "properties": {
+        "t_ms": {
+          "type": "number",
+          "format": "double"
+        },
+        "type": {
+          "type": "string",
+          "const": "done"
+        }
+      },
+      "required": [
+        "type",
+        "t_ms"
+      ]
+    },
+    {
+      "description": "The last line of a run that failed.",
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string"
+        },
+        "t_ms": {
+          "type": "number",
+          "format": "double"
+        },
+        "type": {
+          "type": "string",
+          "const": "error"
+        }
+      },
+      "required": [
+        "type",
+        "message",
+        "t_ms"
+      ]
+    }
+  ],
+  "$defs": {
+    "AudioState": {
+      "description": "An audio context's state.",
+      "type": "string",
+      "enum": [
+        "running",
+        "suspended",
+        "closed"
+      ]
+    },
+    "ContextKind": {
+      "description": "A canvas rendering context's kind.",
+      "type": "string",
+      "enum": [
+        "webgl",
+        "webgl2",
+        "webgpu",
+        "canvas2d"
+      ]
+    },
+    "DriverInfo": {
+      "description": "The browser driver behind a run: the Rust CDP driver, or a fallback subprocess.",
+      "type": "object",
+      "properties": {
+        "browser": {
+          "description": "The browser and its version, such as \"Chromium 140.0.7339.0\".",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ]
+    },
+    "GameHookKind": {
+      "description": "An optional game hook.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "spin_start",
+            "round_settled"
+          ]
+        },
+        {
+          "description": "The game can take a spin. Bytes to playable stop here.",
+          "type": "string",
+          "const": "playable"
+        },
+        {
+          "description": "The game moved to a new phase, named in `detail`.",
+          "type": "string",
+          "const": "game_phase"
+        }
+      ]
+    },
+    "MessageDirection": {
+      "description": "Which way a host message went.",
+      "type": "string",
+      "enum": [
+        "to_host",
+        "from_host"
+      ]
+    },
+    "ProbeEvent": {
+      "description": "One probe event. `t_ms` is `performance.now()` in the game frame.",
+      "oneOf": [
+        {
+          "description": "The first `requestAnimationFrame` callback ran.",
+          "type": "object",
+          "properties": {
+            "t_ms": {
+              "type": "number",
+              "format": "double"
+            },
+            "type": {
+              "type": "string",
+              "const": "first_frame"
+            }
+          },
+          "required": [
+            "type",
+            "t_ms"
+          ]
+        },
+        {
+          "description": "A message crossed between the game frame and the host page, such as `reels:ready`.",
+          "type": "object",
+          "properties": {
+            "direction": {
+              "$ref": "#/$defs/MessageDirection"
+            },
+            "name": {
+              "type": "string"
+            },
+            "t_ms": {
+              "type": "number",
+              "format": "double"
+            },
+            "type": {
+              "type": "string",
+              "const": "host_message"
+            }
+          },
+          "required": [
+            "type",
+            "direction",
+            "name",
+            "t_ms"
+          ]
+        },
+        {
+          "description": "`decodeAudioData` finished. Decoded bytes are length x channels x 4.",
+          "type": "object",
+          "properties": {
+            "channels": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "length": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "sample_rate": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "t_ms": {
+              "type": "number",
+              "format": "double"
+            },
+            "type": {
+              "type": "string",
+              "const": "audio_decoded"
+            }
+          },
+          "required": [
+            "type",
+            "length",
+            "channels",
+            "sample_rate",
+            "t_ms"
+          ]
+        },
+        {
+          "description": "An audio context changed state.",
+          "type": "object",
+          "properties": {
+            "sample_rate": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "state": {
+              "$ref": "#/$defs/AudioState"
+            },
+            "t_ms": {
+              "type": "number",
+              "format": "double"
+            },
+            "type": {
+              "type": "string",
+              "const": "audio_context_state"
+            }
+          },
+          "required": [
+            "type",
+            "state",
+            "sample_rate",
+            "t_ms"
+          ]
+        },
+        {
+          "description": "A texture upload, such as `texImage2D` or `compressedTexImage2D`.",
+          "type": "object",
+          "properties": {
+            "bytes": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "face": {
+              "description": "The cube map face, 0 to 5; 0 for a 2D texture. None for `texStorage2D` on a cube\nmap, which allocates every face at once.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "default": null,
+              "minimum": 0
+            },
+            "height": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "level": {
+              "description": "The mip level. None for `texStorage2D`, which allocates every level at once.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "default": null,
+              "minimum": 0
+            },
+            "source": {
+              "description": "The path of the http image or video it came from, without host, query or fragment.\nThe lab probe follows a fetched file to an ImageBitmap, a `blob:` object URL or a\nresponse made from it (also through Pixi 8's worker). None for data, a render target,\na canvas, or a `data:` URL. An upload by `texSubImage2D` into `texStorage2D` storage is\nnot seen, so its source is not either.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "source_kind": {
+              "description": "What an upload with no source held, when the lab probe can tell: `empty` for an\nallocation with no pixels, `canvas` for a canvas the game drew. None otherwise, and\nalways from the field probe.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SourceKind"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "t_ms": {
+              "type": "number",
+              "format": "double"
+            },
+            "texture": {
+              "description": "The probe's number for the texture, which a later upload or `texture_deleted`\nrepeats. None from a probe that does not number textures.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "default": null,
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "texture_uploaded"
+            },
+            "width": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "type",
+            "width",
+            "height",
+            "bytes",
+            "t_ms"
+          ]
+        },
+        {
+          "description": "The game deleted a texture.",
+          "type": "object",
+          "properties": {
+            "t_ms": {
+              "type": "number",
+              "format": "double"
+            },
+            "texture": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "texture_deleted"
+            }
+          },
+          "required": [
+            "type",
+            "texture",
+            "t_ms"
+          ]
+        },
+        {
+          "description": "A canvas got a rendering context.",
+          "type": "object",
+          "properties": {
+            "antialias": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "canvas": {
+              "description": "The probe's number for the canvas, which its `canvas_resized` events repeat. None from\na probe that does not number canvases.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "default": null,
+              "minimum": 0
+            },
+            "device_pixel_ratio": {
+              "type": "number",
+              "format": "double"
+            },
+            "height": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "kind": {
+              "$ref": "#/$defs/ContextKind"
+            },
+            "t_ms": {
+              "type": "number",
+              "format": "double"
+            },
+            "type": {
+              "type": "string",
+              "const": "context_created"
+            },
+            "width": {
+              "description": "The canvas's backing size in pixels when it got its context.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "type",
+            "kind",
+            "width",
+            "height",
+            "device_pixel_ratio",
+            "t_ms"
+          ]
+        },
+        {
+          "description": "A canvas with a rendering context got a new backing size, as when Pixi sizes its canvas\nto the screen after it starts.",
+          "type": "object",
+          "properties": {
+            "canvas": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "height": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "t_ms": {
+              "type": "number",
+              "format": "double"
+            },
+            "type": {
+              "type": "string",
+              "const": "canvas_resized"
+            },
+            "width": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "type",
+            "canvas",
+            "width",
+            "height",
+            "t_ms"
+          ]
+        },
+        {
+          "description": "A WebGL context was lost.",
+          "type": "object",
+          "properties": {
+            "t_ms": {
+              "type": "number",
+              "format": "double"
+            },
+            "type": {
+              "type": "string",
+              "const": "context_lost"
+            }
+          },
+          "required": [
+            "type",
+            "t_ms"
+          ]
+        },
+        {
+          "description": "Frame times since the last histogram, sent every `FRAME_TIMES_EVERY_MS`. `counts[i]`\ncounts frames that took at most `bucket_upper_ms[i]`, and more than the bucket before it.\nThe edges are `FRAME_TIME_BUCKETS_MS`.",
+          "type": "object",
+          "properties": {
+            "bucket_upper_ms": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "format": "uint32",
+                "minimum": 0
+              }
+            },
+            "counts": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "format": "uint32",
+                "minimum": 0
+              }
+            },
+            "t_ms": {
+              "type": "number",
+              "format": "double"
+            },
+            "type": {
+              "type": "string",
+              "const": "frame_times"
+            }
+          },
+          "required": [
+            "type",
+            "bucket_upper_ms",
+            "counts",
+            "t_ms"
+          ]
+        },
+        {
+          "description": "An optional game hook (Phase 2). Only the game knows these events.",
+          "type": "object",
+          "properties": {
+            "detail": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "hook": {
+              "$ref": "#/$defs/GameHookKind"
+            },
+            "t_ms": {
+              "type": "number",
+              "format": "double"
+            },
+            "type": {
+              "type": "string",
+              "const": "game_hook"
+            }
+          },
+          "required": [
+            "type",
+            "hook",
+            "t_ms"
+          ]
+        }
+      ]
+    },
+    "RunMark": {
+      "description": "The steps of a run.",
+      "oneOf": [
+        {
+          "description": "The harness page started loading the game frame.",
+          "type": "string",
+          "const": "navigated"
+        },
+        {
+          "description": "The game frame went idle.",
+          "type": "string",
+          "const": "idle"
+        },
+        {
+          "description": "The harness made the game active, such as by sending `reels:active` `true`.",
+          "type": "string",
+          "const": "activated"
+        },
+        {
+          "description": "The harness made the game inactive.",
+          "type": "string",
+          "const": "deactivated"
+        },
+        {
+          "description": "The game frame committed a new document, as a script redirect does. Probe events after\nit are on the new document's clock.",
+          "type": "string",
+          "const": "frame_document"
+        }
+      ]
+    },
+    "SourceKind": {
+      "description": "What a texture upload with no source path held. Facts only: an allocation\nwith no pixels is often a render target, but the probe does not see what fills it.",
+      "oneOf": [
+        {
+          "description": "No pixels: `texStorage2D`, or `texImage2D` with null pixels.",
+          "type": "string",
+          "const": "empty"
+        },
+        {
+          "description": "A canvas the game drew, such as text.",
+          "type": "string",
+          "const": "canvas"
+        }
+      ]
+    }
+  }
+}

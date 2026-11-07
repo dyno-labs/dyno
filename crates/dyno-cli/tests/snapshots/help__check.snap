@@ -1,0 +1,68 @@
+---
+source: crates/dyno-cli/tests/help.rs
+expression: "help(&[\"check\", \"--help\"])"
+---
+[phase 1] Check a build folder, a launch URL, or every game in a games file
+
+Usage: dyno check [OPTIONS] [TARGET]...
+
+Arguments:
+  [TARGET]...
+          [phase 1] A build folder or .zip (static scan), an http(s) launch URL (browser run), or one of each
+
+Options:
+      --games <FILE>
+          [phase 1] Check every game in a games file (TOML, or JSON by the .json extension)
+
+      --shard <I/N>
+          [phase 1] Check only shard I of N of the games file, such as 1/4
+
+      --budget <FILE>
+          [phase 1] The budget file (TOML, or JSON by the .json extension)
+
+      --out <FILE>
+          [phase 1] Write the JSON result to FILE instead of stdout
+
+      --host-profile <NAME>
+          [phase 1] How the host page embeds the game, and the contract it checks
+          
+          [default: reels]
+          [possible values: reels]
+
+      --game <NAME>
+          [phase 1] The game name to label the result with. Outside the result hash
+
+      --release <VERSION>
+          [phase 1] The release version to label the result with, such as v12. Outside the result hash
+
+      --driver <DRIVER>
+          [phase 1] The browser driver: cdp, the built-in Chromium driver, or exec:PROGRAM, a program that speaks the runner protocol on stdin and stdout. Any driver but cdp needs a launch URL
+          
+          [default: cdp]
+
+      --scenario <SCENARIO>
+          [phase 2] The harness scenario of the browser run. Any scenario but `alone` needs a launch URL
+
+          Possible values:
+          - alone:   [phase 1] The game alone in a fresh harness page
+          - aged:    [phase 2] The harness page after 10 earlier games
+          - overlap: [phase 2] The game active while the next one preloads
+          
+          [default: alone]
+
+      --spins <N>
+          [phase 2] Play N demo spins after load. Needs a launch URL
+
+      --device
+          [phase 2] Also run the game on the connected iPhone. Needs a launch URL
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+Exit codes:
+  0   pass, or warn
+  1   fail: a budget or rule fails
+  2   incomplete: a required measure is missing, or a budget or rule could not be checked
+  3   invalid: a required measure or an input result failed its own check
+  64  usage or config error
+  70  internal or I/O error

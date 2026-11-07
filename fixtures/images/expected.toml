@@ -1,0 +1,481 @@
+# Expected static scan values for fixtures/images/build.
+# Every image and texture format at known sizes, plus a Spine atlas with one mipmapped page.
+# Formulas: docs/design/static-scan.md. Byte counts are integers. File lists are sorted by path
+# (byte order). A Howler src list keeps its written order, because Howler plays the first format it can.
+# Each test reads only its own top-level table. Do not edit by hand without re-deriving.
+fixture = "images"
+input = "build"
+
+[profile]
+# The reference profile: an iPhone 17 frame at DPR 3. Tests pass these to the model, so a profile change only moves numbers.
+dpr_milli = 3000
+frame_css = [402, 874]
+webgpu = false
+
+[inventory]
+file_count = 22
+total_bytes = 186333
+build_id = "a50cad22cfe0119c668e623161ec33054e8b846a767773ba1e2e90cd97e0833d"
+
+[[inventory.file]]
+path = "assets/avif/photo-640x360.avif"
+bytes = 6920
+bucket = "image"
+sha256 = "d799b4b625bd89e0d7caa04d61e47b9d7b2dbf4c699005fd986d1016a5397aa7"
+
+[[inventory.file]]
+path = "assets/basis/etc1s-256x128.basis"
+bytes = 260
+bucket = "texture"
+sha256 = "26b18d3918df5997f4b30dfc8d1150d97fb16b3b6cf4b5799ac4477d2d3dac9c"
+
+[[inventory.file]]
+path = "assets/gif/spinner-32x32.gif"
+bytes = 1396
+bucket = "image"
+sha256 = "7dc1aa9b76207559dc9ce47a4c48d78d74dd30896ac5398be030acc18ea6180e"
+
+[[inventory.file]]
+path = "assets/jpg/baseline-640x480.jpg"
+bytes = 15386
+bucket = "image"
+sha256 = "c875d457231a17f981f16983e6d347bba8908e3a0a948cc9764d32960ac196e3"
+
+[[inventory.file]]
+path = "assets/jpg/progressive-1024x768.jpg"
+bytes = 27791
+bucket = "image"
+sha256 = "7834df61b44046913fd7e7b5c37de3f874e8a34ef62c6a6598276900fdcd9c75"
+
+[[inventory.file]]
+path = "assets/ktx2/astc-256x128.ktx2"
+bytes = 32960
+bucket = "texture"
+sha256 = "5730443dad94dd38660fcddf9aa801370c5818b35be24f45693d7202d97d595a"
+
+[[inventory.file]]
+path = "assets/ktx2/etc1s-mips-1024x1024.ktx2"
+bytes = 1271
+bucket = "texture"
+sha256 = "3d6d22e19e7c934931d3508a37353f783b95040c09b9a1817cc1759e84493855"
+
+[[inventory.file]]
+path = "assets/ktx2/rgba8-mips-64x64.ktx2"
+bytes = 22216
+bucket = "texture"
+sha256 = "921a82e4420169a266cb88ca1c3b230c611dd1db0fa8862decd52a3b4bc49602"
+
+[[inventory.file]]
+path = "assets/ktx2/uastc-512x256.ktx2"
+bytes = 215
+bucket = "texture"
+sha256 = "f3a6bee4987b414dbad1c4421a76715058ab6381319f4c6cb04977a89a88a22c"
+
+[[inventory.file]]
+path = "assets/png/bg-2080x1560.png"
+bytes = 12936
+bucket = "image"
+sha256 = "616de5ad52b218349e44959bac9f00b3d140e831c2c29e30865d0d824bb190d8"
+
+[[inventory.file]]
+path = "assets/png/flat-2048x2048.png"
+bytes = 21289
+bucket = "image"
+sha256 = "c44011a97c2f96df698e399ef2517a39d92fd08c7a41b81cc9311537271b76c3"
+
+[[inventory.file]]
+path = "assets/png/gray16-64x64.png"
+bytes = 1533
+bucket = "image"
+sha256 = "30267ec0e25145d1e352c3aabd3a3b615bdd8b0a8b45e36ac4bcb38a02364cad"
+
+[[inventory.file]]
+path = "assets/png/palette-100x50.png"
+bytes = 1912
+bucket = "image"
+sha256 = "0a0667865196d60746bddcc205689d48ad6512503ec477140992e6fe6b05c025"
+
+[[inventory.file]]
+path = "assets/png/rgb-256x256.png"
+bytes = 10001
+bucket = "image"
+sha256 = "8ef40550a310a37707735dada5a38ab33fa70b88b0e5275755b3a594820b6b03"
+
+[[inventory.file]]
+path = "assets/png/rgba-300x200.png"
+bytes = 8654
+bucket = "image"
+sha256 = "b634d1a8399c3af145ace9a271ad6f73c272ba7d33e6c8666c002d327323a3f9"
+
+[[inventory.file]]
+path = "assets/spine/hero.atlas"
+bytes = 217
+bucket = "data"
+sha256 = "e352e554849b50a23546e7c1fd61e13cd32c36b061cf2eea491a63958f837a40"
+
+[[inventory.file]]
+path = "assets/spine/hero.png"
+bytes = 6539
+bucket = "image"
+sha256 = "bdf14666afbaa3e5efdcab85d0f91c9642ce2b820aca8be1ca23f3d7929be59f"
+
+[[inventory.file]]
+path = "assets/spine/hero_2.png"
+bytes = 1169
+bucket = "image"
+sha256 = "74d41319d73f3972c59a47fce24df300d440dd638673728c5eec613542f007ab"
+
+[[inventory.file]]
+path = "assets/svg/icon.svg"
+bytes = 134
+bucket = "image"
+sha256 = "4bcbd3a1afa7a8debb8b77920fd3aea4862c55332772da8f846fa9559fcec88e"
+
+[[inventory.file]]
+path = "assets/webp/alpha-300x300.webp"
+bytes = 4972
+bucket = "image"
+sha256 = "41e9431e67cfe8545babfa6ee6a00ee16478103c3b34ccb0f2a3bd58f1c6fb41"
+
+[[inventory.file]]
+path = "assets/webp/lossless-200x100.webp"
+bytes = 2290
+bucket = "image"
+sha256 = "1a99fb1a364ddd8365a2cf6d04ef784d9e172d5a579013b6ff56568e1e18f2e9"
+
+[[inventory.file]]
+path = "assets/webp/lossy-512x256.webp"
+bytes = 6272
+bucket = "image"
+sha256 = "2803ffdbf3c8b4e874009d6b831bfed49ebed1e4e71b4efd9eb8234d063150b3"
+
+[bytes]
+# gzip: flate2 level 9, gzip member with a 10 byte header and no name. brotli: quality 11, lgwin 22.
+# Compressed sizes exist only for js, css, html and data. They are exact for the pinned crate versions.
+
+[bytes.image]
+files = 16
+bytes = 129194
+
+[bytes.texture]
+files = 5
+bytes = 56922
+
+[bytes.data]
+files = 1
+bytes = 217
+gzip_bytes = 143
+brotli_bytes = 121
+
+[textures]
+engine_for_mips = "unknown"
+# gpu_bytes: raster = sum over levels of w * h * 4; Basis (ETC1S, UASTC) = ASTC 4x4 = sum of ceil(w/4) * ceil(h/4) * 16;
+# raw KTX2 = sum of level uncompressed lengths. Mips: Pixi v7 power of two images, Spine pages with a MipMap filter, KTX2 and Basis levels.
+
+[[textures.file]]
+path = "assets/avif/photo-640x360.avif"
+status = "estimated"
+format = "avif"
+width = 640
+height = 360
+levels = 1
+mips = "none"
+gpu_format = "rgba8"
+gpu_bytes = 921600
+astc_bytes = 230400
+
+[[textures.file]]
+path = "assets/basis/etc1s-256x128.basis"
+status = "estimated"
+format = "basis"
+encoding = "etc1s"
+width = 256
+height = 128
+levels = 1
+gpu_format = "astc_4x4"
+gpu_bytes = 32768
+astc_bytes = 32768
+
+[[textures.file]]
+path = "assets/gif/spinner-32x32.gif"
+status = "estimated"
+format = "gif"
+width = 32
+height = 32
+levels = 1
+mips = "none"
+gpu_format = "rgba8"
+gpu_bytes = 4096
+astc_bytes = 1024
+note = "first frame only"
+
+[[textures.file]]
+path = "assets/jpg/baseline-640x480.jpg"
+status = "estimated"
+format = "jpeg"
+width = 640
+height = 480
+levels = 1
+mips = "none"
+gpu_format = "rgba8"
+gpu_bytes = 1228800
+astc_bytes = 307200
+
+[[textures.file]]
+path = "assets/jpg/progressive-1024x768.jpg"
+status = "estimated"
+format = "jpeg"
+width = 1024
+height = 768
+levels = 1
+mips = "none"
+gpu_format = "rgba8"
+gpu_bytes = 3145728
+astc_bytes = 786432
+
+[[textures.file]]
+path = "assets/ktx2/astc-256x128.ktx2"
+status = "estimated"
+format = "ktx2"
+encoding = "raw"
+width = 256
+height = 128
+levels = 1
+gpu_format = "astc_4x4"
+gpu_bytes = 32768
+astc_bytes = 32768
+
+[[textures.file]]
+path = "assets/ktx2/etc1s-mips-1024x1024.ktx2"
+status = "estimated"
+format = "ktx2"
+encoding = "etc1s"
+width = 1024
+height = 1024
+levels = 11
+gpu_format = "astc_4x4"
+gpu_bytes = 1398128
+astc_bytes = 1398128
+
+[[textures.file]]
+path = "assets/ktx2/rgba8-mips-64x64.ktx2"
+status = "estimated"
+format = "ktx2"
+encoding = "raw"
+width = 64
+height = 64
+levels = 7
+gpu_format = "rgba8"
+gpu_bytes = 21844
+astc_bytes = 5488
+
+[[textures.file]]
+path = "assets/ktx2/uastc-512x256.ktx2"
+status = "estimated"
+format = "ktx2"
+encoding = "uastc"
+width = 512
+height = 256
+levels = 1
+gpu_format = "astc_4x4"
+gpu_bytes = 131072
+astc_bytes = 131072
+
+[[textures.file]]
+path = "assets/png/bg-2080x1560.png"
+status = "estimated"
+format = "png"
+width = 2080
+height = 1560
+levels = 1
+mips = "none"
+gpu_format = "rgba8"
+gpu_bytes = 12979200
+astc_bytes = 3244800
+
+[[textures.file]]
+path = "assets/png/flat-2048x2048.png"
+status = "estimated"
+format = "png"
+width = 2048
+height = 2048
+levels = 1
+mips = "none"
+gpu_format = "rgba8"
+gpu_bytes = 16777216
+astc_bytes = 4194304
+
+[[textures.file]]
+path = "assets/png/gray16-64x64.png"
+status = "estimated"
+format = "png"
+width = 64
+height = 64
+levels = 1
+mips = "none"
+gpu_format = "rgba8"
+gpu_bytes = 16384
+astc_bytes = 4096
+
+[[textures.file]]
+path = "assets/png/palette-100x50.png"
+status = "estimated"
+format = "png"
+width = 100
+height = 50
+levels = 1
+mips = "none"
+gpu_format = "rgba8"
+gpu_bytes = 20000
+astc_bytes = 5200
+
+[[textures.file]]
+path = "assets/png/rgb-256x256.png"
+status = "estimated"
+format = "png"
+width = 256
+height = 256
+levels = 1
+mips = "none"
+gpu_format = "rgba8"
+gpu_bytes = 262144
+astc_bytes = 65536
+
+[[textures.file]]
+path = "assets/png/rgba-300x200.png"
+status = "estimated"
+format = "png"
+width = 300
+height = 200
+levels = 1
+mips = "none"
+gpu_format = "rgba8"
+gpu_bytes = 240000
+astc_bytes = 60000
+
+[[textures.file]]
+path = "assets/spine/hero.png"
+status = "estimated"
+format = "png"
+width = 1024
+height = 1024
+levels = 1
+mips = "none"
+gpu_format = "rgba8"
+gpu_bytes = 4194304
+astc_bytes = 1048576
+
+[[textures.file]]
+path = "assets/spine/hero_2.png"
+status = "estimated"
+format = "png"
+width = 512
+height = 256
+levels = 10
+mips = "spine_atlas_filter"
+gpu_format = "rgba8"
+gpu_bytes = 699052
+astc_bytes = 174800
+
+[[textures.file]]
+path = "assets/svg/icon.svg"
+status = "unsupported"
+reason = "svg"
+
+[[textures.file]]
+path = "assets/webp/alpha-300x300.webp"
+status = "estimated"
+format = "webp"
+width = 300
+height = 300
+levels = 1
+mips = "none"
+gpu_format = "rgba8"
+gpu_bytes = 360000
+astc_bytes = 90000
+
+[[textures.file]]
+path = "assets/webp/lossless-200x100.webp"
+status = "estimated"
+format = "webp"
+width = 200
+height = 100
+levels = 1
+mips = "none"
+gpu_format = "rgba8"
+gpu_bytes = 80000
+astc_bytes = 20000
+
+[[textures.file]]
+path = "assets/webp/lossy-512x256.webp"
+status = "estimated"
+format = "webp"
+width = 512
+height = 256
+levels = 1
+mips = "none"
+gpu_format = "rgba8"
+gpu_bytes = 524288
+astc_bytes = 131072
+
+[textures.total]
+status = "estimated"
+lo_bytes = 43069392
+hi_bytes = 86138784
+top5 = ["assets/png/flat-2048x2048.png", "assets/png/bg-2080x1560.png", "assets/spine/hero.png", "assets/jpg/progressive-1024x768.jpg", "assets/ktx2/etc1s-mips-1024x1024.ktx2"]
+not_covered = ["assets/svg/icon.svg"]
+
+[bundle]
+scanned = []
+invalid = []
+
+[bundle.versions]
+# A missing key means not detected. web_sdk_version is always unsupported: its packages are 0.0.0.
+web_sdk = false
+
+[bundle.external]
+hosts = []
+dynamic_host_sites = 0
+
+[duplicates]
+# Groups of byte-identical files (same SHA-256), sorted by first path. Empty files never form a group.
+# wasted_bytes = (n - 1) * size. decoded_bytes_saved = (n - 1) * gpu_bytes (images) or decoded_bytes_48k (audio).
+group_count = 0
+
+[rules]
+# Default thresholds are proposals (docs/design/static-scan.md, section Rules). saved_bytes is what the fix text promises.
+
+[rules."audio.pcm_over_budget"]
+outcome = "pass"
+value_bytes = 0
+saved_bytes = 0
+
+[rules."audio.stereo"]
+outcome = "pass"
+value_bytes = 0
+saved_bytes = 0
+items = []
+
+[rules."audio.silence_share"]
+outcome = "pass"
+value_bp = 0
+saved_bytes = 0
+items = []
+
+[rules."render.antialias_or_resolution"]
+outcome = "incomplete"
+reason = "no render config found"
+saved_bytes = 0
+
+[rules."textures.over_budget"]
+outcome = "incomplete"
+value_bytes = 43069392
+saved_bytes = 27822336
+items = ["assets/png/flat-2048x2048.png", "assets/png/bg-2080x1560.png", "assets/spine/hero.png", "assets/jpg/progressive-1024x768.jpg"]
+
+[rules."files.duplicate"]
+outcome = "pass"
+value_groups = 0
+saved_bytes = 0
+saved_decoded_bytes = 0
+items = []

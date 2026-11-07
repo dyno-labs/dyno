@@ -1,0 +1,71 @@
+{
+  "dyno_version": "0.1.0",
+  "checks": {
+    "audio-formats": {
+      "input": "fixtures/audio-formats/build",
+      "status": "incomplete",
+      "exit_code": 2,
+      "result_hash": "a94807cdbe4b97d3aa84e2f54a9c15792e3cf3dab8104dec0cd52e4772dbe090"
+    },
+    "broken": {
+      "input": "fixtures/broken/build",
+      "status": "incomplete",
+      "exit_code": 2,
+      "result_hash": "fd39d4b4ea86eba184a3a60186af930f93098019bc0aca0f5121ae9f20590c05"
+    },
+    "duplicates": {
+      "input": "fixtures/duplicates/build",
+      "status": "warn",
+      "exit_code": 0,
+      "result_hash": "e453a88530ba1ef91605d4964a68d147524540a055e64795e50e3a801998fb21"
+    },
+    "howler-sprites": {
+      "input": "fixtures/howler-sprites/build",
+      "status": "warn",
+      "exit_code": 0,
+      "result_hash": "753dda1e4c43bccf0f4e71f999046a0cdb01cf9f28571976290dd1203a9ce40c"
+    },
+    "images": {
+      "input": "fixtures/images/build",
+      "status": "incomplete",
+      "exit_code": 2,
+      "result_hash": "569ffa18f171c87c5f9998d0f2b07a7f3567bc5e1c10e1a266c4bbc098b1a7c5"
+    },
+    "over-budget": {
+      "input": "fixtures/over-budget/build",
+      "status": "fail",
+      "exit_code": 1,
+      "result_hash": "4982e0b828fe776a191e24a854289bd23e6ff4e5a3136ae333616c89f1f2d261"
+    },
+    "pixi7-aa": {
+      "input": "fixtures/pixi7-aa/build",
+      "status": "warn",
+      "exit_code": 0,
+      "result_hash": "41be85381262331570e182670cdfd21ad4f240db5f607361b2d65d1a87823431"
+    },
+    "pixi7-opts": {
+      "input": "fixtures/pixi7-opts/build",
+      "status": "warn",
+      "exit_code": 0,
+      "result_hash": "fac9183efef5017576ecbf1ca3b5a80be376542f16584e775439eecbb76971f8"
+    },
+    "pixi8-inline": {
+      "input": "fixtures/pixi8-inline/build",
+      "status": "warn",
+      "exit_code": 0,
+      "result_hash": "30ed314ff9983700146aea318b9850cf35b10b3082db4795abe3ad78df89124e"
+    },
+    "pixi8-webgpu": {
+      "input": "fixtures/pixi8-webgpu/build",
+      "status": "pass",
+      "exit_code": 0,
+      "result_hash": "6e930c0f89e192103b459da8a63f8c716ca439f4a81fe9c9c93afe2910d84bfa"
+    },
+    "zip-input": {
+      "input": "fixtures/zip-input/build.zip",
+      "status": "warn",
+      "exit_code": 0,
+      "result_hash": "e453a88530ba1ef91605d4964a68d147524540a055e64795e50e3a801998fb21"
+    }
+  }
+}

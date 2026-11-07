@@ -1,0 +1,14 @@
+---
+source: crates/dyno-cli/tests/summary.rs
+expression: summary(&outcome)
+---
+dyno check: pass: nothing warns or fails
+estimated from the build:
+  textures decoded: 4.9 MB to 10.0 MB
+  audio decoded at 48 kHz: at least 0.0 MB
+  audio decoded at 24 kHz: at least 0.0 MB
+  canvas: at least 5.3 MB
+  files: 5, build size: 0.7 MB, compressed text: 0.2 MB
+budgets: no budget file, so the rules use their default limits
+full result: the JSON on stdout. Use --out FILE to write it to a file.
+result_hash: [hash]

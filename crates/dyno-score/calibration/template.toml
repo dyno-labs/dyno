@@ -1,0 +1,29 @@
+# The phone calibration of the memory model (docs/calibration.md). Copy this file,
+# fill it in from the phone runs, and run:
+#   cargo run -p dyno-score --example calibrate -- path/to/calibration.toml
+# It holds no runs: dyno never runs a command against a phone. A person records each run.
+schema_version = 0
+
+[device]
+# The phone and iOS version the runs were on, as the person who ran them recorded them. The
+# reference phone is the iPhone 14 Pro Max; every run is on that one phone.
+phone = "iPhone 14 Pro Max"
+ios = ""
+# phys_footprint in bytes of the harness page with no game frame, one per fresh Safari process.
+baseline_bytes = []
+
+# One table per game: 10 with role "fit" and 3 with role "held_out".
+[[game]]
+id = "example"
+role = "fit"
+# The `dyno check <build> <launch-url> --out` result of this game, relative to this file.
+result = "results/example.json"
+# phys_footprint in bytes at idle, one per fresh run that was not killed.
+phone_bytes = []
+# Runs of the 3 that the phone killed. Two kills block the game and leave it out of the fit.
+killed_runs = 0
+# Where the numbers came from, for people: the result's dyno version and result_hash, and the
+# syslog line of each killed run.
+dyno_version = ""
+result_hash = ""
+kill_lines = []

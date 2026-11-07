@@ -1,0 +1,221 @@
+# Expected static scan values for fixtures/pixi8-webgpu/build.
+# Pixi v8 with preference webgpu, antialias off, resolution capped at 2 through a variable, a Basis KTX2 texture.
+# Formulas: docs/design/static-scan.md. Byte counts are integers. File lists are sorted by path
+# (byte order). A Howler src list keeps its written order, because Howler plays the first format it can.
+# Each test reads only its own top-level table. Do not edit by hand without re-deriving.
+fixture = "pixi8-webgpu"
+input = "build"
+
+[profile]
+# The reference profile: an iPhone 17 frame at DPR 3. Tests pass these to the model, so a profile change only moves numbers.
+dpr_milli = 3000
+frame_css = [402, 874]
+webgpu = false
+
+[inventory]
+file_count = 5
+total_bytes = 726319
+build_id = "3e00a95d50d75ea29c13f4a4c9b96fa222ace5fc12e9253005d24ccd7c9bf677"
+
+[[inventory.file]]
+path = "assets/click.mp3"
+bytes = 2108
+bucket = "audio"
+sha256 = "6fac87c911972b6020419e6765e1b21d319ea1efb0962d66e4c187f835b1ff0f"
+
+[[inventory.file]]
+path = "assets/frame-1200x800.png"
+bytes = 96793
+bucket = "image"
+sha256 = "b17553335985d6a4d4e752a6290d7d3b9fe5a944899213fba4fdcc8824e3e964"
+
+[[inventory.file]]
+path = "assets/index-b00aa83b.js"
+bytes = 625866
+bucket = "js"
+sha256 = "b00aa83b5bfd57887b0ee7319f13576fd3aea11d96d8fded6b1084b25ba83ec2"
+
+[[inventory.file]]
+path = "assets/symbols-1024x1024.ktx2"
+bytes = 1271
+bucket = "texture"
+sha256 = "3d6d22e19e7c934931d3508a37353f783b95040c09b9a1817cc1759e84493855"
+
+[[inventory.file]]
+path = "index.html"
+bytes = 281
+bucket = "html"
+sha256 = "fcc41f1d54dd12c18591515ed46e1bd17fdef66b6efb50f21c900583581d8b56"
+
+[bytes]
+# gzip: flate2 level 9, gzip member with a 10 byte header and no name. brotli: quality 11, lgwin 22.
+# Compressed sizes exist only for js, css, html and data. They are exact for the pinned crate versions.
+
+[bytes.js]
+files = 1
+bytes = 625866
+gzip_bytes = 182789
+brotli_bytes = 151175
+
+[bytes.html]
+files = 1
+bytes = 281
+gzip_bytes = 215
+brotli_bytes = 128
+
+[bytes.image]
+files = 1
+bytes = 96793
+
+[bytes.texture]
+files = 1
+bytes = 1271
+
+[bytes.audio]
+files = 1
+bytes = 2108
+
+[audio]
+# decoded_bytes_R = ceil(ticks * R / tick_rate) * channels * 4, for R = 48000 and 24000.
+
+[[audio.file]]
+path = "assets/click.mp3"
+status = "estimated"
+container = "mp3"
+codec = "mp3"
+channels = 1
+ticks = 8820
+tick_rate = 44100
+decoded_bytes_48k = 38400
+decoded_bytes_24k = 19200
+# A sound group is one sound in several formats (same folder and stem, or one Howler src list).
+# It counts once, at its largest member. Ties go to the first path.
+
+[[audio.group]]
+paths = ["assets/click.mp3"]
+representative = "assets/click.mp3"
+channels = 1
+decoded_bytes_48k = 38400
+decoded_bytes_24k = 19200
+silence_bp = 0
+
+[audio.total]
+silence_by_decode_bp = 0
+status = "estimated"
+decoded_bytes_48k = 38400
+decoded_bytes_24k = 19200
+not_covered = []
+
+[textures]
+engine_for_mips = "pixi8"
+# gpu_bytes: raster = sum over levels of w * h * 4; Basis (ETC1S, UASTC) = ASTC 4x4 = sum of ceil(w/4) * ceil(h/4) * 16;
+# raw KTX2 = sum of level uncompressed lengths. Mips: Pixi v7 power of two images, Spine pages with a MipMap filter, KTX2 and Basis levels.
+
+[[textures.file]]
+path = "assets/frame-1200x800.png"
+status = "estimated"
+format = "png"
+width = 1200
+height = 800
+levels = 1
+mips = "none"
+gpu_format = "rgba8"
+gpu_bytes = 3840000
+astc_bytes = 960000
+
+[[textures.file]]
+path = "assets/symbols-1024x1024.ktx2"
+status = "estimated"
+format = "ktx2"
+encoding = "etc1s"
+width = 1024
+height = 1024
+levels = 11
+gpu_format = "astc_4x4"
+gpu_bytes = 1398128
+astc_bytes = 1398128
+
+[textures.total]
+status = "estimated"
+lo_bytes = 5238128
+hi_bytes = 10476256
+top5 = ["assets/frame-1200x800.png", "assets/symbols-1024x1024.ktx2"]
+not_covered = []
+
+[bundle]
+scanned = ["assets/index-b00aa83b.js"]
+invalid = []
+
+[bundle.versions]
+# A missing key means not detected. web_sdk_version is always unsupported: its packages are 0.0.0.
+pixi = "8.22.0"
+howler = "2.2.4"
+web_sdk = false
+
+[[bundle.render_site]]
+file = "assets/index-b00aa83b.js"
+callee = "init"
+antialias = false
+antialias_from = "literal"
+resolution_milli = 2000
+resolution_from = "Math.min(devicePixelRatio, 2) through a const"
+preference = "webgpu"
+modelled_as = "webgl"
+auto_density = true
+size_from = "resizeTo"
+canvas_css = [402, 874]
+canvas_backing = [804, 1748]
+canvas_pixels = 1405392
+canvas_bytes = 5621568
+
+[bundle.external]
+hosts = ["cdn.example.invalid"]
+dynamic_host_sites = 0
+
+[[bundle.external.url]]
+url = "//cdn.example.invalid/static/paytable.json"
+sources = ["assets/index-b00aa83b.js"]
+
+[duplicates]
+# Groups of byte-identical files (same SHA-256), sorted by first path. Empty files never form a group.
+# wasted_bytes = (n - 1) * size. decoded_bytes_saved = (n - 1) * gpu_bytes (images) or decoded_bytes_48k (audio).
+group_count = 0
+
+[rules]
+# Default thresholds are proposals (docs/design/static-scan.md, section Rules). saved_bytes is what the fix text promises.
+
+[rules."audio.pcm_over_budget"]
+outcome = "pass"
+value_bytes = 38400
+saved_bytes = 19200
+
+[rules."audio.stereo"]
+outcome = "pass"
+value_bytes = 0
+saved_bytes = 0
+items = []
+
+[rules."audio.silence_share"]
+outcome = "pass"
+value_bp = 0
+saved_bytes = 0
+items = []
+
+[rules."render.antialias_or_resolution"]
+outcome = "pass"
+value_bytes = 5621568
+saved_bytes = 0
+items = ["assets/index-b00aa83b.js"]
+
+[rules."textures.over_budget"]
+outcome = "pass"
+value_bytes = 5238128
+saved_bytes = 2880000
+items = ["assets/frame-1200x800.png"]
+
+[rules."files.duplicate"]
+outcome = "pass"
+value_groups = 0
+saved_bytes = 0
+saved_decoded_bytes = 0
+items = []

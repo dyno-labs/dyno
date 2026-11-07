@@ -1,0 +1,32 @@
+---
+source: crates/dyno-cli/tests/commands.rs
+expression: json(&outcome)
+---
+{
+  "checks": [
+    {
+      "detail": null,
+      "id": "device_connection",
+      "phase": 2,
+      "reason": "not built yet: doctor is a Phase 2 command",
+      "verdict": "incomplete"
+    },
+    {
+      "detail": null,
+      "id": "device_trust",
+      "phase": 2,
+      "reason": "not built yet: doctor is a Phase 2 command",
+      "verdict": "incomplete"
+    },
+    {
+      "detail": null,
+      "id": "xcode",
+      "phase": 2,
+      "reason": "not built yet: doctor is a Phase 2 command",
+      "verdict": "incomplete"
+    }
+  ],
+  "phase": 2,
+  "schema_version": 0,
+  "status": "incomplete"
+}

@@ -1,0 +1,12 @@
+{
+  "name": "dyno-fixture-bundles",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Pinned npm inputs for the dyno fixture bundles. generate.sh installs these in a temporary folder.",
+  "dependencies": {
+    "esbuild": "0.28.2",
+    "howler": "2.2.4",
+    "pixi7": "npm:pixi.js@7.4.3",
+    "pixi8": "npm:pixi.js@8.22.0"
+  }
+}

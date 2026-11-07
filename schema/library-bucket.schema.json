@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LibraryBucket",
+  "description": "What a library does. Only the rendering bucket says how the game draws.",
+  "oneOf": [
+    {
+      "description": "Draws the game, such as Pixi.",
+      "type": "string",
+      "const": "rendering"
+    },
+    {
+      "description": "Plays sound, such as Howler.",
+      "type": "string",
+      "const": "audio"
+    },
+    {
+      "description": "Anything else, such as an SDK or a utility.",
+      "type": "string",
+      "const": "other"
+    }
+  ]
+}

@@ -1,0 +1,189 @@
+# Expected static scan values for fixtures/pixi7-aa/build.
+# Pixi v7 new Application with antialias on and resolution uncapped; power of two images get mipmaps.
+# Formulas: docs/design/static-scan.md. Byte counts are integers. File lists are sorted by path
+# (byte order). A Howler src list keeps its written order, because Howler plays the first format it can.
+# Each test reads only its own top-level table. Do not edit by hand without re-deriving.
+fixture = "pixi7-aa"
+input = "build"
+
+[profile]
+# The reference profile: an iPhone 17 frame at DPR 3. Tests pass these to the model, so a profile change only moves numbers.
+dpr_milli = 3000
+frame_css = [402, 874]
+webgpu = false
+
+[inventory]
+file_count = 5
+total_bytes = 563092
+build_id = "5171d620520b04786a32edb632a150f86c55bdfbed51657f382a1967cf608457"
+
+[[inventory.file]]
+path = "assets/atlas-1024x1024.png"
+bytes = 6539
+bucket = "image"
+sha256 = "bdf14666afbaa3e5efdcab85d0f91c9642ce2b820aca8be1ca23f3d7929be59f"
+
+[[inventory.file]]
+path = "assets/panel-1000x600.png"
+bytes = 63505
+bucket = "image"
+sha256 = "ebbb9afe6edb5b6a19a7fc0f350e626ce49d9f40a0d52452ce7a779300da2493"
+
+[[inventory.file]]
+path = "assets/tile-512x512.jpg"
+bytes = 13874
+bucket = "image"
+sha256 = "08162c97e8233879c1358eed966128284d5c12b27f80084859ea549632dcd98f"
+
+[[inventory.file]]
+path = "index.html"
+bytes = 235
+bucket = "html"
+sha256 = "f1aeafaed93749e111ad1e6072c7ed97758f437367fb71b4b762442794ea35d8"
+
+[[inventory.file]]
+path = "main.js"
+bytes = 478939
+bucket = "js"
+sha256 = "e25989704afef33b380c0bd8b3ae6b06d9652ae5775ba890f3eadafd0786426a"
+
+[bytes]
+# gzip: flate2 level 9, gzip member with a 10 byte header and no name. brotli: quality 11, lgwin 22.
+# Compressed sizes exist only for js, css, html and data. They are exact for the pinned crate versions.
+
+[bytes.js]
+files = 1
+bytes = 478939
+gzip_bytes = 142955
+brotli_bytes = 119374
+
+[bytes.html]
+files = 1
+bytes = 235
+gzip_bytes = 182
+brotli_bytes = 91
+
+[bytes.image]
+files = 3
+bytes = 83918
+
+[textures]
+engine_for_mips = "pixi7"
+# gpu_bytes: raster = sum over levels of w * h * 4; Basis (ETC1S, UASTC) = ASTC 4x4 = sum of ceil(w/4) * ceil(h/4) * 16;
+# raw KTX2 = sum of level uncompressed lengths. Mips: Pixi v7 power of two images, Spine pages with a MipMap filter, KTX2 and Basis levels.
+
+[[textures.file]]
+path = "assets/atlas-1024x1024.png"
+status = "estimated"
+format = "png"
+width = 1024
+height = 1024
+levels = 11
+mips = "pixi7_pow2"
+gpu_format = "rgba8"
+gpu_bytes = 5592404
+astc_bytes = 1398128
+
+[[textures.file]]
+path = "assets/panel-1000x600.png"
+status = "estimated"
+format = "png"
+width = 1000
+height = 600
+levels = 1
+mips = "none"
+gpu_format = "rgba8"
+gpu_bytes = 2400000
+astc_bytes = 600000
+
+[[textures.file]]
+path = "assets/tile-512x512.jpg"
+status = "estimated"
+format = "jpeg"
+width = 512
+height = 512
+levels = 10
+mips = "pixi7_pow2"
+gpu_format = "rgba8"
+gpu_bytes = 1398100
+astc_bytes = 349552
+
+[textures.total]
+status = "estimated"
+lo_bytes = 9390504
+hi_bytes = 18781008
+top5 = ["assets/atlas-1024x1024.png", "assets/panel-1000x600.png", "assets/tile-512x512.jpg"]
+not_covered = []
+
+[bundle]
+scanned = ["main.js"]
+invalid = []
+
+[bundle.versions]
+# A missing key means not detected. web_sdk_version is always unsupported: its packages are 0.0.0.
+pixi = "7.4.3"
+web_sdk = false
+
+[[bundle.render_site]]
+file = "main.js"
+callee = "new"
+antialias = true
+antialias_from = "literal"
+resolution_milli = 3000
+resolution_from = "devicePixelRatio"
+preference = "webgl"
+modelled_as = "webgl"
+auto_density = true
+size_from = "resizeTo"
+canvas_css = [402, 874]
+canvas_backing = [1206, 2622]
+canvas_pixels = 3162132
+canvas_bytes = 12648528
+
+[bundle.external]
+hosts = []
+dynamic_host_sites = 0
+
+[duplicates]
+# Groups of byte-identical files (same SHA-256), sorted by first path. Empty files never form a group.
+# wasted_bytes = (n - 1) * size. decoded_bytes_saved = (n - 1) * gpu_bytes (images) or decoded_bytes_48k (audio).
+group_count = 0
+
+[rules]
+# Default thresholds are proposals (docs/design/static-scan.md, section Rules). saved_bytes is what the fix text promises.
+
+[rules."audio.pcm_over_budget"]
+outcome = "pass"
+value_bytes = 0
+saved_bytes = 0
+
+[rules."audio.stereo"]
+outcome = "pass"
+value_bytes = 0
+saved_bytes = 0
+items = []
+
+[rules."audio.silence_share"]
+outcome = "pass"
+value_bp = 0
+saved_bytes = 0
+items = []
+
+[rules."render.antialias_or_resolution"]
+outcome = "warn"
+value_bytes = 12648528
+saved_bytes = 7026960
+items = ["main.js"]
+
+[rules."textures.over_budget"]
+outcome = "pass"
+value_bytes = 9390504
+saved_bytes = 7042824
+items = ["assets/atlas-1024x1024.png", "assets/panel-1000x600.png", "assets/tile-512x512.jpg"]
+
+[rules."files.duplicate"]
+outcome = "pass"
+value_groups = 0
+saved_bytes = 0
+saved_decoded_bytes = 0
+items = []

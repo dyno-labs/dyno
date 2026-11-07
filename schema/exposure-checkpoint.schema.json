@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExposureCheckpoint",
+  "description": "Sampled exposure, written to storage every 30 s or so and sent on the next load. A page\nthat dies loses only the time since its last checkpoint.",
+  "type": "object",
+  "properties": {
+    "host_profile": {
+      "$ref": "#/$defs/ProfileRef"
+    },
+    "samples": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ExposureSample"
+      }
+    },
+    "schema_version": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "schema_version",
+    "host_profile",
+    "samples"
+  ],
+  "$defs": {
+    "ExposureSample": {
+      "description": "Live time for one game frame in one state.",
+      "type": "object",
+      "properties": {
+        "build_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "frame_state": {
+          "$ref": "#/$defs/FrameState"
+        },
+        "game_id": {
+          "type": "string"
+        },
+        "live_ms": {
+          "description": "Time the frame was live in this state.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "sampled_share": {
+          "description": "The share of sessions that log exposure, from above 0 to 1.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "game_id",
+        "frame_state",
+        "live_ms",
+        "sampled_share"
+      ]
+    },
+    "FrameState": {
+      "description": "Whether a game frame is the one on screen. Reels calls an inactive frame preloaded.",
+      "oneOf": [
+        {
+          "description": "On screen, after the host's active message.",
+          "type": "string",
+          "const": "active"
+        },
+        {
+          "description": "Mounted but not on screen.",
+          "type": "string",
+          "const": "inactive"
+        }
+      ]
+    },
+    "ProfileRef": {
+      "description": "Which host profile, and which version of it, a result used.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ]
+    }
+  }
+}

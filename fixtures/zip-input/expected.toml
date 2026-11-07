@@ -1,0 +1,294 @@
+# Expected static scan values for fixtures/zip-input/build.zip.
+# duplicates/build zipped under one top-level folder (game/). Inventory strips it, so every value,
+# build_id included, equals duplicates/expected.toml.
+# Formulas: docs/design/static-scan.md. Byte counts are integers. File lists are sorted by path
+# (byte order). A Howler src list keeps its written order, because Howler plays the first format it can.
+# Each test reads only its own top-level table. Do not edit by hand without re-deriving.
+fixture = "zip-input"
+input = "build.zip"
+
+[profile]
+# The reference profile: an iPhone 17 frame at DPR 3. Tests pass these to the model, so a profile change only moves numbers.
+dpr_milli = 3000
+frame_css = [402, 874]
+webgpu = false
+
+[inventory]
+file_count = 11
+total_bytes = 11852
+build_id = "2bd40bc63a36d80d7e534ea4a4f6521425850b4a3d6f60af727dce5afea7229b"
+
+[[inventory.file]]
+path = "a/coin.png"
+bytes = 2159
+bucket = "image"
+sha256 = "aef4612785d87c6a55c1b33707c9cc245f5aa96a0e91d784da500f54c3681094"
+
+[[inventory.file]]
+path = "audio/click-old.mp3"
+bytes = 2396
+bucket = "audio"
+sha256 = "7247105ea3f057e49de25be99ef7947985ee69db77a2d5a84eedc56e5efb12da"
+
+[[inventory.file]]
+path = "audio/click.mp3"
+bytes = 2396
+bucket = "audio"
+sha256 = "7247105ea3f057e49de25be99ef7947985ee69db77a2d5a84eedc56e5efb12da"
+
+[[inventory.file]]
+path = "b/coin-copy.png"
+bytes = 2159
+bucket = "image"
+sha256 = "aef4612785d87c6a55c1b33707c9cc245f5aa96a0e91d784da500f54c3681094"
+
+[[inventory.file]]
+path = "b/gem.png"
+bytes = 483
+bucket = "image"
+sha256 = "0a072832db511b7a74be3377197127738fb5aeaf27ca2087d14d9ae2ed3ae873"
+
+[[inventory.file]]
+path = "c/coin.png"
+bytes = 2159
+bucket = "image"
+sha256 = "aef4612785d87c6a55c1b33707c9cc245f5aa96a0e91d784da500f54c3681094"
+
+[[inventory.file]]
+path = "data/config.backup.json"
+bytes = 22
+bucket = "data"
+sha256 = "b054a9a4e01c08564cac23c72146cd71fbe640dcc1f02b7d2e04aecb2b03bffe"
+
+[[inventory.file]]
+path = "data/config.json"
+bytes = 22
+bucket = "data"
+sha256 = "b054a9a4e01c08564cac23c72146cd71fbe640dcc1f02b7d2e04aecb2b03bffe"
+
+[[inventory.file]]
+path = "empty-a.txt"
+bytes = 0
+bucket = "data"
+sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+[[inventory.file]]
+path = "empty-b.txt"
+bytes = 0
+bucket = "data"
+sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+[[inventory.file]]
+path = "index.html"
+bytes = 56
+bucket = "html"
+sha256 = "729ade2308d61c9a5e8f4eb371c1ba9515e228495b01726f88b6f7cbc3566693"
+
+[bytes]
+# gzip: flate2 level 9, gzip member with a 10 byte header and no name. brotli: quality 11, lgwin 22.
+# Compressed sizes exist only for js, css, html and data. They are exact for the pinned crate versions.
+
+[bytes.html]
+files = 1
+bytes = 56
+gzip_bytes = 79
+brotli_bytes = 39
+
+[bytes.image]
+files = 4
+bytes = 6960
+
+[bytes.audio]
+files = 2
+bytes = 4792
+
+[bytes.data]
+files = 4
+bytes = 44
+gzip_bytes = 120
+brotli_bytes = 54
+
+[audio]
+# decoded_bytes_R = ceil(ticks * R / tick_rate) * channels * 4, for R = 48000 and 24000.
+
+[[audio.file]]
+path = "audio/click-old.mp3"
+status = "estimated"
+container = "mp3"
+codec = "mp3"
+channels = 1
+ticks = 6615
+tick_rate = 22050
+decoded_bytes_48k = 57600
+decoded_bytes_24k = 28800
+
+[[audio.file]]
+path = "audio/click.mp3"
+status = "estimated"
+container = "mp3"
+codec = "mp3"
+channels = 1
+ticks = 6615
+tick_rate = 22050
+decoded_bytes_48k = 57600
+decoded_bytes_24k = 28800
+# A sound group is one sound in several formats (same folder and stem, or one Howler src list).
+# It counts once, at its largest member. Ties go to the first path.
+
+[[audio.group]]
+paths = ["audio/click.mp3"]
+representative = "audio/click.mp3"
+channels = 1
+decoded_bytes_48k = 57600
+decoded_bytes_24k = 28800
+
+[[audio.group]]
+paths = ["audio/click-old.mp3"]
+representative = "audio/click-old.mp3"
+channels = 1
+decoded_bytes_48k = 57600
+decoded_bytes_24k = 28800
+
+[audio.total]
+status = "estimated"
+decoded_bytes_48k = 115200
+decoded_bytes_24k = 57600
+not_covered = []
+
+[textures]
+engine_for_mips = "unknown"
+# gpu_bytes: raster = sum over levels of w * h * 4; Basis (ETC1S, UASTC) = ASTC 4x4 = sum of ceil(w/4) * ceil(h/4) * 16;
+# raw KTX2 = sum of level uncompressed lengths. Mips: Pixi v7 power of two images, Spine pages with a MipMap filter, KTX2 and Basis levels.
+
+[[textures.file]]
+path = "a/coin.png"
+status = "estimated"
+format = "png"
+width = 64
+height = 64
+levels = 1
+mips = "none"
+gpu_format = "rgba8"
+gpu_bytes = 16384
+astc_bytes = 4096
+
+[[textures.file]]
+path = "b/coin-copy.png"
+status = "estimated"
+format = "png"
+width = 64
+height = 64
+levels = 1
+mips = "none"
+gpu_format = "rgba8"
+gpu_bytes = 16384
+astc_bytes = 4096
+
+[[textures.file]]
+path = "b/gem.png"
+status = "estimated"
+format = "png"
+width = 48
+height = 48
+levels = 1
+mips = "none"
+gpu_format = "rgba8"
+gpu_bytes = 9216
+astc_bytes = 2304
+
+[[textures.file]]
+path = "c/coin.png"
+status = "estimated"
+format = "png"
+width = 64
+height = 64
+levels = 1
+mips = "none"
+gpu_format = "rgba8"
+gpu_bytes = 16384
+astc_bytes = 4096
+
+[textures.total]
+status = "estimated"
+lo_bytes = 58368
+hi_bytes = 116736
+top5 = ["a/coin.png", "b/coin-copy.png", "c/coin.png", "b/gem.png"]
+not_covered = []
+
+[bundle]
+scanned = []
+invalid = []
+# A page with no script, engine or external URL draws with HTML and CSS: no canvas.
+draws_with_html = true
+
+[bundle.versions]
+# A missing key means not detected. web_sdk_version is always unsupported: its packages are 0.0.0.
+web_sdk = false
+
+[bundle.external]
+hosts = []
+dynamic_host_sites = 0
+
+[duplicates]
+# Groups of byte-identical files (same SHA-256), sorted by first path. Empty files never form a group.
+# wasted_bytes = (n - 1) * size. decoded_bytes_saved = (n - 1) * gpu_bytes (images) or decoded_bytes_48k (audio).
+group_count = 3
+
+[[duplicates.group]]
+sha256 = "aef4612785d87c6a55c1b33707c9cc245f5aa96a0e91d784da500f54c3681094"
+size = 2159
+paths = ["a/coin.png", "b/coin-copy.png", "c/coin.png"]
+wasted_bytes = 4318
+decoded_bytes_saved = 32768
+
+[[duplicates.group]]
+sha256 = "7247105ea3f057e49de25be99ef7947985ee69db77a2d5a84eedc56e5efb12da"
+size = 2396
+paths = ["audio/click-old.mp3", "audio/click.mp3"]
+wasted_bytes = 2396
+decoded_bytes_saved = 57600
+
+[[duplicates.group]]
+sha256 = "b054a9a4e01c08564cac23c72146cd71fbe640dcc1f02b7d2e04aecb2b03bffe"
+size = 22
+paths = ["data/config.backup.json", "data/config.json"]
+wasted_bytes = 22
+decoded_bytes_saved = 0
+
+[rules]
+# Default thresholds are proposals (docs/design/static-scan.md, section Rules). saved_bytes is what the fix text promises.
+
+[rules."audio.pcm_over_budget"]
+outcome = "pass"
+value_bytes = 115200
+saved_bytes = 57600
+
+[rules."audio.stereo"]
+outcome = "pass"
+value_bytes = 0
+saved_bytes = 0
+items = []
+
+[rules."audio.silence_share"]
+outcome = "pass"
+value_bp = 0
+saved_bytes = 0
+items = []
+
+[rules."render.antialias_or_resolution"]
+outcome = "pass"
+value_bytes = 0
+saved_bytes = 0
+
+[rules."textures.over_budget"]
+outcome = "pass"
+value_bytes = 58368
+saved_bytes = 43776
+items = ["a/coin.png", "b/coin-copy.png", "c/coin.png", "b/gem.png"]
+
+[rules."files.duplicate"]
+outcome = "warn"
+value_groups = 3
+saved_bytes = 6736
+saved_decoded_bytes = 90368
+items = ["a/coin.png", "audio/click-old.mp3", "data/config.backup.json"]

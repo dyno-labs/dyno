@@ -1,0 +1,344 @@
+# Expected static scan values for fixtures/broken/build.
+# One broken file per family next to two good files. Totals cover the good files; the rest are listed as not covered.
+# Formulas: docs/design/static-scan.md. Byte counts are integers. File lists are sorted by path
+# (byte order). A Howler src list keeps its written order, because Howler plays the first format it can.
+# Each test reads only its own top-level table. Do not edit by hand without re-deriving.
+fixture = "broken"
+input = "build"
+
+[profile]
+# The reference profile: an iPhone 17 frame at DPR 3. Tests pass these to the model, so a profile change only moves numbers.
+dpr_milli = 3000
+frame_css = [402, 874]
+webgpu = false
+
+[inventory]
+file_count = 18
+total_bytes = 87590
+build_id = "3147d772ce56a83fe058a9025b3ccdbd1fc766b7e0f133880e8aa6fcc0ce3373"
+
+[[inventory.file]]
+path = "bad/adts-truncated.aac"
+bytes = 15991
+bucket = "audio"
+sha256 = "eb8738f60a011cc1d88a4ece7cd62e5b3320181b9f5959372a10c648fb7edb06"
+
+[[inventory.file]]
+path = "bad/avif-ftyp-only.avif"
+bytes = 32
+bucket = "image"
+sha256 = "2b74efde644f9475a392c2b2ef9b8c3a1a959cf863f45260de317d0842dd7996"
+
+[[inventory.file]]
+path = "bad/bad-syntax.js"
+bytes = 27
+bucket = "js"
+sha256 = "46a34e5ab3a993c26062561d611e4660e7b4a7a1702fe2b5a47b493d3929451f"
+
+[[inventory.file]]
+path = "bad/basis-truncated.basis"
+bytes = 40
+bucket = "texture"
+sha256 = "1f0559df3f899003a7de925a1658b15e93b01b16900bb4389feac85cc8ef77cc"
+
+[[inventory.file]]
+path = "bad/jpeg-no-sof.jpg"
+bytes = 20
+bucket = "image"
+sha256 = "e855eb138f324c6d1166b27f5e8f878777e3252dee3e9a325a808d5a9a97cc27"
+
+[[inventory.file]]
+path = "bad/ktx2-truncated.ktx2"
+bytes = 200
+bucket = "texture"
+sha256 = "eca9661bba2645e6669cae4a8d18f31b2d36ee25edffb7b73355aaf78fa9a8af"
+
+[[inventory.file]]
+path = "bad/m4a-no-moov.m4a"
+bytes = 4096
+bucket = "audio"
+sha256 = "6cc410f8d0ffd04d51d9897bdbd5b010c20fbe6bf534322590c7e7f34a90fb22"
+
+[[inventory.file]]
+path = "bad/mp3-no-sync.mp3"
+bytes = 2048
+bucket = "audio"
+sha256 = "e5a00aa9991ac8a5ee3109844d84a55583bd20572ad3ffcd42792f3c36b183ad"
+
+[[inventory.file]]
+path = "bad/opus-truncated-head.opus"
+bytes = 40
+bucket = "audio"
+sha256 = "167e09a13e1ee0e02039ad2fae5056c56491547484f8d9341652d3adb4ea947d"
+
+[[inventory.file]]
+path = "bad/png-truncated.png"
+bytes = 20
+bucket = "image"
+sha256 = "0152a609bddce19ca6ea23719eb441c3f4f9deb04527fbc025dbcb0ad352a63f"
+
+[[inventory.file]]
+path = "bad/sprite-broken.json"
+bytes = 57
+bucket = "data"
+sha256 = "5b339c885628ed12ceca1be6b270b397311667c4499f0b0b965c7153ff087a0b"
+
+[[inventory.file]]
+path = "bad/vorbis-truncated.ogg"
+bytes = 7307
+bucket = "audio"
+sha256 = "31f74d8509c9d9e872561d372a7fdfd15c47300921fae210ee0dfa3a8f73b6f0"
+
+[[inventory.file]]
+path = "bad/wav-truncated.wav"
+bytes = 20000
+bucket = "audio"
+sha256 = "210c0a731cf30e2801e312d821d876199479ad7c935242fa8fc3c8bd1c172f39"
+
+[[inventory.file]]
+path = "bad/webm-truncated.webm"
+bytes = 11496
+bucket = "audio"
+sha256 = "d36d3d3f19ac06d5707ed0bb9b8eb3df379f81e700d8d70a3fc6bc9cdf7cf8f4"
+
+[[inventory.file]]
+path = "bad/webp-truncated.webp"
+bytes = 20
+bucket = "image"
+sha256 = "17086ee26480a4a9d24543879fac8a5f98ffe13f5c917169142198b002edfa07"
+
+[[inventory.file]]
+path = "index.html"
+bytes = 96
+bucket = "html"
+sha256 = "c724791c574eab62169a15e5ee80f822f9eecf507b76d32ed8509cf5f338f840"
+
+[[inventory.file]]
+path = "ok/valid-128x128.png"
+bytes = 4006
+bucket = "image"
+sha256 = "4e47c19bb4b1ceb248c3dc7eb56b78993df6b344d80701a094293b5df2f9a268"
+
+[[inventory.file]]
+path = "ok/valid-tone.wav"
+bytes = 22094
+bucket = "audio"
+sha256 = "291233b693dfe129f993402a4df4c03c01b3d3e6aa0668bfe3e029047fa69750"
+
+[bytes]
+# gzip: flate2 level 9, gzip member with a 10 byte header and no name. brotli: quality 11, lgwin 22.
+# Compressed sizes exist only for js, css, html and data. They are exact for the pinned crate versions.
+
+[bytes.js]
+files = 1
+bytes = 27
+gzip_bytes = 47
+brotli_bytes = 31
+
+[bytes.html]
+files = 1
+bytes = 96
+gzip_bytes = 102
+brotli_bytes = 61
+
+[bytes.image]
+files = 5
+bytes = 4098
+
+[bytes.texture]
+files = 2
+bytes = 240
+
+[bytes.audio]
+files = 8
+bytes = 83072
+
+[bytes.data]
+files = 1
+bytes = 57
+gzip_bytes = 80
+brotli_bytes = 61
+
+[audio]
+# decoded_bytes_R = ceil(ticks * R / tick_rate) * channels * 4, for R = 48000 and 24000.
+
+[[audio.file]]
+path = "bad/adts-truncated.aac"
+status = "invalid"
+reason = "truncated"
+
+[[audio.file]]
+path = "bad/m4a-no-moov.m4a"
+status = "invalid"
+reason = "missing moov (truncated)"
+
+[[audio.file]]
+path = "bad/mp3-no-sync.mp3"
+status = "invalid"
+reason = "no frame sync"
+
+[[audio.file]]
+path = "bad/opus-truncated-head.opus"
+status = "invalid"
+reason = "truncated"
+
+[[audio.file]]
+path = "bad/vorbis-truncated.ogg"
+status = "invalid"
+reason = "truncated"
+
+[[audio.file]]
+path = "bad/wav-truncated.wav"
+status = "invalid"
+reason = "truncated"
+
+[[audio.file]]
+path = "bad/webm-truncated.webm"
+status = "invalid"
+reason = "truncated"
+
+[[audio.file]]
+path = "ok/valid-tone.wav"
+status = "estimated"
+container = "wav"
+codec = "pcm"
+channels = 1
+ticks = 11025
+tick_rate = 22050
+decoded_bytes_48k = 96000
+decoded_bytes_24k = 48000
+# A sound group is one sound in several formats (same folder and stem, or one Howler src list).
+# It counts once, at its largest member. Ties go to the first path.
+
+[[audio.group]]
+paths = ["ok/valid-tone.wav"]
+representative = "ok/valid-tone.wav"
+channels = 1
+decoded_bytes_48k = 96000
+decoded_bytes_24k = 48000
+silence_bp = 0
+
+[audio.total]
+silence_by_decode_bp = 0
+status = "estimated"
+decoded_bytes_48k = 96000
+decoded_bytes_24k = 48000
+not_covered = ["bad/adts-truncated.aac", "bad/m4a-no-moov.m4a", "bad/mp3-no-sync.mp3", "bad/opus-truncated-head.opus", "bad/vorbis-truncated.ogg", "bad/wav-truncated.wav", "bad/webm-truncated.webm"]
+
+[sprites]
+# silence_us = duration_us - union of sprite ranges clipped to the file. duration_us = floor(ticks * 1e6 / tick_rate).
+# silence_bp = floor(silence_us * 10000 / duration_us). silence_bytes_48k = floor(decoded_bytes_48k * silence_us / duration_us).
+
+[[sprites.map]]
+source = "bad/sprite-broken.json"
+status = "invalid"
+reason = "json"
+
+[textures]
+engine_for_mips = "unknown"
+# gpu_bytes: raster = sum over levels of w * h * 4; Basis (ETC1S, UASTC) = ASTC 4x4 = sum of ceil(w/4) * ceil(h/4) * 16;
+# raw KTX2 = sum of level uncompressed lengths. Mips: Pixi v7 power of two images, Spine pages with a MipMap filter, KTX2 and Basis levels.
+
+[[textures.file]]
+path = "bad/avif-ftyp-only.avif"
+status = "invalid"
+reason = "header"
+
+[[textures.file]]
+path = "bad/basis-truncated.basis"
+status = "invalid"
+reason = "truncated"
+
+[[textures.file]]
+path = "bad/jpeg-no-sof.jpg"
+status = "invalid"
+reason = "header"
+
+[[textures.file]]
+path = "bad/ktx2-truncated.ktx2"
+status = "invalid"
+reason = "truncated"
+
+[[textures.file]]
+path = "bad/png-truncated.png"
+status = "invalid"
+reason = "header"
+
+[[textures.file]]
+path = "bad/webp-truncated.webp"
+status = "invalid"
+reason = "header"
+
+[[textures.file]]
+path = "ok/valid-128x128.png"
+status = "estimated"
+format = "png"
+width = 128
+height = 128
+levels = 1
+mips = "none"
+gpu_format = "rgba8"
+gpu_bytes = 65536
+astc_bytes = 16384
+
+[textures.total]
+status = "estimated"
+lo_bytes = 65536
+hi_bytes = 131072
+top5 = ["ok/valid-128x128.png"]
+not_covered = ["bad/avif-ftyp-only.avif", "bad/basis-truncated.basis", "bad/jpeg-no-sof.jpg", "bad/ktx2-truncated.ktx2", "bad/png-truncated.png", "bad/webp-truncated.webp"]
+
+[bundle]
+scanned = ["bad/bad-syntax.js"]
+invalid = ["bad/bad-syntax.js"]
+
+[bundle.versions]
+# A missing key means not detected. web_sdk_version is always unsupported: its packages are 0.0.0.
+web_sdk = false
+
+[bundle.external]
+hosts = []
+dynamic_host_sites = 0
+
+[duplicates]
+# Groups of byte-identical files (same SHA-256), sorted by first path. Empty files never form a group.
+# wasted_bytes = (n - 1) * size. decoded_bytes_saved = (n - 1) * gpu_bytes (images) or decoded_bytes_48k (audio).
+group_count = 0
+
+[rules]
+# Default thresholds are proposals (docs/design/static-scan.md, section Rules). saved_bytes is what the fix text promises.
+
+[rules."audio.pcm_over_budget"]
+outcome = "incomplete"
+value_bytes = 96000
+saved_bytes = 48000
+
+[rules."audio.stereo"]
+outcome = "incomplete"
+value_bytes = 0
+saved_bytes = 0
+items = []
+
+[rules."audio.silence_share"]
+outcome = "incomplete"
+value_bp = 0
+saved_bytes = 0
+items = []
+
+[rules."render.antialias_or_resolution"]
+outcome = "incomplete"
+reason = "no render config found"
+saved_bytes = 0
+
+[rules."textures.over_budget"]
+outcome = "incomplete"
+value_bytes = 65536
+saved_bytes = 49152
+items = ["ok/valid-128x128.png"]
+
+[rules."files.duplicate"]
+outcome = "pass"
+value_groups = 0
+saved_bytes = 0
+saved_decoded_bytes = 0
+items = []

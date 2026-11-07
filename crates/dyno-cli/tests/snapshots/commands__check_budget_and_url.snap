@@ -1,0 +1,1252 @@
+---
+source: crates/dyno-cli/tests/commands.rs
+expression: json(&outcome)
+---
+{
+  "deterministic": {
+    "build": {
+      "build_id": "54bc36cfde26ce4949a736033d9f3d251b6f2ba547725ab7e19779f77be911c5",
+      "files": [
+        {
+          "bytes": 15,
+          "kind": "data",
+          "path": "assets/sprites.json",
+          "sha256": "7aacab36ba7f1c2523871d4f05569c561b095c83cf5e8118e06f5b952471dbc8"
+        },
+        {
+          "bytes": 71,
+          "kind": "html",
+          "path": "index.html",
+          "sha256": "2fbc131507b8cc28ec7706447b0378891b6b3abee70be9f4cbf6cf845fb2ff10"
+        },
+        {
+          "bytes": 77,
+          "kind": "js",
+          "path": "js/game.js",
+          "sha256": "01c9f6b75928cc5e9d0ee5691e9da584e059febf1561e76be1cf38f4a5380fc9"
+        }
+      ]
+    },
+    "findings": [
+      {
+        "fixes": [],
+        "measures": [
+          "static.audio.decoded_24k",
+          "static.audio.decoded_48k"
+        ],
+        "phase": 1,
+        "reason": null,
+        "rule": "audio.pcm_over_budget",
+        "verdict": "pass"
+      },
+      {
+        "fixes": [],
+        "measures": [
+          "static.audio.sprite_silence"
+        ],
+        "phase": 1,
+        "reason": null,
+        "rule": "audio.silence_share",
+        "verdict": "pass"
+      },
+      {
+        "fixes": [],
+        "measures": [
+          "static.audio.stereo_files",
+          "static.audio.stereo_mono_safe"
+        ],
+        "phase": 1,
+        "reason": null,
+        "rule": "audio.stereo",
+        "verdict": "pass"
+      },
+      {
+        "fixes": [],
+        "measures": [
+          "static.bytes.duplicates"
+        ],
+        "phase": 1,
+        "reason": null,
+        "rule": "files.duplicate",
+        "verdict": "pass"
+      },
+      {
+        "fixes": [],
+        "measures": [
+          "static.inventory.files"
+        ],
+        "phase": 2,
+        "reason": "not built yet",
+        "rule": "files.unreferenced",
+        "verdict": "incomplete"
+      },
+      {
+        "fixes": [],
+        "measures": [
+          "static.render.antialias",
+          "static.render.resolution_uncapped"
+        ],
+        "phase": 1,
+        "reason": "no render config found",
+        "rule": "render.antialias_or_resolution",
+        "verdict": "incomplete"
+      },
+      {
+        "fixes": [],
+        "measures": [
+          "static.textures.decoded"
+        ],
+        "phase": 1,
+        "reason": null,
+        "rule": "textures.over_budget",
+        "verdict": "pass"
+      }
+    ],
+    "inputs": {
+      "budget": {
+        "name": "tiny",
+        "sha256": "81b3f770ee77c92d5ce276325b872331dd57b224ed61c860258207b72779beb0"
+      },
+      "build": true,
+      "device": false,
+      "host_profile": {
+        "name": "reels",
+        "version": 1
+      },
+      "launch_url": true,
+      "scenario": "alone",
+      "spins": null
+    },
+    "measures": [
+      {
+        "evidence": [
+          {
+            "detail": "read the headers of 0 audio files",
+            "method": "file_header"
+          }
+        ],
+        "id": "static.audio.decoded_24k",
+        "items": [],
+        "phase": 1,
+        "reason": null,
+        "required": true,
+        "scope": {
+          "covers": "supplied_files",
+          "not_covered": []
+        },
+        "source": "static",
+        "status": "estimated",
+        "uncertainty": {
+          "high": null,
+          "kind": "floor",
+          "low": null,
+          "note": "0 to 23% below what the browser holds"
+        },
+        "unit": "bytes",
+        "value": 0
+      },
+      {
+        "evidence": [
+          {
+            "detail": "read the headers of 0 audio files",
+            "method": "file_header"
+          }
+        ],
+        "id": "static.audio.decoded_48k",
+        "items": [],
+        "phase": 1,
+        "reason": null,
+        "required": true,
+        "scope": {
+          "covers": "supplied_files",
+          "not_covered": []
+        },
+        "source": "static",
+        "status": "estimated",
+        "uncertainty": {
+          "high": null,
+          "kind": "floor",
+          "low": null,
+          "note": "0 to 23% below what the browser holds"
+        },
+        "unit": "bytes",
+        "value": 0
+      },
+      {
+        "evidence": [
+          {
+            "detail": "decoded 0 of 0 sound groups with symphonia",
+            "method": "audio_decode"
+          }
+        ],
+        "id": "static.audio.silence_by_decode",
+        "items": [],
+        "phase": 1,
+        "reason": null,
+        "required": true,
+        "scope": {
+          "covers": "supplied_files",
+          "not_covered": []
+        },
+        "source": "static",
+        "status": "estimated",
+        "uncertainty": {
+          "high": null,
+          "kind": "exact",
+          "low": null,
+          "note": "10 ms windows at or below -60 dBFS, over the time the header gives"
+        },
+        "unit": "basis_points",
+        "value": 0
+      },
+      {
+        "evidence": [
+          {
+            "detail": "read 0 sprite maps",
+            "method": "sprite_map"
+          }
+        ],
+        "id": "static.audio.sprite_silence",
+        "items": [],
+        "phase": 1,
+        "reason": null,
+        "required": true,
+        "scope": {
+          "covers": "supplied_files",
+          "not_covered": []
+        },
+        "source": "static",
+        "status": "estimated",
+        "uncertainty": {
+          "high": null,
+          "kind": "exact",
+          "low": null,
+          "note": "time no sprite covers: an upper bound on what trimming saves"
+        },
+        "unit": "basis_points",
+        "value": 0
+      },
+      {
+        "evidence": [
+          {
+            "detail": "read the headers of 0 audio files",
+            "method": "file_header"
+          }
+        ],
+        "id": "static.audio.stereo_files",
+        "items": [],
+        "phase": 1,
+        "reason": null,
+        "required": true,
+        "scope": {
+          "covers": "supplied_files",
+          "not_covered": []
+        },
+        "source": "static",
+        "status": "estimated",
+        "uncertainty": {
+          "high": null,
+          "kind": "exact",
+          "low": null,
+          "note": null
+        },
+        "unit": "count",
+        "value": 0
+      },
+      {
+        "evidence": [
+          {
+            "detail": "decoded 0 of 0 sound groups with symphonia",
+            "method": "audio_decode"
+          }
+        ],
+        "id": "static.audio.stereo_mono_safe",
+        "items": [],
+        "phase": 1,
+        "reason": null,
+        "required": true,
+        "scope": {
+          "covers": "supplied_files",
+          "not_covered": []
+        },
+        "source": "static",
+        "status": "estimated",
+        "uncertainty": {
+          "high": null,
+          "kind": "exact",
+          "low": null,
+          "note": "safe to make mono: the difference between the channels is 40 dB below what they share; cancels: a mono mix keeps 25% of the energy or less"
+        },
+        "unit": "count",
+        "value": 0
+      },
+      {
+        "evidence": [
+          {
+            "detail": "engine banners, comments and strings in scanned files: 1",
+            "method": "bundle_scan"
+          }
+        ],
+        "id": "static.bundle.engines",
+        "items": [],
+        "phase": 1,
+        "reason": null,
+        "required": true,
+        "scope": {
+          "covers": "supplied_files",
+          "not_covered": []
+        },
+        "source": "static",
+        "status": "estimated",
+        "uncertainty": {
+          "high": null,
+          "kind": "exact",
+          "low": null,
+          "note": null
+        },
+        "unit": "count",
+        "value": 0
+      },
+      {
+        "evidence": [
+          {
+            "detail": "whole URL values in HTML, CSS, JSON and the request positions of scripts, hosts: 0",
+            "method": "bundle_scan"
+          }
+        ],
+        "id": "static.bundle.external_urls",
+        "items": [],
+        "phase": 1,
+        "reason": null,
+        "required": true,
+        "scope": {
+          "covers": "supplied_files",
+          "not_covered": []
+        },
+        "source": "static",
+        "status": "estimated",
+        "uncertainty": {
+          "high": null,
+          "kind": "exact",
+          "low": null,
+          "note": null
+        },
+        "unit": "count",
+        "value": 0
+      },
+      {
+        "evidence": [],
+        "id": "static.bundle.source_map",
+        "items": [],
+        "phase": 2,
+        "reason": "not built yet",
+        "required": false,
+        "scope": {
+          "covers": "supplied_files",
+          "not_covered": []
+        },
+        "source": "static",
+        "status": "missing",
+        "uncertainty": {
+          "high": null,
+          "kind": "unknown",
+          "low": null,
+          "note": null
+        },
+        "unit": "bytes",
+        "value": null
+      },
+      {
+        "evidence": [
+          {
+            "detail": "the size of every file",
+            "method": "file_size"
+          }
+        ],
+        "id": "static.bytes.by_type",
+        "items": [
+          {
+            "key": "data",
+            "value": 15
+          },
+          {
+            "key": "html",
+            "value": 71
+          },
+          {
+            "key": "js",
+            "value": 77
+          }
+        ],
+        "phase": 1,
+        "reason": null,
+        "required": true,
+        "scope": {
+          "covers": "supplied_files",
+          "not_covered": []
+        },
+        "source": "static",
+        "status": "estimated",
+        "uncertainty": {
+          "high": null,
+          "kind": "exact",
+          "low": null,
+          "note": null
+        },
+        "unit": "bytes",
+        "value": 163
+      },
+      {
+        "evidence": [
+          {
+            "detail": "each js, css, html and data file compressed on its own with gzip and brotli",
+            "method": "file_size"
+          }
+        ],
+        "id": "static.bytes.compressed",
+        "items": [
+          {
+            "key": "data",
+            "value": 35
+          },
+          {
+            "key": "data.brotli",
+            "value": 19
+          },
+          {
+            "key": "html",
+            "value": 85
+          },
+          {
+            "key": "html.brotli",
+            "value": 37
+          },
+          {
+            "key": "js",
+            "value": 94
+          },
+          {
+            "key": "js.brotli",
+            "value": 74
+          }
+        ],
+        "phase": 1,
+        "reason": null,
+        "required": true,
+        "scope": {
+          "covers": "supplied_files",
+          "not_covered": [
+            "image, texture, audio, video, font and other files, which are not text"
+          ]
+        },
+        "source": "static",
+        "status": "estimated",
+        "uncertainty": {
+          "high": null,
+          "kind": "exact",
+          "low": null,
+          "note": "exact for the pinned flate2 (gzip level 9) and brotli (quality 11, window 22)"
+        },
+        "unit": "bytes",
+        "value": 214
+      },
+      {
+        "evidence": [
+          {
+            "detail": "files with the same SHA-256; the copy the build names is kept, else the first path",
+            "method": "file_hash"
+          }
+        ],
+        "id": "static.bytes.duplicates",
+        "items": [],
+        "phase": 1,
+        "reason": null,
+        "required": true,
+        "scope": {
+          "covers": "supplied_files",
+          "not_covered": []
+        },
+        "source": "static",
+        "status": "estimated",
+        "uncertainty": {
+          "high": null,
+          "kind": "exact",
+          "low": null,
+          "note": null
+        },
+        "unit": "bytes",
+        "value": 0
+      },
+      {
+        "evidence": [
+          {
+            "detail": "read and hashed every file",
+            "method": "file_hash"
+          }
+        ],
+        "id": "static.inventory.files",
+        "items": [],
+        "phase": 1,
+        "reason": null,
+        "required": true,
+        "scope": {
+          "covers": "supplied_files",
+          "not_covered": [
+            "symbolic links, and .DS_Store, Thumbs.db, desktop.ini, __MACOSX and .git anywhere"
+          ]
+        },
+        "source": "static",
+        "status": "estimated",
+        "uncertainty": {
+          "high": null,
+          "kind": "exact",
+          "low": null,
+          "note": null
+        },
+        "unit": "count",
+        "value": 3
+      },
+      {
+        "evidence": [],
+        "id": "static.render.antialias",
+        "items": [],
+        "phase": 1,
+        "reason": "no render config found in the scripts",
+        "required": true,
+        "scope": {
+          "covers": "supplied_files",
+          "not_covered": []
+        },
+        "source": "static",
+        "status": "missing",
+        "uncertainty": {
+          "high": null,
+          "kind": "unknown",
+          "low": null,
+          "note": null
+        },
+        "unit": "flag",
+        "value": null
+      },
+      {
+        "evidence": [],
+        "id": "static.render.backend",
+        "items": [],
+        "phase": 1,
+        "reason": "no render config found in the scripts",
+        "required": true,
+        "scope": {
+          "covers": "supplied_files",
+          "not_covered": []
+        },
+        "source": "static",
+        "status": "missing",
+        "uncertainty": {
+          "high": null,
+          "kind": "unknown",
+          "low": null,
+          "note": null
+        },
+        "unit": "text",
+        "value": null
+      },
+      {
+        "evidence": [],
+        "id": "static.render.canvas",
+        "items": [],
+        "phase": 1,
+        "reason": "no render config found in the scripts",
+        "required": true,
+        "scope": {
+          "covers": "supplied_files",
+          "not_covered": []
+        },
+        "source": "static",
+        "status": "missing",
+        "uncertainty": {
+          "high": null,
+          "kind": "unknown",
+          "low": null,
+          "note": null
+        },
+        "unit": "bytes",
+        "value": null
+      },
+      {
+        "evidence": [],
+        "id": "static.render.resolution_uncapped",
+        "items": [],
+        "phase": 1,
+        "reason": "no render config found in the scripts",
+        "required": true,
+        "scope": {
+          "covers": "supplied_files",
+          "not_covered": []
+        },
+        "source": "static",
+        "status": "missing",
+        "uncertainty": {
+          "high": null,
+          "kind": "unknown",
+          "low": null,
+          "note": null
+        },
+        "unit": "flag",
+        "value": null
+      },
+      {
+        "evidence": [
+          {
+            "detail": "width, height and levels from each image and texture header, and page filters from Spine atlas files",
+            "method": "file_header"
+          }
+        ],
+        "id": "static.textures.decoded",
+        "items": [],
+        "phase": 1,
+        "reason": null,
+        "required": true,
+        "scope": {
+          "covers": "supplied_files",
+          "not_covered": []
+        },
+        "source": "static",
+        "status": "estimated",
+        "uncertainty": {
+          "high": 0,
+          "kind": "range",
+          "low": 0,
+          "note": "one copy of each texture to two, until a device run shows how many the browser keeps"
+        },
+        "unit": "bytes",
+        "value": 0
+      }
+    ],
+    "run_coverage": "missing",
+    "status": "incomplete",
+    "verdicts": [
+      {
+        "actual": 0,
+        "budget": "audio.decoded_mb",
+        "limit": {
+          "fail_above": 134217728,
+          "kind": "bytes",
+          "warn_above": 67108864
+        },
+        "measure": "static.audio.decoded_48k",
+        "verdict": "pass"
+      },
+      {
+        "actual": null,
+        "budget": "render.antialias",
+        "limit": {
+          "kind": "flag",
+          "when_on": "warn"
+        },
+        "measure": "static.render.antialias",
+        "verdict": "incomplete"
+      },
+      {
+        "actual": null,
+        "budget": "render.resolution_uncapped",
+        "limit": {
+          "kind": "flag",
+          "when_on": "fail"
+        },
+        "measure": "static.render.resolution_uncapped",
+        "verdict": "incomplete"
+      },
+      {
+        "actual": 0,
+        "budget": "textures.decoded_mb",
+        "limit": {
+          "fail_above": 268435456,
+          "kind": "bytes",
+          "warn_above": null
+        },
+        "measure": "static.textures.decoded",
+        "verdict": "pass"
+      }
+    ],
+    "versions": {
+      "model": null,
+      "schema": 0,
+      "scoring": 1,
+      "tool": "0.1.0"
+    }
+  },
+  "result_hash": "6d16dee0e464a77df1cf8b1a4253d2c336e78d1a9df6eecbafcc1cff815587bf",
+  "run": {
+    "driver": null,
+    "duration_ms": "[duration_ms]",
+    "findings": [
+      {
+        "fixes": [],
+        "measures": [
+          "lab.inactive.audio_running"
+        ],
+        "phase": 1,
+        "reason": "the cdp driver failed (run): DYNO_CHROMIUM names no-chromium-in-tests, which is not a file",
+        "rule": "contract.no_audio_before_active",
+        "verdict": "incomplete"
+      },
+      {
+        "fixes": [],
+        "measures": [
+          "lab.time.ready"
+        ],
+        "phase": 1,
+        "reason": "the cdp driver failed (run): DYNO_CHROMIUM names no-chromium-in-tests, which is not a file",
+        "rule": "contract.ready_in_time",
+        "verdict": "incomplete"
+      },
+      {
+        "fixes": [],
+        "measures": [
+          "lab.inactive.frame_rate"
+        ],
+        "phase": 1,
+        "reason": "the cdp driver failed (run): DYNO_CHROMIUM names no-chromium-in-tests, which is not a file",
+        "rule": "contract.throttled_while_inactive",
+        "verdict": "incomplete"
+      },
+      {
+        "fixes": [],
+        "measures": [
+          "lab.inactive.allocated"
+        ],
+        "phase": 1,
+        "reason": "the cdp driver failed (run): DYNO_CHROMIUM names no-chromium-in-tests, which is not a file",
+        "rule": "diagnostic.alloc_before_active",
+        "verdict": "incomplete"
+      }
+    ],
+    "machine": "[machine]",
+    "measures": [
+      {
+        "evidence": [],
+        "id": "lab.audio.context_rate",
+        "items": [],
+        "phase": 1,
+        "reason": "the cdp driver failed (run): DYNO_CHROMIUM names no-chromium-in-tests, which is not a file",
+        "required": true,
+        "scope": {
+          "covers": "load_to_idle",
+          "not_covered": []
+        },
+        "source": "lab",
+        "status": "missing",
+        "uncertainty": {
+          "high": null,
+          "kind": "unknown",
+          "low": null,
+          "note": null
+        },
+        "unit": "hertz",
+        "value": null
+      },
+      {
+        "evidence": [],
+        "id": "lab.audio.decoded",
+        "items": [],
+        "phase": 1,
+        "reason": "the cdp driver failed (run): DYNO_CHROMIUM names no-chromium-in-tests, which is not a file",
+        "required": true,
+        "scope": {
+          "covers": "load_to_idle",
+          "not_covered": []
+        },
+        "source": "lab",
+        "status": "missing",
+        "uncertainty": {
+          "high": null,
+          "kind": "unknown",
+          "low": null,
+          "note": null
+        },
+        "unit": "bytes",
+        "value": null
+      },
+      {
+        "evidence": [],
+        "id": "lab.bytes.loaded_by_idle",
+        "items": [],
+        "phase": 1,
+        "reason": "the cdp driver failed (run): DYNO_CHROMIUM names no-chromium-in-tests, which is not a file",
+        "required": true,
+        "scope": {
+          "covers": "load_to_idle",
+          "not_covered": []
+        },
+        "source": "lab",
+        "status": "missing",
+        "uncertainty": {
+          "high": null,
+          "kind": "unknown",
+          "low": null,
+          "note": null
+        },
+        "unit": "bytes",
+        "value": null
+      },
+      {
+        "evidence": [],
+        "id": "lab.bytes.to_playable",
+        "items": [],
+        "phase": 1,
+        "reason": "the cdp driver failed (run): DYNO_CHROMIUM names no-chromium-in-tests, which is not a file",
+        "required": true,
+        "scope": {
+          "covers": "load_to_idle",
+          "not_covered": []
+        },
+        "source": "lab",
+        "status": "missing",
+        "uncertainty": {
+          "high": null,
+          "kind": "unknown",
+          "low": null,
+          "note": null
+        },
+        "unit": "bytes",
+        "value": null
+      },
+      {
+        "evidence": [],
+        "id": "lab.canvas.bytes",
+        "items": [],
+        "phase": 1,
+        "reason": "the cdp driver failed (run): DYNO_CHROMIUM names no-chromium-in-tests, which is not a file",
+        "required": true,
+        "scope": {
+          "covers": "load_to_idle",
+          "not_covered": []
+        },
+        "source": "lab",
+        "status": "missing",
+        "uncertainty": {
+          "high": null,
+          "kind": "unknown",
+          "low": null,
+          "note": null
+        },
+        "unit": "bytes",
+        "value": null
+      },
+      {
+        "evidence": [],
+        "id": "lab.canvas.contexts",
+        "items": [],
+        "phase": 1,
+        "reason": "the cdp driver failed (run): DYNO_CHROMIUM names no-chromium-in-tests, which is not a file",
+        "required": true,
+        "scope": {
+          "covers": "load_to_idle",
+          "not_covered": []
+        },
+        "source": "lab",
+        "status": "missing",
+        "uncertainty": {
+          "high": null,
+          "kind": "unknown",
+          "low": null,
+          "note": null
+        },
+        "unit": "count",
+        "value": null
+      },
+      {
+        "evidence": [],
+        "id": "lab.inactive.allocated",
+        "items": [],
+        "phase": 1,
+        "reason": "the cdp driver failed (run): DYNO_CHROMIUM names no-chromium-in-tests, which is not a file",
+        "required": true,
+        "scope": {
+          "covers": "load_to_idle",
+          "not_covered": []
+        },
+        "source": "lab",
+        "status": "missing",
+        "uncertainty": {
+          "high": null,
+          "kind": "unknown",
+          "low": null,
+          "note": null
+        },
+        "unit": "bytes",
+        "value": null
+      },
+      {
+        "evidence": [],
+        "id": "lab.inactive.audio_running",
+        "items": [],
+        "phase": 1,
+        "reason": "the cdp driver failed (run): DYNO_CHROMIUM names no-chromium-in-tests, which is not a file",
+        "required": true,
+        "scope": {
+          "covers": "load_to_idle",
+          "not_covered": []
+        },
+        "source": "lab",
+        "status": "missing",
+        "uncertainty": {
+          "high": null,
+          "kind": "unknown",
+          "low": null,
+          "note": null
+        },
+        "unit": "flag",
+        "value": null
+      },
+      {
+        "evidence": [],
+        "id": "lab.inactive.frame_rate",
+        "items": [],
+        "phase": 1,
+        "reason": "the cdp driver failed (run): DYNO_CHROMIUM names no-chromium-in-tests, which is not a file",
+        "required": true,
+        "scope": {
+          "covers": "load_to_idle",
+          "not_covered": []
+        },
+        "source": "lab",
+        "status": "missing",
+        "uncertainty": {
+          "high": null,
+          "kind": "unknown",
+          "low": null,
+          "note": null
+        },
+        "unit": "hertz",
+        "value": null
+      },
+      {
+        "evidence": [],
+        "id": "lab.js_heap",
+        "items": [],
+        "phase": 1,
+        "reason": "the cdp driver failed (run): DYNO_CHROMIUM names no-chromium-in-tests, which is not a file",
+        "required": true,
+        "scope": {
+          "covers": "load_to_idle",
+          "not_covered": []
+        },
+        "source": "lab",
+        "status": "missing",
+        "uncertainty": {
+          "high": null,
+          "kind": "unknown",
+          "low": null,
+          "note": null
+        },
+        "unit": "bytes",
+        "value": null
+      },
+      {
+        "evidence": [],
+        "id": "lab.self_check.frame_dpr",
+        "items": [],
+        "phase": 1,
+        "reason": "the cdp driver failed (run): DYNO_CHROMIUM names no-chromium-in-tests, which is not a file",
+        "required": true,
+        "scope": {
+          "covers": "load_to_idle",
+          "not_covered": []
+        },
+        "source": "lab",
+        "status": "missing",
+        "uncertainty": {
+          "high": null,
+          "kind": "unknown",
+          "low": null,
+          "note": null
+        },
+        "unit": "milli",
+        "value": null
+      },
+      {
+        "evidence": [],
+        "id": "lab.self_check.frame_requests",
+        "items": [],
+        "phase": 1,
+        "reason": "the cdp driver failed (run): DYNO_CHROMIUM names no-chromium-in-tests, which is not a file",
+        "required": true,
+        "scope": {
+          "covers": "load_to_idle",
+          "not_covered": []
+        },
+        "source": "lab",
+        "status": "missing",
+        "uncertainty": {
+          "high": null,
+          "kind": "unknown",
+          "low": null,
+          "note": null
+        },
+        "unit": "count",
+        "value": null
+      },
+      {
+        "evidence": [],
+        "id": "lab.self_check.webgl_renderer",
+        "items": [],
+        "phase": 1,
+        "reason": "the cdp driver failed (run): DYNO_CHROMIUM names no-chromium-in-tests, which is not a file",
+        "required": true,
+        "scope": {
+          "covers": "load_to_idle",
+          "not_covered": []
+        },
+        "source": "lab",
+        "status": "missing",
+        "uncertainty": {
+          "high": null,
+          "kind": "unknown",
+          "low": null,
+          "note": null
+        },
+        "unit": "text",
+        "value": null
+      },
+      {
+        "evidence": [],
+        "id": "lab.textures.resident",
+        "items": [],
+        "phase": 1,
+        "reason": "the cdp driver failed (run): DYNO_CHROMIUM names no-chromium-in-tests, which is not a file",
+        "required": true,
+        "scope": {
+          "covers": "load_to_idle",
+          "not_covered": []
+        },
+        "source": "lab",
+        "status": "missing",
+        "uncertainty": {
+          "high": null,
+          "kind": "unknown",
+          "low": null,
+          "note": null
+        },
+        "unit": "bytes",
+        "value": null
+      },
+      {
+        "evidence": [],
+        "id": "lab.textures.uploaded",
+        "items": [],
+        "phase": 1,
+        "reason": "the cdp driver failed (run): DYNO_CHROMIUM names no-chromium-in-tests, which is not a file",
+        "required": true,
+        "scope": {
+          "covers": "load_to_idle",
+          "not_covered": []
+        },
+        "source": "lab",
+        "status": "missing",
+        "uncertainty": {
+          "high": null,
+          "kind": "unknown",
+          "low": null,
+          "note": null
+        },
+        "unit": "bytes",
+        "value": null
+      },
+      {
+        "evidence": [],
+        "id": "lab.time.first_frame",
+        "items": [],
+        "phase": 1,
+        "reason": "the cdp driver failed (run): DYNO_CHROMIUM names no-chromium-in-tests, which is not a file",
+        "required": true,
+        "scope": {
+          "covers": "load_to_idle",
+          "not_covered": []
+        },
+        "source": "lab",
+        "status": "missing",
+        "uncertainty": {
+          "high": null,
+          "kind": "unknown",
+          "low": null,
+          "note": null
+        },
+        "unit": "ms",
+        "value": null
+      },
+      {
+        "evidence": [],
+        "id": "lab.time.ready",
+        "items": [],
+        "phase": 1,
+        "reason": "the cdp driver failed (run): DYNO_CHROMIUM names no-chromium-in-tests, which is not a file",
+        "required": true,
+        "scope": {
+          "covers": "load_to_idle",
+          "not_covered": []
+        },
+        "source": "lab",
+        "status": "missing",
+        "uncertainty": {
+          "high": null,
+          "kind": "unknown",
+          "low": null,
+          "note": null
+        },
+        "unit": "ms",
+        "value": null
+      },
+      {
+        "evidence": [],
+        "id": "model.footprint",
+        "items": [],
+        "phase": 1,
+        "reason": "not built yet",
+        "required": false,
+        "scope": {
+          "covers": "model_inputs",
+          "not_covered": []
+        },
+        "source": "model",
+        "status": "missing",
+        "uncertainty": {
+          "high": null,
+          "kind": "unknown",
+          "low": null,
+          "note": null
+        },
+        "unit": "bytes",
+        "value": null
+      },
+      {
+        "evidence": [],
+        "id": "model.footprint_inactive",
+        "items": [],
+        "phase": 2,
+        "reason": "not built yet",
+        "required": false,
+        "scope": {
+          "covers": "model_inputs",
+          "not_covered": []
+        },
+        "source": "model",
+        "status": "missing",
+        "uncertainty": {
+          "high": null,
+          "kind": "unknown",
+          "low": null,
+          "note": null
+        },
+        "unit": "bytes",
+        "value": null
+      },
+      {
+        "evidence": [],
+        "id": "play.bonus_peak",
+        "items": [],
+        "phase": 2,
+        "reason": "the cdp driver failed (run): DYNO_CHROMIUM names no-chromium-in-tests, which is not a file",
+        "required": false,
+        "scope": {
+          "covers": "demo_spins",
+          "not_covered": []
+        },
+        "source": "lab",
+        "status": "missing",
+        "uncertainty": {
+          "high": null,
+          "kind": "unknown",
+          "low": null,
+          "note": null
+        },
+        "unit": "bytes",
+        "value": null
+      },
+      {
+        "evidence": [],
+        "id": "play.growth_per_100_spins",
+        "items": [],
+        "phase": 2,
+        "reason": "the cdp driver failed (run): DYNO_CHROMIUM names no-chromium-in-tests, which is not a file",
+        "required": false,
+        "scope": {
+          "covers": "demo_spins",
+          "not_covered": []
+        },
+        "source": "lab",
+        "status": "missing",
+        "uncertainty": {
+          "high": null,
+          "kind": "unknown",
+          "low": null,
+          "note": null
+        },
+        "unit": "bytes_change",
+        "value": null
+      },
+      {
+        "evidence": [],
+        "id": "play.peak",
+        "items": [],
+        "phase": 2,
+        "reason": "the cdp driver failed (run): DYNO_CHROMIUM names no-chromium-in-tests, which is not a file",
+        "required": false,
+        "scope": {
+          "covers": "demo_spins",
+          "not_covered": []
+        },
+        "source": "lab",
+        "status": "missing",
+        "uncertainty": {
+          "high": null,
+          "kind": "unknown",
+          "low": null,
+          "note": null
+        },
+        "unit": "bytes",
+        "value": null
+      },
+      {
+        "evidence": [],
+        "id": "play.spins",
+        "items": [],
+        "phase": 2,
+        "reason": "the cdp driver failed (run): DYNO_CHROMIUM names no-chromium-in-tests, which is not a file",
+        "required": false,
+        "scope": {
+          "covers": "demo_spins",
+          "not_covered": []
+        },
+        "source": "lab",
+        "status": "missing",
+        "uncertainty": {
+          "high": null,
+          "kind": "unknown",
+          "low": null,
+          "note": null
+        },
+        "unit": "count",
+        "value": null
+      }
+    ],
+    "release": {
+      "game": null,
+      "version": "v1"
+    },
+    "started_at": "[started_at]",
+    "target": {
+      "build": "tiny-build",
+      "launch_url": "https://games.example/tiny/index.html"
+    },
+    "tier": {
+      "device_class": "reference_iphone",
+      "phase": 1,
+      "reason": "not built yet",
+      "status": "missing",
+      "tier": null
+    },
+    "tool_build": "[tool_build]"
+  },
+  "schema_version": 0
+}

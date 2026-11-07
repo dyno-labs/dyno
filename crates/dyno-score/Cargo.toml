@@ -1,0 +1,20 @@
+[package]
+name = "dyno-score"
+description = "Budget verdicts, the overall status, run coverage, the memory model, the provisional tier and the compare diff."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+dyno-schema.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+# The calibration template test and the calibrate example read TOML.
+toml.workspace = true
+
+[lints]
+workspace = true

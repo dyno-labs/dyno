@@ -1,0 +1,24 @@
+---
+source: crates/dyno-cli/tests/help.rs
+expression: "help(&[\"compare\", \"--help\"])"
+---
+[phase 1] Diff two result files from `dyno check`
+
+Usage: dyno compare [OPTIONS] <BASE> <HEAD>
+
+Arguments:
+  <BASE>  [phase 1] The base result file from `dyno check`, such as the last release
+  <HEAD>  [phase 1] The head result file from `dyno check`, such as this build
+
+Options:
+      --budget <FILE>  [phase 1] Apply this budget file to both sides, instead of each side's own verdicts
+      --out <FILE>     [phase 1] Write the JSON result to FILE instead of stdout
+  -h, --help           Print help
+
+Exit codes:
+  0   pass, or warn
+  1   fail: a budget or rule fails
+  2   incomplete: a required measure is missing, or a budget or rule could not be checked
+  3   invalid: a required measure or an input result failed its own check
+  64  usage or config error
+  70  internal or I/O error

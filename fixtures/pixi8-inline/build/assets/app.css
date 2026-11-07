@@ -1,0 +1,9 @@
+@font-face {
+  font-family: "Fixture";
+  src: url("./fonts/fixture.woff2") format("woff2");
+}
+body {
+  margin: 0;
+  background: #000 url("//cdn.example.invalid/bg/stars.png?w=64") repeat;
+  font-family: "Fixture", "Rubik", sans-serif;
+}

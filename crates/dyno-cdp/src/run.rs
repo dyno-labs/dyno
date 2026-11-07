@@ -1,0 +1,561 @@
+//! One load-and-idle run: the harness page embeds the game, the probe runs in the game frame, and
+//! the run streams what it saw as runner protocol messages.
+//!
+//! The order: launch, attach to the page, navigate to the harness, and on the game frame's
+//! attach, set it up before its first script (the probe, its binding, its network). The frame is
+//! idle when it has no request in flight and none started for `idle_after_ms`. Then the run
+//! reads the heap and the self-checks, makes the game active, watches it for a short while, and
+//! ends with `done`. Any failure after `hello` ends the run with `error`.
+
+use std::collections::{HashMap, HashSet};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use dyno_schema::probe::{MessageDirection, ProbeEvent};
+use dyno_schema::profile::HostProfile;
+use dyno_schema::result::DriverInfo;
+use dyno_schema::runner::{DriverMessage, RUNNER_PROTOCOL_VERSION, RunMark, RunRequest};
+use serde::Deserialize;
+use serde_json::{Value, json};
+use tokio::sync::mpsc;
+use tokio::time::Instant;
+use url::Url;
+
+use crate::browser::Browser;
+use crate::connection::{Connection, Event, Session};
+use crate::harness::{HOST_BINDING, Harness};
+use crate::{CdpError, DRIVER_NAME, PROBE};
+
+/// The binding the probe calls with each event, in the game frame.
+const PROBE_BINDING: &str = "__dynoProbe";
+
+/// How long one CDP call may take.
+const CALL_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// How long the run watches the game after it makes it active.
+const ACTIVE_WATCH: Duration = Duration::from_secs(2);
+
+/// The name of the isolated world the self-checks run in, apart from the game's wrapped
+/// prototypes.
+const CHECK_WORLD: &str = "dyno-checks";
+
+/// The self-checks, in the isolated world. The WebGL context is lost again at once.
+const SELF_CHECKS: &str = r#"(() => {
+  const gl = document.createElement("canvas").getContext("webgl");
+  let renderer = null;
+  if (gl) {
+    const info = gl.getExtension("WEBGL_debug_renderer_info");
+    renderer = info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+    const lose = gl.getExtension("WEBGL_lose_context");
+    if (lose) lose.loseContext();
+  }
+  return { device_pixel_ratio: devicePixelRatio, webgl_renderer: renderer, time_origin: performance.timeOrigin };
+})()"#;
+
+/// What the self-checks give back.
+#[derive(Deserialize)]
+struct Checks {
+    device_pixel_ratio: f64,
+    webgl_renderer: Option<String>,
+    time_origin: f64,
+}
+
+/// A message the game sent the harness page, on the page's clock.
+#[derive(Deserialize)]
+struct HostMessage {
+    name: String,
+    epoch_ms: f64,
+}
+
+/// A request seen on any session, joined by its id: a frame's document request starts on the
+/// page's session and ends on the frame's (CDP feasibility test, surprise 4).
+#[derive(Default)]
+struct RequestSeen {
+    url: String,
+    mime_type: Option<String>,
+}
+
+/// The game frame's target, once it is attached.
+struct GameFrame {
+    session: Session,
+    target_id: String,
+}
+
+/// Everything the run tracks while events arrive.
+struct Run {
+    started: Instant,
+    messages: Vec<DriverMessage>,
+    page: Session,
+    game: Option<GameFrame>,
+    requests: HashMap<String, RequestSeen>,
+    in_flight: HashSet<String>,
+    finished_on_frame: u32,
+    last_activity: Instant,
+    /// Messages to the host, kept until the frame's clock is known.
+    to_host: Vec<HostMessage>,
+    frame_time_origin: Option<f64>,
+    /// The wall clock at the navigation, in ms since the epoch, as `performance.timeOrigin` is.
+    navigated_at_epoch_ms: f64,
+    /// The game frame's session and every session attached under it: nested frames and
+    /// workers. Their requests are the game's.
+    game_family: HashSet<String>,
+    /// The game frame's own default JavaScript contexts, one per document. The probe also runs
+    /// in a same-process frame inside it, which numbers its canvases and textures from 0 too, so
+    /// its events are left out.
+    game_contexts: HashSet<i64>,
+}
+
+/// URL schemes whose bytes never cross the network.
+const LOCAL_SCHEMES: &[&str] = &["data:", "blob:"];
+
+/// Runs the request and returns every message. An error before `hello` is returned as an error;
+/// after it, the run ends with an `error` message.
+pub async fn run(request: &RunRequest) -> Result<Vec<DriverMessage>, CdpError> {
+    let launch_url = Url::parse(&request.launch_url).map_err(|_| CdpError::LaunchUrl)?;
+    let harness = Harness::serve(&launch_url).await?;
+    let browser = Browser::launch(&request.host_profile).await?;
+    let outcome = run_in(&browser, &harness, request).await;
+    browser.close().await;
+    outcome
+}
+
+async fn run_in(
+    browser: &Browser,
+    harness: &Harness,
+    request: &RunRequest,
+) -> Result<Vec<DriverMessage>, CdpError> {
+    let (connection, mut events) = Connection::open(browser.web_socket_url(), CALL_TIMEOUT).await?;
+    let browser_session = Session::browser(&connection);
+    let version = browser_session
+        .call("Browser.getVersion", json!({}))
+        .await?;
+    let hello = DriverMessage::Hello {
+        protocol_version: RUNNER_PROTOCOL_VERSION,
+        driver: DriverInfo {
+            name: DRIVER_NAME.to_owned(),
+            version: env!("CARGO_PKG_VERSION").to_owned(),
+            browser: version["product"].as_str().map(browser_name),
+        },
+    };
+    let page = open_page(&browser_session, &request.host_profile).await?;
+    let mut run = Run {
+        started: Instant::now(),
+        messages: vec![hello],
+        page,
+        game: None,
+        requests: HashMap::new(),
+        in_flight: HashSet::new(),
+        finished_on_frame: 0,
+        last_activity: Instant::now(),
+        to_host: Vec::new(),
+        frame_time_origin: None,
+        navigated_at_epoch_ms: 0.0,
+        game_family: HashSet::new(),
+        game_contexts: HashSet::new(),
+    };
+    let deadline = run.started + Duration::from_millis(u64::from(request.timeout_ms));
+    // The deadline bounds every call too, not only the waits between events.
+    let outcome =
+        tokio::time::timeout_at(deadline, run.drive(&mut events, harness, request, deadline))
+            .await
+            .unwrap_or(Err(CdpError::Timeout));
+    match outcome {
+        Ok(()) => run.end(DriverMessage::Done { t_ms: 0.0 }),
+        Err(error) => run.end(DriverMessage::Error {
+            message: error.to_string(),
+            t_ms: 0.0,
+        }),
+    }
+    // The browser may be gone already; the process is killed next either way.
+    let _ = browser_session.call("Browser.close", json!({})).await;
+    Ok(run.messages)
+}
+
+/// "Chromium 152.0.7977.82" from a product such as "HeadlessChrome/152.0.7977.82".
+fn browser_name(product: &str) -> String {
+    let version = product
+        .split_once('/')
+        .map_or(product, |(_, version)| version);
+    format!("Chromium {version}")
+}
+
+/// A new page, attached flat, with the profile's screen, that auto-attaches each frame paused
+/// before its first script.
+async fn open_page(browser: &Session, profile: &HostProfile) -> Result<Session, CdpError> {
+    let target = browser
+        .call("Target.createTarget", json!({ "url": "about:blank" }))
+        .await?;
+    let target_id = text(&target, "targetId")?;
+    let attached = browser
+        .call(
+            "Target.attachToTarget",
+            json!({ "targetId": target_id, "flatten": true }),
+        )
+        .await?;
+    let page = browser.child(&text(&attached, "sessionId")?);
+    for method in ["Page.enable", "Runtime.enable", "Network.enable"] {
+        page.call(method, json!({})).await?;
+    }
+    // A window size sets the outer window, which Chromium clamps, so the page gets the
+    // profile's viewport by emulation. The frame's pixel ratio still comes from the launch flag.
+    let viewport = profile.viewport;
+    page.call(
+        "Emulation.setDeviceMetricsOverride",
+        json!({
+            "width": viewport.width,
+            "height": viewport.height,
+            "screenWidth": viewport.width,
+            "screenHeight": viewport.height,
+            "deviceScaleFactor": profile.device_scale_factor,
+            "mobile": true,
+        }),
+    )
+    .await?;
+    page.call("Runtime.addBinding", json!({ "name": HOST_BINDING }))
+        .await?;
+    page.call("Target.setAutoAttach", auto_attach()).await?;
+    Ok(page)
+}
+
+fn auto_attach() -> Value {
+    json!({ "autoAttach": true, "waitForDebuggerOnStart": true, "flatten": true })
+}
+
+fn text(value: &Value, key: &str) -> Result<String, CdpError> {
+    value[key]
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| CdpError::Reply(format!("no {key}")))
+}
+
+impl Run {
+    fn t_ms(&self) -> f64 {
+        self.started.elapsed().as_secs_f64() * 1_000.0
+    }
+
+    fn mark(&mut self, mark: RunMark) {
+        let t_ms = self.t_ms();
+        self.messages.push(DriverMessage::Mark { mark, t_ms });
+    }
+
+    /// Adds the last message with the run's time.
+    fn end(&mut self, last: DriverMessage) {
+        let t_ms = self.t_ms();
+        let last = match last {
+            DriverMessage::Done { .. } => DriverMessage::Done { t_ms },
+            DriverMessage::Error { message, .. } => DriverMessage::Error { message, t_ms },
+            other => other,
+        };
+        self.messages.push(last);
+    }
+
+    async fn drive(
+        &mut self,
+        events: &mut mpsc::UnboundedReceiver<Event>,
+        harness: &Harness,
+        request: &RunRequest,
+        deadline: Instant,
+    ) -> Result<(), CdpError> {
+        self.page
+            .call("Page.navigate", json!({ "url": harness.url() }))
+            .await?;
+        self.started = Instant::now();
+        self.navigated_at_epoch_ms = epoch_ms();
+        self.last_activity = self.started;
+        self.mark(RunMark::Navigated);
+        let idle_after = Duration::from_millis(u64::from(request.idle_after_ms));
+        loop {
+            let wake = self.idle_at(idle_after).unwrap_or(deadline).min(deadline);
+            tokio::select! {
+                event = events.recv() => {
+                    let event = event.ok_or_else(|| CdpError::Gone("the browser".to_owned()))?;
+                    self.on_event(event).await?;
+                }
+                () = tokio::time::sleep_until(wake) => {
+                    if Instant::now() >= deadline {
+                        return Err(CdpError::Timeout);
+                    }
+                    if self.is_idle(idle_after) {
+                        break;
+                    }
+                }
+            }
+        }
+        self.at_idle().await?;
+        let active = &request.host_profile.active_message;
+        self.page
+            .call(
+                "Runtime.evaluate",
+                json!({ "expression": format!("__dyno.send({})", json!(active)) }),
+            )
+            .await?;
+        self.mark(RunMark::Activated);
+        // A deadline inside the watch ends the run as a timeout, not as a shorter watch.
+        let watch_until = Instant::now() + ACTIVE_WATCH;
+        while let Ok(Some(event)) = tokio::time::timeout_at(watch_until, events.recv()).await {
+            self.on_event(event).await?;
+        }
+        Ok(())
+    }
+
+    /// When the frame becomes idle if nothing else happens, once it has loaded something.
+    fn idle_at(&self, idle_after: Duration) -> Option<Instant> {
+        let loaded = self.game.is_some() && self.finished_on_frame > 0;
+        (loaded && self.in_flight.is_empty()).then_some(self.last_activity + idle_after)
+    }
+
+    fn is_idle(&self, idle_after: Duration) -> bool {
+        self.idle_at(idle_after)
+            .is_some_and(|idle_at| Instant::now() >= idle_at)
+    }
+
+    async fn on_event(&mut self, event: Event) -> Result<(), CdpError> {
+        let session_id = event.session_id.as_deref();
+        let on_game = session_id.is_some() && session_id == self.game_session_id();
+        let on_page = session_id.is_some() && session_id == self.page.id();
+        let in_family = session_id.is_some_and(|id| self.game_family.contains(id));
+        let params = &event.params;
+        match event.method.as_str() {
+            "Target.attachedToTarget" => self.on_attached(on_page, in_family, params).await?,
+            "Target.detachedFromTarget"
+                if params["sessionId"].as_str() == self.game_session_id() =>
+            {
+                return Err(CdpError::Gone("the game frame".to_owned()));
+            }
+            "Inspector.targetCrashed" if on_game || on_page => {
+                return Err(CdpError::Gone("a crashed renderer".to_owned()));
+            }
+            "Network.requestWillBeSent" => {
+                let id = request_id(params);
+                self.requests.entry(id.clone()).or_default().url = params["request"]["url"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned();
+                if in_family {
+                    self.in_flight.insert(id);
+                    self.last_activity = Instant::now();
+                }
+            }
+            "Network.responseReceived" => {
+                let seen = self.requests.entry(request_id(params)).or_default();
+                seen.mime_type = params["response"]["mimeType"].as_str().map(str::to_owned);
+                if seen.url.is_empty() {
+                    seen.url = params["response"]["url"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned();
+                }
+            }
+            "Network.loadingFinished" if in_family => {
+                let id = request_id(params);
+                self.in_flight.remove(&id);
+                self.last_activity = Instant::now();
+                self.finished_on_frame += 1;
+                let seen = self.requests.remove(&id).unwrap_or_default();
+                if LOCAL_SCHEMES
+                    .iter()
+                    .any(|scheme| seen.url.starts_with(scheme))
+                {
+                    return Ok(());
+                }
+                let t_ms = self.t_ms();
+                self.messages.push(DriverMessage::Request {
+                    url: seen.url,
+                    mime_type: seen.mime_type,
+                    bytes: params["encodedDataLength"]
+                        .as_f64()
+                        .map_or(0, |bytes| bytes as u64),
+                    t_ms,
+                });
+            }
+            "Page.frameNavigated" if on_game && self.is_game_document(params) => {
+                self.mark(RunMark::FrameDocument);
+            }
+            "Network.loadingFailed" if in_family => {
+                self.in_flight.remove(&request_id(params));
+                self.last_activity = Instant::now();
+            }
+            "Runtime.executionContextCreated" if on_game => {
+                let context = &params["context"];
+                let is_default = context["auxData"]["isDefault"] == true;
+                if is_default
+                    && self.is_game_frame(&context["auxData"]["frameId"])
+                    && let Some(id) = context["id"].as_i64()
+                {
+                    self.game_contexts.insert(id);
+                }
+            }
+            "Runtime.bindingCalled"
+                if on_game
+                    && params["name"] == PROBE_BINDING
+                    && params["executionContextId"]
+                        .as_i64()
+                        .is_some_and(|id| self.game_contexts.contains(&id)) =>
+            {
+                // A payload that is not an event is the game's, not the probe's: it is dropped.
+                if let Some(event) = params["payload"]
+                    .as_str()
+                    .and_then(|payload| serde_json::from_str::<ProbeEvent>(payload).ok())
+                {
+                    self.messages.push(DriverMessage::Probe { event });
+                }
+            }
+            "Runtime.bindingCalled" if on_page && params["name"] == HOST_BINDING => {
+                if let Some(message) = params["payload"]
+                    .as_str()
+                    .and_then(|payload| serde_json::from_str::<HostMessage>(payload).ok())
+                {
+                    self.to_host.push(message);
+                    self.send_host_messages();
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Whether a navigation is the game frame's own document, not a frame inside it. The game
+    /// frame's id is its target's id; its `parentId` names the harness page's frame.
+    fn is_game_document(&self, params: &Value) -> bool {
+        self.is_game_frame(&params["frame"]["id"])
+    }
+
+    /// Whether a frame id is the game frame's: its target's id.
+    fn is_game_frame(&self, frame_id: &Value) -> bool {
+        let target_id = self.game.as_ref().map(|game| game.target_id.as_str());
+        target_id.is_some() && frame_id.as_str() == target_id
+    }
+
+    fn game_session_id(&self) -> Option<&str> {
+        self.game.as_ref().and_then(|game| game.session.id())
+    }
+
+    /// Sets up the game frame, the first frame the page attaches, before its first script runs.
+    /// A target under the game frame, such as a worker or a nested frame, joins its family: its
+    /// network counts. Any other target just runs.
+    async fn on_attached(
+        &mut self,
+        on_page: bool,
+        in_family: bool,
+        params: &Value,
+    ) -> Result<(), CdpError> {
+        let session_id = text(params, "sessionId")?;
+        let session = self.page.child(&session_id);
+        let info = &params["targetInfo"];
+        let is_game = on_page && self.game.is_none() && info["type"] == "iframe";
+        if in_family {
+            self.game_family.insert(session_id.clone());
+            // A worker has no Page domain, and some targets refuse these; the run goes on.
+            let _ = session.call("Network.enable", json!({})).await;
+            let _ = session.call("Target.setAutoAttach", auto_attach()).await;
+        }
+        if is_game {
+            for method in ["Network.enable", "Page.enable", "Runtime.enable"] {
+                session.call(method, json!({})).await?;
+            }
+            session
+                .call("Runtime.addBinding", json!({ "name": PROBE_BINDING }))
+                .await?;
+            session
+                .call(
+                    "Page.addScriptToEvaluateOnNewDocument",
+                    json!({ "source": PROBE }),
+                )
+                .await?;
+            session.call("Target.setAutoAttach", auto_attach()).await?;
+            self.game = Some(GameFrame {
+                session: session.clone(),
+                target_id: text(info, "targetId")?,
+            });
+            self.game_family.insert(session_id);
+            self.last_activity = Instant::now();
+        }
+        if params["waitingForDebugger"] == true {
+            session
+                .call("Runtime.runIfWaitingForDebugger", json!({}))
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// The heap and the self-checks, read once the frame is idle.
+    async fn at_idle(&mut self) -> Result<(), CdpError> {
+        self.mark(RunMark::Idle);
+        let game = self
+            .game
+            .as_ref()
+            .ok_or_else(|| CdpError::Gone("the game frame".to_owned()))?;
+        let session = game.session.clone();
+        let heap = session.call("Runtime.getHeapUsage", json!({})).await?;
+        let used_bytes = heap["usedSize"].as_f64().map_or(0, |bytes| bytes as u64);
+        let t_ms = self.t_ms();
+        self.messages.push(DriverMessage::Heap { used_bytes, t_ms });
+        let world = session
+            .call(
+                "Page.createIsolatedWorld",
+                json!({ "frameId": game.target_id, "worldName": CHECK_WORLD }),
+            )
+            .await?;
+        let checked = session
+            .call(
+                "Runtime.evaluate",
+                json!({
+                    "expression": SELF_CHECKS,
+                    "contextId": world["executionContextId"],
+                    "returnByValue": true,
+                }),
+            )
+            .await?;
+        let checks: Checks = serde_json::from_value(checked["result"]["value"].clone())
+            .map_err(|_| CdpError::Reply("the self-checks gave no result".to_owned()))?;
+        let t_ms = self.t_ms();
+        self.messages.push(DriverMessage::SelfCheck {
+            device_pixel_ratio: checks.device_pixel_ratio,
+            webgl_renderer: checks.webgl_renderer,
+            frame_clock_at_ms: Some(checks.time_origin - self.navigated_at_epoch_ms),
+            t_ms,
+        });
+        self.frame_time_origin = Some(checks.time_origin);
+        self.send_host_messages();
+        Ok(())
+    }
+
+    /// Each message to the host as a probe event on the frame's clock, once that clock is known.
+    fn send_host_messages(&mut self) {
+        let Some(time_origin) = self.frame_time_origin else {
+            return;
+        };
+        for message in self.to_host.drain(..) {
+            self.messages.push(DriverMessage::Probe {
+                event: ProbeEvent::HostMessage {
+                    direction: MessageDirection::ToHost,
+                    name: message.name,
+                    t_ms: message.epoch_ms - time_origin,
+                },
+            });
+        }
+    }
+}
+
+/// The wall clock in ms since the epoch.
+fn epoch_ms() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0.0, |since| since.as_secs_f64() * 1_000.0)
+}
+
+fn request_id(params: &Value) -> String {
+    params["requestId"].as_str().unwrap_or_default().to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_browser_is_named_by_its_version() {
+        assert_eq!(
+            browser_name("HeadlessChrome/152.0.7977.82"),
+            "Chromium 152.0.7977.82"
+        );
+    }
+}

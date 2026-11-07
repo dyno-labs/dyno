@@ -1,0 +1,805 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CompareResult",
+  "description": "The output of `dyno compare`.",
+  "type": "object",
+  "properties": {
+    "deterministic": {
+      "$ref": "#/$defs/CompareDeterministic"
+    },
+    "result_hash": {
+      "description": "Lowercase hex SHA-256 of the RFC 8785 canonical JSON of `deterministic`.",
+      "type": "string"
+    },
+    "run": {
+      "$ref": "#/$defs/CompareRun"
+    },
+    "schema_version": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "schema_version",
+    "result_hash",
+    "deterministic",
+    "run"
+  ],
+  "$defs": {
+    "AssetChange": {
+      "description": "One file that differs between the two build manifests.",
+      "type": "object",
+      "properties": {
+        "base_bytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "change": {
+          "$ref": "#/$defs/AssetChangeKind"
+        },
+        "head_bytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "path": {
+          "$ref": "#/$defs/RelPath"
+        }
+      },
+      "required": [
+        "path",
+        "change"
+      ]
+    },
+    "AssetChangeKind": {
+      "description": "How a file changed.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "added",
+            "removed"
+          ]
+        },
+        {
+          "description": "Same path, different SHA-256.",
+          "type": "string",
+          "const": "changed"
+        }
+      ]
+    },
+    "BudgetId": {
+      "description": "Every budget a budget file can set. Each id is the key path in the file.",
+      "oneOf": [
+        {
+          "description": "Decoded audio at 48 kHz.",
+          "type": "string",
+          "const": "audio.decoded_mb"
+        },
+        {
+          "description": "Decoded bytes at 48 kHz that a mono export of every stereo sound would save.",
+          "type": "string",
+          "const": "audio.stereo_saving_mb"
+        },
+        {
+          "description": "A sprite map's share of time that no sprite covers.",
+          "type": "string",
+          "const": "audio.silence_share_bp"
+        },
+        {
+          "description": "Decoded bytes at 48 kHz in a sprite map's time that no sprite covers.",
+          "type": "string",
+          "const": "audio.silence_saving_mb"
+        },
+        {
+          "description": "Decoded textures, one copy.",
+          "type": "string",
+          "const": "textures.decoded_mb"
+        },
+        {
+          "description": "Antialias on.",
+          "type": "string",
+          "const": "render.antialias"
+        },
+        {
+          "description": "Resolution uncapped.",
+          "type": "string",
+          "const": "render.resolution_uncapped"
+        },
+        {
+          "description": "Two or more files with the same SHA-256.",
+          "type": "string",
+          "const": "files.duplicate"
+        }
+      ]
+    },
+    "BudgetRef": {
+      "description": "Which budget file a result used.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "The file's `name`, if it has one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sha256": {
+          "description": "Lowercase hex SHA-256 of the parsed budgets as canonical JSON. The same budgets in TOML\nand JSON give the same hash, and comments do not change it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sha256"
+      ]
+    },
+    "CompareDeterministic": {
+      "description": "Everything the same two results, tool version and budget file give on any machine.",
+      "type": "object",
+      "properties": {
+        "base": {
+          "$ref": "#/$defs/ResultRef"
+        },
+        "budget": {
+          "description": "The budget file applied to both sides. Null to keep each result's own verdicts.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BudgetRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "head": {
+          "$ref": "#/$defs/ResultRef"
+        },
+        "measures": {
+          "description": "Every deterministic measure that moved. Sorted by id, then by canonical JSON.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MeasureChange"
+          }
+        },
+        "reason": {
+          "description": "Why the status is incomplete or invalid. Null otherwise.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scoring": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "status": {
+          "description": "Fail when a budget verdict got worse. Incomplete when either side is incomplete. Invalid\nwhen either side's hash does not match its content.",
+          "$ref": "#/$defs/Status"
+        },
+        "suspect_assets": {
+          "description": "Files that differ between the two build manifests. Sorted by path, then by canonical\nJSON.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AssetChange"
+          }
+        },
+        "tool": {
+          "description": "The dyno version, such as \"0.1.0\".",
+          "type": "string"
+        },
+        "verdicts": {
+          "description": "Every budget verdict that changed. Sorted by budget id, then by canonical JSON.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/VerdictChange"
+          }
+        }
+      },
+      "required": [
+        "tool",
+        "scoring",
+        "base",
+        "head",
+        "status",
+        "measures",
+        "verdicts",
+        "suspect_assets"
+      ]
+    },
+    "CompareRun": {
+      "description": "What differs between machines and runs. The hash excludes it.",
+      "type": "object",
+      "properties": {
+        "base_release": {
+          "description": "The release labels of each side, from its own run part.",
+          "$ref": "#/$defs/Release"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "head_release": {
+          "$ref": "#/$defs/Release"
+        },
+        "machine": {
+          "$ref": "#/$defs/Machine"
+        },
+        "started_at": {
+          "description": "RFC 3339 UTC time the compare started.",
+          "type": "string"
+        },
+        "tool_build": {
+          "$ref": "#/$defs/ToolBuild"
+        }
+      },
+      "required": [
+        "started_at",
+        "duration_ms",
+        "machine",
+        "tool_build",
+        "base_release",
+        "head_release"
+      ]
+    },
+    "Machine": {
+      "description": "The machine dyno ran on. No host name or user name.",
+      "type": "object",
+      "properties": {
+        "arch": {
+          "description": "\"aarch64\" or \"x86_64\".",
+          "type": "string"
+        },
+        "cpus": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "os": {
+          "description": "\"macos\", \"linux\" or \"windows\".",
+          "type": "string"
+        }
+      },
+      "required": [
+        "os",
+        "arch",
+        "cpus"
+      ]
+    },
+    "MeasureChange": {
+      "description": "One deterministic measure that moved.",
+      "type": "object",
+      "properties": {
+        "base": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MeasureValue"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "base_status": {
+          "$ref": "#/$defs/MeasureStatus"
+        },
+        "delta": {
+          "description": "Head minus base, for integer values on both sides. Null otherwise.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64"
+        },
+        "head": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MeasureValue"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "head_status": {
+          "$ref": "#/$defs/MeasureStatus"
+        },
+        "id": {
+          "$ref": "#/$defs/MeasureId"
+        },
+        "unit": {
+          "$ref": "#/$defs/Unit"
+        }
+      },
+      "required": [
+        "id",
+        "unit",
+        "base_status",
+        "head_status"
+      ]
+    },
+    "MeasureId": {
+      "description": "Every measure that Phases 1 and 2 name.",
+      "oneOf": [
+        {
+          "description": "Number of supplied files.",
+          "type": "string",
+          "const": "static.inventory.files"
+        },
+        {
+          "description": "Bytes of every supplied file, with one item per file kind.",
+          "type": "string",
+          "const": "static.bytes.by_type"
+        },
+        {
+          "description": "Gzip bytes of the text files (js, css, html, data), with one item per file kind.",
+          "type": "string",
+          "const": "static.bytes.compressed"
+        },
+        {
+          "description": "Bytes in files that repeat another file byte for byte (same SHA-256), one item per copy.",
+          "type": "string",
+          "const": "static.bytes.duplicates"
+        },
+        {
+          "description": "Decoded texture bytes of all supplied images, one copy: width x height x 4, plus the mip\nlevels the engine or the file makes. The uncertainty gives the range up to two copies.",
+          "type": "string",
+          "const": "static.textures.decoded"
+        },
+        {
+          "description": "Decoded audio bytes at 48 kHz: seconds x channels x 48,000 x 4, one item per sound\ngroup.",
+          "type": "string",
+          "const": "static.audio.decoded_48k"
+        },
+        {
+          "description": "Decoded audio bytes at 24 kHz, one item per sound group.",
+          "type": "string",
+          "const": "static.audio.decoded_24k"
+        },
+        {
+          "description": "Number of stereo sound groups, one item per group's representative file.",
+          "type": "string",
+          "const": "static.audio.stereo_files"
+        },
+        {
+          "description": "Number of stereo sound groups whose two channels match once decoded, so a mono export\nsounds the same. One item per decoded stereo group, with what a mono export does to it:\n`safe_to_make_mono`, `changes_the_sound` or `cancels`.",
+          "type": "string",
+          "const": "static.audio.stereo_mono_safe"
+        },
+        {
+          "description": "Largest share of silence in a Howler sprite map, one item per sprite map.",
+          "type": "string",
+          "const": "static.audio.sprite_silence"
+        },
+        {
+          "description": "Share of the decoded time of every sound group that is silent, in 10 ms windows at or\nbelow -60 dBFS. One item per decoded group.",
+          "type": "string",
+          "const": "static.audio.silence_by_decode"
+        },
+        {
+          "description": "Whether the bundle turns antialias on.",
+          "type": "string",
+          "const": "static.render.antialias"
+        },
+        {
+          "description": "Whether the bundle renders at a resolution above 2, the cap that a fix suggests.",
+          "type": "string",
+          "const": "static.render.resolution_uncapped"
+        },
+        {
+          "description": "The renderer the bundle asks for: webgl, webgl2, webgpu or canvas2d.",
+          "type": "string",
+          "const": "static.render.backend"
+        },
+        {
+          "description": "Canvas bytes: one WebGL context plus the backing store at the bundle's resolution.",
+          "type": "string",
+          "const": "static.render.canvas"
+        },
+        {
+          "description": "Number of libraries found in the bundle, one item per library with its version, keyed\n`<bucket>.<library>` such as `rendering.pixi` (`library::Library`).",
+          "type": "string",
+          "const": "static.bundle.engines"
+        },
+        {
+          "description": "Number of URLs in the bundle that point outside the build, one item per URL.\nThe build id does not cover them.",
+          "type": "string",
+          "const": "static.bundle.external_urls"
+        },
+        {
+          "description": "JavaScript bytes per source module, from source maps.",
+          "type": "string",
+          "const": "static.bundle.source_map"
+        },
+        {
+          "description": "Time from navigation to the game frame's first animation frame.",
+          "type": "string",
+          "const": "lab.time.first_frame"
+        },
+        {
+          "description": "Time from navigation to the host profile's ready message, such as `reels:ready`.",
+          "type": "string",
+          "const": "lab.time.ready"
+        },
+        {
+          "description": "Bytes the game frame loaded by idle, one item per file kind.",
+          "type": "string",
+          "const": "lab.bytes.loaded_by_idle"
+        },
+        {
+          "description": "Bytes the game frame loaded before its playable hook. Unsupported when the game sends no\nplayable hook. The host's ready message is not that signal.",
+          "type": "string",
+          "const": "lab.bytes.to_playable"
+        },
+        {
+          "description": "Audio bytes decoded by idle, at the audio context's rate: length x channels x 4.",
+          "type": "string",
+          "const": "lab.audio.decoded"
+        },
+        {
+          "description": "The audio context's sample rate.",
+          "type": "string",
+          "const": "lab.audio.context_rate"
+        },
+        {
+          "description": "Texture bytes uploaded by idle, re-uploads included. One item per source path, such as\n`/assets/a.png`. An ImageBitmap, a `blob:` object URL or a response made from a\nfetched file keeps that file's path. Uploads with no http source are `empty` (no\npixels), `canvas` (a canvas the game drew) or `other` (data, `data:` URLs, or a field\nprobe that does not tell). A path always starts with `/`, so it never meets these.",
+          "type": "string",
+          "const": "lab.textures.uploaded"
+        },
+        {
+          "description": "Texture bytes the GPU holds at idle: the last upload of each level of each texture the\ngame did not delete.",
+          "type": "string",
+          "const": "lab.textures.resident"
+        },
+        {
+          "description": "Number of canvas rendering contexts the game created.",
+          "type": "string",
+          "const": "lab.canvas.contexts"
+        },
+        {
+          "description": "Canvas buffer bytes from the contexts' sizes, DPR and antialias.",
+          "type": "string",
+          "const": "lab.canvas.bytes"
+        },
+        {
+          "description": "JavaScript heap in use at idle. Chromium's heap, not the iPhone's.",
+          "type": "string",
+          "const": "lab.js_heap"
+        },
+        {
+          "description": "Whether an audio context ran while the frame was inactive.",
+          "type": "string",
+          "const": "lab.inactive.audio_running"
+        },
+        {
+          "description": "Frames per second the game rendered while inactive.",
+          "type": "string",
+          "const": "lab.inactive.frame_rate"
+        },
+        {
+          "description": "Audio decode and texture upload bytes before activation. A diagnostic, never a fail.",
+          "type": "string",
+          "const": "lab.inactive.allocated"
+        },
+        {
+          "description": "The game frame's device pixel ratio, in thousandths. The run is invalid unless it is 3\n(3,000).",
+          "type": "string",
+          "const": "lab.self_check.frame_dpr"
+        },
+        {
+          "description": "Requests the game frame made. The run is invalid when it made none.",
+          "type": "string",
+          "const": "lab.self_check.frame_requests"
+        },
+        {
+          "description": "The WebGL renderer string. CI runners often fall back to a software renderer.",
+          "type": "string",
+          "const": "lab.self_check.webgl_renderer"
+        },
+        {
+          "description": "Modelled iPhone footprint while active: decoded audio at the context rate, textures,\ncanvas buffers, decoded images that are not textures, and k times the JS heap, plus a\nfixed b. The model fit sets k and b.",
+          "type": "string",
+          "const": "model.footprint"
+        },
+        {
+          "description": "Modelled iPhone footprint while inactive, for the preloadable tier.",
+          "type": "string",
+          "const": "model.footprint_inactive"
+        },
+        {
+          "description": "Spins played in the demo-only session.",
+          "type": "string",
+          "const": "play.spins"
+        },
+        {
+          "description": "Peak bytes during the spin loop.",
+          "type": "string",
+          "const": "play.peak"
+        },
+        {
+          "description": "Memory growth per 100 spins (Theil-Sen slope). Negative when memory shrinks.",
+          "type": "string",
+          "const": "play.growth_per_100_spins"
+        },
+        {
+          "description": "Peak bytes during a bonus round.",
+          "type": "string",
+          "const": "play.bonus_peak"
+        },
+        {
+          "description": "Median `phys_footprint` of fresh-process runs on the iPhone, minus the empty harness.",
+          "type": "string",
+          "const": "device.phys_footprint"
+        },
+        {
+          "description": "Fresh-process runs that the iPhone killed, one item per syslog line.",
+          "type": "string",
+          "const": "device.kills"
+        }
+      ]
+    },
+    "MeasureStatus": {
+      "description": "How far to trust a measure. \"Not measured\" is never 0.",
+      "oneOf": [
+        {
+          "description": "Observed directly in a browser run or on a phone.",
+          "type": "string",
+          "const": "measured"
+        },
+        {
+          "description": "Computed from the build's files or from the model. Never a measure of iPhone memory.",
+          "type": "string",
+          "const": "estimated"
+        },
+        {
+          "description": "dyno cannot measure this for this target, for example bytes to playable when the game\nsends no playable hook.",
+          "type": "string",
+          "const": "unsupported"
+        },
+        {
+          "description": "There is no value.",
+          "type": "string",
+          "const": "missing"
+        },
+        {
+          "description": "A value failed a check, for example a frame DPR that is not 3. The value stays, unless it\nwas outside the safe integer range.",
+          "type": "string",
+          "const": "invalid"
+        }
+      ]
+    },
+    "MeasureValue": {
+      "description": "A value. Integers carry every number, so float formatting never changes the output. They are\nsigned, because a change such as memory growth can be negative.",
+      "anyOf": [
+        {
+          "type": "integer",
+          "format": "int64"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "RelPath": {
+      "description": "A path relative to the build root, with '/' between parts on every platform.\n\nConstruction normalizes the separators, so the same file gives the same bytes in a result on\nmacOS, Linux and Windows.",
+      "type": "string"
+    },
+    "Release": {
+      "description": "Labels the caller gives. Outside the hash, so two callers who name a release differently\nstill get the same hash.",
+      "type": "object",
+      "properties": {
+        "game": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "ResultRef": {
+      "description": "One side of a comparison.",
+      "type": "object",
+      "properties": {
+        "build_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hash_matches": {
+          "description": "Whether `result_hash` matches the result's deterministic part.",
+          "type": "boolean"
+        },
+        "result_hash": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/Status"
+        },
+        "tool": {
+          "description": "The dyno version that made the result.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result_hash",
+        "hash_matches",
+        "status",
+        "tool"
+      ]
+    },
+    "Status": {
+      "description": "The overall status of a result. The exit code comes from it alone.\n\nWhen several statuses apply, the worst wins. From worst to best: fail, invalid, incomplete,\nwarn, pass. The variants below are not declared in that order.",
+      "oneOf": [
+        {
+          "description": "None of the other statuses applies.",
+          "type": "string",
+          "const": "pass"
+        },
+        {
+          "description": "A budget or a static rule warns. Nothing fails.",
+          "type": "string",
+          "const": "warn"
+        },
+        {
+          "description": "A budget or a static rule fails. Nothing offsets a fail.",
+          "type": "string",
+          "const": "fail"
+        },
+        {
+          "description": "A required measure is missing or absent from the result, a budget could not be checked, or\na static rule could not be checked because a value from the build is missing. Never a pass.",
+          "type": "string",
+          "const": "incomplete"
+        },
+        {
+          "description": "A required measure failed its check, such as a run whose frame DPR was not 3, or a measure\nin the result does not fit the check.",
+          "type": "string",
+          "const": "invalid"
+        }
+      ]
+    },
+    "ToolBuild": {
+      "description": "The dyno binary that made the result.",
+      "type": "object",
+      "properties": {
+        "git_sha": {
+          "description": "The commit the binary was built from. Null for a local build.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "profile": {
+          "description": "\"debug\" or \"release\".",
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "profile"
+      ]
+    },
+    "Unit": {
+      "description": "The unit of a value. Sizes are always integer bytes. Only a change in size can be negative.",
+      "oneOf": [
+        {
+          "description": "A size.",
+          "type": "string",
+          "const": "bytes"
+        },
+        {
+          "description": "A change in size, such as growth per 100 spins. It is negative when memory shrinks.",
+          "type": "string",
+          "const": "bytes_change"
+        },
+        {
+          "description": "Milliseconds.",
+          "type": "string",
+          "const": "ms"
+        },
+        {
+          "description": "A number of things.",
+          "type": "string",
+          "const": "count"
+        },
+        {
+          "description": "Times a second, such as a frame rate or an audio sample rate.",
+          "type": "string",
+          "const": "hertz"
+        },
+        {
+          "description": "Hundredths of a percent: 10,000 is 100%.",
+          "type": "string",
+          "const": "basis_points"
+        },
+        {
+          "description": "Thousandths: a device pixel ratio of 3 is 3,000.",
+          "type": "string",
+          "const": "milli"
+        },
+        {
+          "description": "True or false.",
+          "type": "string",
+          "const": "flag"
+        },
+        {
+          "description": "A string, such as a renderer name.",
+          "type": "string",
+          "const": "text"
+        }
+      ]
+    },
+    "Verdict": {
+      "description": "The outcome of one budget, rule or doctor check.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "pass",
+            "warn",
+            "fail"
+          ]
+        },
+        {
+          "description": "It could not be checked, because the inputs it needs are missing, invalid or partial.",
+          "type": "string",
+          "const": "incomplete"
+        }
+      ]
+    },
+    "VerdictChange": {
+      "description": "One budget verdict that changed.",
+      "type": "object",
+      "properties": {
+        "base": {
+          "description": "Null when the side has no verdict for this budget.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Verdict"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "budget": {
+          "$ref": "#/$defs/BudgetId"
+        },
+        "head": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Verdict"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "budget"
+      ]
+    }
+  }
+}

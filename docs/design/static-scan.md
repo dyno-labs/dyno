@@ -18,16 +18,16 @@ Test data is in [`fixtures/`](../../fixtures/README.md). Each fixture has an
 
 These were decided on 2026-11-06 and 2026-11-07.
 
-| Id | Decision |
-|---|---|
-| R1 | The skeleton is the contract. Ids stay in `dyno-schema/src/ids.rs`, statuses are `MeasureStatus` and the device numbers are `HostProfile`. `model.rs` is a crate-internal module of `dyno-static` that holds the types passing between families, with no second status enum. Where a name differs, `ids.rs` wins (for example `render.antialias_or_resolution`). |
-| R2 | Byte counts and file hashes are `estimated`, with uncertainty kind `exact`. |
-| R3 | `build_id` hashes every file's path with its SHA-256, so a rename changes it. [Section 3](#3-inventory-and-build-id) gives the bytes. |
-| R4 | Audio uses our own header readers for length and channels. `symphonia` (MPL-2.0) decodes each sound group for the silence and stereo analysis ([section 5.4](#54-decoding)), with its files unmodified (2026-11-07; this replaces "a dev-dependency for cross-check tests only"). The readers stay the authority on length, and the tests still cross-check them against symphonia. |
-| R5 | Mipmaps use the exact chain where the engine makes mips ([section 7.3](#73-mipmaps)), not a flat third. |
-| R6 | `HostProfile::reels()` is the one source for the frame: an iPhone 17, 402 x 874 CSS px at DPR 3. Fixture tests pass each fixture's own `[profile]`, and the fixtures use the same frame. |
-| R7 | Facts only. dyno reports values read from the build and values worked out from them by fixed arithmetic, never a value that rests on an assumed constant. So the canvas is a floor of one colour buffer ([section 8.4](#84-canvas-bytes)), and the device run measures the antialias buffers and the GPU context. |
-| R8 | Every threshold is a proposal. |
+| Id  | Decision                                                                                                                                                                                                                                                                                                                                                                            |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| R1  | The skeleton is the contract. Ids stay in `dyno-schema/src/ids.rs`, statuses are `MeasureStatus` and the device numbers are `HostProfile`. `model.rs` is a crate-internal module of `dyno-static` that holds the types passing between families, with no second status enum. Where a name differs, `ids.rs` wins (for example `render.antialias_or_resolution`).                    |
+| R2  | Byte counts and file hashes are `estimated`, with uncertainty kind `exact`.                                                                                                                                                                                                                                                                                                         |
+| R3  | `build_id` hashes every file's path with its SHA-256, so a rename changes it. [Section 3](#3-inventory-and-build-id) gives the bytes.                                                                                                                                                                                                                                               |
+| R4  | Audio uses our own header readers for length and channels. `symphonia` (MPL-2.0) decodes each sound group for the silence and stereo analysis ([section 5.4](#54-decoding)), with its files unmodified (2026-11-07; this replaces "a dev-dependency for cross-check tests only"). The readers stay the authority on length, and the tests still cross-check them against symphonia. |
+| R5  | Mipmaps use the exact chain where the engine makes mips ([section 7.3](#73-mipmaps)), not a flat third.                                                                                                                                                                                                                                                                             |
+| R6  | `HostProfile::reels()` is the one source for the frame: an iPhone 17, 402 x 874 CSS px at DPR 3. Fixture tests pass each fixture's own `[profile]`, and the fixtures use the same frame.                                                                                                                                                                                            |
+| R7  | Facts only. dyno reports values read from the build and values worked out from them by fixed arithmetic, never a value that rests on an assumed constant. So the canvas is a floor of one colour buffer ([section 8.4](#84-canvas-bytes)), and the device run measures the antialias buffers and the GPU context.                                                                   |
+| R8  | Every threshold is a proposal.                                                                                                                                                                                                                                                                                                                                                      |
 
 `model` is a `pub` module so that the tests in `tests/` can build summaries.
 Its types never enter the result. That is how this design reads
@@ -68,12 +68,12 @@ Its types never enter the result. That is how this design reads
 A measure's status is `MeasureStatus` in `dyno-schema`. Every static value is
 `estimated`, never `measured`: `measured` is for browser and device readings.
 
-| Status | Meaning in the static scan |
-|---|---|
-| `estimated` | The header was read and the formula applied. Byte counts and hashes are `estimated` too, with uncertainty kind `exact` (R2). |
-| `unsupported` | The file is a format we know but do not model (for example SVG, FLAC, KTX1). The reason says which. |
-| `missing` | An input the measure needs is not in the build (for example a sprite map whose audio file is absent, or no render config found). A measure that is not built yet is `missing` with the reason "not built yet". |
-| `invalid` | The file claims to be a format but the header is damaged, or the header promises bytes past the end of the file. |
+| Status        | Meaning in the static scan                                                                                                                                                                                     |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `estimated`   | The header was read and the formula applied. Byte counts and hashes are `estimated` too, with uncertainty kind `exact` (R2).                                                                                   |
+| `unsupported` | The file is a format we know but do not model (for example SVG, FLAC, KTX1). The reason says which.                                                                                                            |
+| `missing`     | An input the measure needs is not in the build (for example a sprite map whose audio file is absent, or no render config found). A measure that is not built yet is `missing` with the reason "not built yet". |
+| `invalid`     | The file claims to be a format but the header is damaged, or the header promises bytes past the end of the file.                                                                                               |
 
 A per-file status (in a summary or a fixture row) uses the same four words.
 
@@ -102,12 +102,12 @@ iPhone 17, at DPR 3. `HostProfile::reels()` in `dyno-schema/src/profile.rs` is
 the one source (R6), at version 1. Code reads the fields; it never repeats the
 numbers. The profile holds no assumed cost (R7).
 
-| `[profile]` key in fixtures | `HostProfile` field | `reels()` | Source |
-|---|---|---|---|
-| `dpr_milli` | `device_scale_factor` (a whole number) | 3 | iPhone 17 |
-| `frame_css` | `viewport` | 402 x 874 | the iPhone 17 screen. Render scales of 1/2 and 2/3, as Stake Reels uses, come later |
-| `webgpu` | `webgpu` | false | iOS 18 Safari has WebGPU off |
-| none | `pcm_rate_hz`, `pcm_low_rate_hz` | 48000, 24000 | The measure ids name 48 kHz and 24 kHz |
+| `[profile]` key in fixtures | `HostProfile` field                    | `reels()`    | Source                                                                              |
+| --------------------------- | -------------------------------------- | ------------ | ----------------------------------------------------------------------------------- |
+| `dpr_milli`                 | `device_scale_factor` (a whole number) | 3            | iPhone 17                                                                           |
+| `frame_css`                 | `viewport`                             | 402 x 874    | the iPhone 17 screen. Render scales of 1/2 and 2/3, as Stake Reels uses, come later |
+| `webgpu`                    | `webgpu`                               | false        | iOS 18 Safari has WebGPU off                                                        |
+| none                        | `pcm_rate_hz`, `pcm_low_rate_hz`       | 48000, 24000 | The measure ids name 48 kHz and 24 kHz                                              |
 
 Every `expected.toml` has these in `[profile]`. Tests turn the table into a
 `HostProfile` with `Fixture::profile()` (`reels()` with the table's values in
@@ -130,12 +130,12 @@ byte order. Only `estimated` files join groups.
 The crate is `crates/dyno-static`. Agents build it in parallel. Each owns whole
 files, so no two agents edit the same file.
 
-| Agent | Owns | Produces |
-|---|---|---|
-| A | `src/lib.rs`, `src/inventory.rs`, `src/sniff.rs` (new), `src/bytes.rs`, `src/duplicates.rs`, `src/rules.rs`, `tests/common/mod.rs`, `tests/fixtures.rs`, `tests/inventory.rs`, `tests/bytes.rs`, `tests/duplicates.rs`, `tests/rules.rs` | inventory, `build_id`, bytes by type, duplicates, rules, orchestration |
-| C | `src/audio/` (`mod.rs`, `wav.rs`, `ogg.rs`, `mp3.rs`, `adts.rs`, `mp4.rs`, `webm.rs`, `groups.rs`, `sprites.rs`), `tests/audio.rs`, `tests/sprites.rs` | audio, sound groups, sprite maps and silence |
-| D | `src/bundle/` (`mod.rs`, `html.rs`, `css.rs`, `js.rs`, `eval.rs`, `render.rs`, `versions.rs`, `urls.rs`, `howl.rs`), `tests/bundle.rs` | render sites, canvas bytes, engine versions, external URLs, Howl sites |
-| B (later) | `src/textures/` (`mod.rs`, `raster.rs`, `ktx2.rs`, `basis.rs`, `spine.rs`, `mips.rs`), `tests/textures.rs` | texture costs and totals |
+| Agent     | Owns                                                                                                                                                                                                                                     | Produces                                                               |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| A         | `src/lib.rs`, `src/inventory.rs`, `src/sniff.rs` (new), `src/bytes.rs`, `src/duplicates.rs`, `src/rules.rs`, `tests/common/mod.rs`, `tests/fixtures.rs`, `tests/inventory.rs`, `tests/bytes.rs`, `tests/duplicates.rs`, `tests/rules.rs` | inventory, `build_id`, bytes by type, duplicates, rules, orchestration |
+| C         | `src/audio/` (`mod.rs`, `wav.rs`, `ogg.rs`, `mp3.rs`, `adts.rs`, `mp4.rs`, `webm.rs`, `groups.rs`, `sprites.rs`), `tests/audio.rs`, `tests/sprites.rs`                                                                                   | audio, sound groups, sprite maps and silence                           |
+| D         | `src/bundle/` (`mod.rs`, `html.rs`, `css.rs`, `js.rs`, `eval.rs`, `render.rs`, `versions.rs`, `urls.rs`, `howl.rs`), `tests/bundle.rs`                                                                                                   | render sites, canvas bytes, engine versions, external URLs, Howl sites |
+| B (later) | `src/textures/` (`mod.rs`, `raster.rs`, `ktx2.rs`, `basis.rs`, `spine.rs`, `mips.rs`), `tests/textures.rs`                                                                                                                               | texture costs and totals                                               |
 
 **Shared files.** The contract step landed the crate `Cargo.toml` with every
 dependency in [section 10](#10-crates), `src/model.rs`, the data flow in
@@ -181,35 +181,35 @@ and a stub summary is empty.
 
 The contract types come from `dyno-schema`:
 
-| Type | Use |
-|---|---|
-| `RelPath` | every path: relative, with `/`, sorted in byte order |
-| `FileKind` | a file's bucket: `js`, `css`, `html`, `image`, `texture`, `audio`, `video`, `font`, `data`, `other` |
-| `ManifestFile`, `BuildManifest` | a file's path, bytes, lowercase hex SHA-256 and kind; the files and `build_id` |
-| `Measure`, `MeasureStatus`, `Uncertainty` | the result rows |
-| `HostProfile`, `Viewport` | the device numbers ([section 1](#profile)) |
-| `Budget` | the budget file, with the rule thresholds |
-| `Finding`, `Fix`, `FixAction` | the rule results |
+| Type                                      | Use                                                                                                 |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `RelPath`                                 | every path: relative, with `/`, sorted in byte order                                                |
+| `FileKind`                                | a file's bucket: `js`, `css`, `html`, `image`, `texture`, `audio`, `video`, `font`, `data`, `other` |
+| `ManifestFile`, `BuildManifest`           | a file's path, bytes, lowercase hex SHA-256 and kind; the files and `build_id`                      |
+| `Measure`, `MeasureStatus`, `Uncertainty` | the result rows                                                                                     |
+| `HostProfile`, `Viewport`                 | the device numbers ([section 1](#profile))                                                          |
+| `Budget`                                  | the budget file, with the rule thresholds                                                           |
+| `Finding`, `Fix`, `FixAction`             | the rule results                                                                                    |
 
 `src/model.rs` holds the rest:
 
-| Type | Fields or methods | Written by | Read by |
-|---|---|---|---|
-| `FamilyScan<S>` | `measures`, `summary` | every family | `lib.rs` |
-| `Inventory` | `new(manifest, contents)`, `files()`, `files_of_kind(kind)`, `contents(path)`, `into_manifest()` | inventory | every family |
-| `Engine` | `Unknown`, `Pixi7`, `Pixi8` | bundle | textures |
-| `BundleSummary` | `engine`, `render_sites`, `howl_sites`, `invalid_scripts`, `draws_with_html` | bundle | textures, audio, rules |
-| `RenderSite` | `file`, `offset`, `antialias` (`None` when not static), `draws_in_2d`, `resolution: Resolution`, `canvas_css`, `canvas: Option<CanvasFloor>` (`None` when Pixi cannot start) | bundle | rules |
-| `Resolution` | `low_milli`, `high_milli` (each `None` when the build does not bound it); `exactly`, `fixed`, `is_above`, `floor_milli` | bundle | rules |
-| `HowlSite`, `SpriteRange` | `file`, `offset`, `src`, `sprites`; `name`, `start_us`, `end_us`, `looped` | bundle | audio |
-| `TextureSummary`, `TextureCost` | `low_bytes`, `high_bytes`, `files`, `not_covered`; `path`, `gpu_bytes`, `astc_bytes` | textures | `lib.rs` (for duplicates), rules |
-| `AudioSummary`, `DecodedAudio` | `decoded_bytes_48k`, `decoded_bytes_24k`, `files`, `stereo_groups`, `sprite_maps`, `not_covered`; `path`, `decoded_bytes_48k` | audio | `lib.rs` (for duplicates), rules |
-| `SpriteMapSummary` | `source`, `status`, `audio`, `silence_bp`, `silence_bytes_48k` | audio | rules |
-| `DuplicateGroup` | `sha256`, `bytes`, `paths`, `wasted_bytes`, `decoded_bytes_saved` | duplicates | rules |
-| `Summaries` | `bundle`, `textures`, `audio`, `duplicates`, `measures_without_value` | `lib.rs` | rules |
-| `MeasureWithoutValue` | `id`, `reason`: a measure whose status is not `estimated` or `measured` | `lib.rs` | rules |
-| `CanvasFloor`, `canvas_floor()` | `backing_width`, `backing_height`, `pixels`, `bytes` | the one canvas formula ([section 8.4](#84-canvas-bytes)) | bundle, rules |
-| `RESOLUTION_CAP_MILLI` | 2000, a **proposal** | | bundle, rules |
+| Type                            | Fields or methods                                                                                                                                                            | Written by                                               | Read by                          |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- | -------------------------------- |
+| `FamilyScan<S>`                 | `measures`, `summary`                                                                                                                                                        | every family                                             | `lib.rs`                         |
+| `Inventory`                     | `new(manifest, contents)`, `files()`, `files_of_kind(kind)`, `contents(path)`, `into_manifest()`                                                                             | inventory                                                | every family                     |
+| `Engine`                        | `Unknown`, `Pixi7`, `Pixi8`                                                                                                                                                  | bundle                                                   | textures                         |
+| `BundleSummary`                 | `engine`, `render_sites`, `howl_sites`, `invalid_scripts`, `draws_with_html`                                                                                                 | bundle                                                   | textures, audio, rules           |
+| `RenderSite`                    | `file`, `offset`, `antialias` (`None` when not static), `draws_in_2d`, `resolution: Resolution`, `canvas_css`, `canvas: Option<CanvasFloor>` (`None` when Pixi cannot start) | bundle                                                   | rules                            |
+| `Resolution`                    | `low_milli`, `high_milli` (each `None` when the build does not bound it); `exactly`, `fixed`, `is_above`, `floor_milli`                                                      | bundle                                                   | rules                            |
+| `HowlSite`, `SpriteRange`       | `file`, `offset`, `src`, `sprites`; `name`, `start_us`, `end_us`, `looped`                                                                                                   | bundle                                                   | audio                            |
+| `TextureSummary`, `TextureCost` | `low_bytes`, `high_bytes`, `files`, `not_covered`; `path`, `gpu_bytes`, `astc_bytes`                                                                                         | textures                                                 | `lib.rs` (for duplicates), rules |
+| `AudioSummary`, `DecodedAudio`  | `decoded_bytes_48k`, `decoded_bytes_24k`, `files`, `stereo_groups`, `sprite_maps`, `not_covered`; `path`, `decoded_bytes_48k`                                                | audio                                                    | `lib.rs` (for duplicates), rules |
+| `SpriteMapSummary`              | `source`, `status`, `audio`, `silence_bp`, `silence_bytes_48k`                                                                                                               | audio                                                    | rules                            |
+| `DuplicateGroup`                | `sha256`, `bytes`, `paths`, `wasted_bytes`, `decoded_bytes_saved`                                                                                                            | duplicates                                               | rules                            |
+| `Summaries`                     | `bundle`, `textures`, `audio`, `duplicates`, `measures_without_value`                                                                                                        | `lib.rs`                                                 | rules                            |
+| `MeasureWithoutValue`           | `id`, `reason`: a measure whose status is not `estimated` or `measured`                                                                                                      | `lib.rs`                                                 | rules                            |
+| `CanvasFloor`, `canvas_floor()` | `backing_width`, `backing_height`, `pixels`, `bytes`                                                                                                                         | the one canvas formula ([section 8.4](#84-canvas-bytes)) | bundle, rules                    |
+| `RESOLUTION_CAP_MILLI`          | 2000, a **proposal**                                                                                                                                                         |                                                          | bundle, rules                    |
 
 The `Inventory` keeps every file's contents, because it reads every file in
 full to hash it. Other families read files only through it, so a folder and a
@@ -221,26 +221,26 @@ Each static measure, the agent that owns it, and what it holds. Items sum to
 the value unless the row says otherwise. An item's key is a path unless the
 row says otherwise.
 
-| Measure | Agent | Value | Items | Uncertainty |
-|---|---|---|---|---|
-| `static.inventory.files` | A | number of files | none: the manifest lists them | `exact` |
-| `static.bytes.by_type` | A | bytes of every file | one per non-empty kind, keyed by its `FileKind` name | `exact` |
-| `static.bytes.compressed` | A | gzip bytes of the js, css, html and data files | per kind of those four with files: its gzip bytes keyed by the kind, then its brotli bytes keyed `<kind>.brotli`. Only the gzip items sum to the value | `exact` for the pinned flate2 and brotli |
-| `static.bytes.duplicates` | A | sum of `wasted_bytes` | one per extra copy (every path of a group but the first), its bytes | `exact` |
-| `static.textures.decoded` | B | `low_bytes` | one per estimated file, its `gpu_bytes` | `range` from `low_bytes` to `high_bytes` |
-| `static.audio.decoded_48k` | C | the total over sound groups at `pcm_rate_hz` | one per sound group, keyed by its representative | `floor`: "0 to 23% below what the browser holds" |
-| `static.audio.decoded_24k` | C | the same at `pcm_low_rate_hz` | as above | `floor`, as above |
-| `static.audio.stereo_files` | C | number of stereo sound groups | one per representative, value 1 | `exact` |
-| `static.audio.stereo_mono_safe` | C | number of decoded stereo groups that are `safe_to_make_mono` | one per decoded stereo group, keyed by its representative, its class as text: `safe_to_make_mono`, `changes_the_sound` or `cancels` | `exact`, with a note that gives the two thresholds. `not_covered` lists the stereo groups that did not decode, then the files with no header |
-| `static.audio.sprite_silence` | C | the largest `silence_bp` of the estimated sprite maps; 0 when there are none | one per sprite map, keyed by its source (a Howl site adds `@offset`), its `silence_bp`. Not a sum | `exact` for time no sprite covers; the note says it is an upper bound on what trimming saves |
-| `static.audio.silence_by_decode` | C | silent windows over all windows of the decoded groups: the share of their time that is silent, rounded half up | one per decoded group, keyed by its representative, its `silence_bp` | `exact`, with a note that gives the window and the level. `not_covered` lists the groups that did not decode, then the files with no header |
-| `static.render.antialias` | D | true when a site that may draw on the GPU (not a 2D canvas) proves it on; else unknown when such a site sets it at run time; else false | one per such site with a known flag, keyed by its file | `exact` |
-| `static.render.resolution_uncapped` | D | true when a site proves its resolution above `RESOLUTION_CAP_MILLI`; else unknown when a site's resolution is not bounded at or below the cap; else false | one per site with a known answer | `exact` |
-| `static.render.backend` | D | what the site with the largest canvas floor asks for: `webgl`, `webgpu` or `canvas2d`, before any fallback. `none` for a game that draws with HTML and CSS | one per render site with a known preference, as text | `exact` |
-| `static.render.canvas` | D | the largest site's `canvas.bytes`: a floor of one colour buffer | one per render site with a canvas, its bytes | `floor`, with a note: "one colour buffer, 4 bytes a backing pixel; antialias buffers and the GPU context are not included", and what the floor took because the build does not fix it (the resolution, the size) |
-| `static.bundle.engines` | D | number of libraries found | one per library, keyed `<bucket>.<library>` (`rendering.pixi`, `audio.howler`, `other.web_sdk`), its version as text, or `unsupported` | `exact` |
-| `static.bundle.external_urls` | D | number of external URLs | one per URL, value 1. `scope.not_covered` says how many hosts are built at run time | `exact` for what the bundle holds |
-| `static.bundle.source_map` | D | Phase 2: stays `missing`, "not built yet" | | |
+| Measure                             | Agent | Value                                                                                                                                                      | Items                                                                                                                                                  | Uncertainty                                                                                                                                                                                                      |
+| ----------------------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `static.inventory.files`            | A     | number of files                                                                                                                                            | none: the manifest lists them                                                                                                                          | `exact`                                                                                                                                                                                                          |
+| `static.bytes.by_type`              | A     | bytes of every file                                                                                                                                        | one per non-empty kind, keyed by its `FileKind` name                                                                                                   | `exact`                                                                                                                                                                                                          |
+| `static.bytes.compressed`           | A     | gzip bytes of the js, css, html and data files                                                                                                             | per kind of those four with files: its gzip bytes keyed by the kind, then its brotli bytes keyed `<kind>.brotli`. Only the gzip items sum to the value | `exact` for the pinned flate2 and brotli                                                                                                                                                                         |
+| `static.bytes.duplicates`           | A     | sum of `wasted_bytes`                                                                                                                                      | one per extra copy (every path of a group but the first), its bytes                                                                                    | `exact`                                                                                                                                                                                                          |
+| `static.textures.decoded`           | B     | `low_bytes`                                                                                                                                                | one per estimated file, its `gpu_bytes`                                                                                                                | `range` from `low_bytes` to `high_bytes`                                                                                                                                                                         |
+| `static.audio.decoded_48k`          | C     | the total over sound groups at `pcm_rate_hz`                                                                                                               | one per sound group, keyed by its representative                                                                                                       | `floor`: "0 to 23% below what the browser holds"                                                                                                                                                                 |
+| `static.audio.decoded_24k`          | C     | the same at `pcm_low_rate_hz`                                                                                                                              | as above                                                                                                                                               | `floor`, as above                                                                                                                                                                                                |
+| `static.audio.stereo_files`         | C     | number of stereo sound groups                                                                                                                              | one per representative, value 1                                                                                                                        | `exact`                                                                                                                                                                                                          |
+| `static.audio.stereo_mono_safe`     | C     | number of decoded stereo groups that are `safe_to_make_mono`                                                                                               | one per decoded stereo group, keyed by its representative, its class as text: `safe_to_make_mono`, `changes_the_sound` or `cancels`                    | `exact`, with a note that gives the two thresholds. `not_covered` lists the stereo groups that did not decode, then the files with no header                                                                     |
+| `static.audio.sprite_silence`       | C     | the largest `silence_bp` of the estimated sprite maps; 0 when there are none                                                                               | one per sprite map, keyed by its source (a Howl site adds `@offset`), its `silence_bp`. Not a sum                                                      | `exact` for time no sprite covers; the note says it is an upper bound on what trimming saves                                                                                                                     |
+| `static.audio.silence_by_decode`    | C     | silent windows over all windows of the decoded groups: the share of their time that is silent, rounded half up                                             | one per decoded group, keyed by its representative, its `silence_bp`                                                                                   | `exact`, with a note that gives the window and the level. `not_covered` lists the groups that did not decode, then the files with no header                                                                      |
+| `static.render.antialias`           | D     | true when a site that may draw on the GPU (not a 2D canvas) proves it on; else unknown when such a site sets it at run time; else false                    | one per such site with a known flag, keyed by its file                                                                                                 | `exact`                                                                                                                                                                                                          |
+| `static.render.resolution_uncapped` | D     | true when a site proves its resolution above `RESOLUTION_CAP_MILLI`; else unknown when a site's resolution is not bounded at or below the cap; else false  | one per site with a known answer                                                                                                                       | `exact`                                                                                                                                                                                                          |
+| `static.render.backend`             | D     | what the site with the largest canvas floor asks for: `webgl`, `webgpu` or `canvas2d`, before any fallback. `none` for a game that draws with HTML and CSS | one per render site with a known preference, as text                                                                                                   | `exact`                                                                                                                                                                                                          |
+| `static.render.canvas`              | D     | the largest site's `canvas.bytes`: a floor of one colour buffer                                                                                            | one per render site with a canvas, its bytes                                                                                                           | `floor`, with a note: "one colour buffer, 4 bytes a backing pixel; antialias buffers and the GPU context are not included", and what the floor took because the build does not fix it (the resolution, the size) |
+| `static.bundle.engines`             | D     | number of libraries found                                                                                                                                  | one per library, keyed `<bucket>.<library>` (`rendering.pixi`, `audio.howler`, `other.web_sdk`), its version as text, or `unsupported`                 | `exact`                                                                                                                                                                                                          |
+| `static.bundle.external_urls`       | D     | number of external URLs                                                                                                                                    | one per URL, value 1. `scope.not_covered` says how many hosts are built at run time                                                                    | `exact` for what the bundle holds                                                                                                                                                                                |
+| `static.bundle.source_map`          | D     | Phase 2: stays `missing`, "not built yet"                                                                                                                  |                                                                                                                                                        |                                                                                                                                                                                                                  |
 
 Each render measure says what the build proves, on its own: an option set at
 run time makes only its own measure unknown. An unknown flag is `unsupported`
@@ -256,29 +256,29 @@ site is a 2D canvas.
 `tests/common/mod.rs` (A) loads the fixtures. A test file adds `mod common;`
 and reads only its own table of `expected.toml`:
 
-| Helper | Gives |
-|---|---|
-| `fixtures()` | every folder under `fixtures/` with an `expected.toml`, sorted by name |
-| `fixture(name)` | one fixture |
-| `Fixture::table(name)` | one top-level table, such as `"audio"` |
-| `Fixture::files()` | every build file's bytes by path. A zip keeps its top folder |
-| `Fixture::profile()` | the `[profile]` table as a `HostProfile` |
-| `Fixture::manifest()` | the `BuildManifest` that `[inventory]` lists |
-| `Fixture::inventory()` | the `Inventory` that `[[inventory.file]]` lists, with the build's bytes. Folder fixtures only. B, C and D test with it before A's inventory lands |
-| `Fixture::scanned_inventory()` | the `Inventory` that `inventory::scan` gives for the build, a folder or a zip |
-| `integer(table, key)`, `text(table, key)`, `sub_table(table, key)` | one value of a table |
+| Helper                                                             | Gives                                                                                                                                             |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fixtures()`                                                       | every folder under `fixtures/` with an `expected.toml`, sorted by name                                                                            |
+| `fixture(name)`                                                    | one fixture                                                                                                                                       |
+| `Fixture::table(name)`                                             | one top-level table, such as `"audio"`                                                                                                            |
+| `Fixture::files()`                                                 | every build file's bytes by path. A zip keeps its top folder                                                                                      |
+| `Fixture::profile()`                                               | the `[profile]` table as a `HostProfile`                                                                                                          |
+| `Fixture::manifest()`                                              | the `BuildManifest` that `[inventory]` lists                                                                                                      |
+| `Fixture::inventory()`                                             | the `Inventory` that `[[inventory.file]]` lists, with the build's bytes. Folder fixtures only. B, C and D test with it before A's inventory lands |
+| `Fixture::scanned_inventory()`                                     | the `Inventory` that `inventory::scan` gives for the build, a folder or a zip                                                                     |
+| `integer(table, key)`, `text(table, key)`, `sub_table(table, key)` | one value of a table                                                                                                                              |
 
-| Test | Table |
-|---|---|
-| `tests/fixtures.rs` | every fixture loads |
-| `tests/inventory.rs` | `[inventory]` |
-| `tests/bytes.rs` | `[bytes]` |
-| `tests/duplicates.rs` | `[duplicates]` |
-| `tests/audio.rs` | `[audio]` |
-| `tests/sprites.rs` | `[sprites]` |
-| `tests/textures.rs` | `[textures]` |
-| `tests/bundle.rs` | `[bundle]`, with `[profile]` |
-| `tests/rules.rs` | `[rules]`; it builds `Summaries` from the other tables, so it does not wait for B, C or D |
+| Test                  | Table                                                                                     |
+| --------------------- | ----------------------------------------------------------------------------------------- |
+| `tests/fixtures.rs`   | every fixture loads                                                                       |
+| `tests/inventory.rs`  | `[inventory]`                                                                             |
+| `tests/bytes.rs`      | `[bytes]`                                                                                 |
+| `tests/duplicates.rs` | `[duplicates]`                                                                            |
+| `tests/audio.rs`      | `[audio]`                                                                                 |
+| `tests/sprites.rs`    | `[sprites]`                                                                               |
+| `tests/textures.rs`   | `[textures]`                                                                              |
+| `tests/bundle.rs`     | `[bundle]`, with `[profile]`                                                              |
+| `tests/rules.rs`      | `[rules]`; it builds `Summaries` from the other tables, so it does not wait for B, C or D |
 
 ## 3. Inventory and build id
 
@@ -323,16 +323,16 @@ loads).
 **Bucket** (`FileKind`). Sniff the magic bytes first, then fall back to the
 extension.
 
-| Magic | Bucket |
-|---|---|
-| `89 50 4E 47`, `FF D8 FF`, `GIF87a`, `GIF89a`, `RIFF....WEBP` | image |
-| `RIFF....WAVE`, `OggS` (unless the first packet is `\x80theora`), `ID3`, `fLaC`, `caff`, `FORM....AIFF`/`AIFC` | audio |
-| `FF Ex`/`FF Fx` frame sync, only when the extension is mp3, aac, mp2 or mpga | audio |
-| ISO-BMFF (`ftyp` at offset 4) | brand `avif`, `avis`, `heic`, `heix`, `mif1`, `msf1`: image. Else any `hdlr` of type `vide`: video; else `soun`: audio. If `moov` is missing or unreadable: extension (m4a, aac: audio; else video) |
-| EBML `1A 45 DF A3` | any `TrackType` 1: video; else 2: audio. Unreadable: extension (weba, mka: audio; else video). Read only up to `Tracks`; do not check sizes past it |
-| KTX2 `AB 4B 54 58 20 32 30 BB`, KTX1 `AB 4B 54 58 20 31 31 BB`, ASTC `13 AB A1 5C`, `DDS `, PVR3 `50 56 52 03`, Basis `sB` with header size 77 | texture |
-| `wOFF`, `wOF2`, `OTTO`; `true` and `00 01 00 00` only with ttf or otf, since `true` can start a text file | font |
-| `\0asm` | other |
+| Magic                                                                                                                                          | Bucket                                                                                                                                                                                              |
+| ---------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `89 50 4E 47`, `FF D8 FF`, `GIF87a`, `GIF89a`, `RIFF....WEBP`                                                                                  | image                                                                                                                                                                                               |
+| `RIFF....WAVE`, `OggS` (unless the first packet is `\x80theora`), `ID3`, `fLaC`, `caff`, `FORM....AIFF`/`AIFC`                                 | audio                                                                                                                                                                                               |
+| `FF Ex`/`FF Fx` frame sync, only when the extension is mp3, aac, mp2 or mpga                                                                   | audio                                                                                                                                                                                               |
+| ISO-BMFF (`ftyp` at offset 4)                                                                                                                  | brand `avif`, `avis`, `heic`, `heix`, `mif1`, `msf1`: image. Else any `hdlr` of type `vide`: video; else `soun`: audio. If `moov` is missing or unreadable: extension (m4a, aac: audio; else video) |
+| EBML `1A 45 DF A3`                                                                                                                             | any `TrackType` 1: video; else 2: audio. Unreadable: extension (weba, mka: audio; else video). Read only up to `Tracks`; do not check sizes past it                                                 |
+| KTX2 `AB 4B 54 58 20 32 30 BB`, KTX1 `AB 4B 54 58 20 31 31 BB`, ASTC `13 AB A1 5C`, `DDS `, PVR3 `50 56 52 03`, Basis `sB` with header size 77 | texture                                                                                                                                                                                             |
+| `wOFF`, `wOF2`, `OTTO`; `true` and `00 01 00 00` only with ttf or otf, since `true` can start a text file                                      | font                                                                                                                                                                                                |
+| `\0asm`                                                                                                                                        | other                                                                                                                                                                                               |
 
 Extensions, when no magic matched: `js mjs cjs` js; `css`; `html htm`; `json
 map txt xml csv atlas fnt skel plist yaml yml` data; `png jpg jpeg webp avif
@@ -423,15 +423,15 @@ headers; they never decode. The tests cross-check them against symphonia
 0.6.1's demuxers (R4). [Section 11](#11-cross-check-results) lists where it
 differs. Decoding is separate ([section 5.4](#54-decoding)).
 
-| Format | Channels | ticks | tick_rate | `invalid` when |
-|---|---|---|---|---|
-| WAV (`RIFF/WAVE`) | `fmt.channels` | PCM (1), float (3), extensible (0xFFFE): `data_size / block_align`. Other codecs: `fact.sample_length` | `fmt.sample_rate` | no `fmt` or `data`; `data` runs past the end |
-| Ogg Vorbis | ident header byte 11 | last granule position of the first logical stream | ident `sample_rate` | first page incomplete; last page runs past the end; no granule |
-| Ogg Opus | OpusHead byte 9 | last granule minus `pre_skip` | always 48000 | as Vorbis, and last granule not above `pre_skip` |
-| MP3 | header mode 3 is mono, else 2 | Xing/Info frames x spf minus (delay + padding) when a LAME, Lavf or Lavc tag follows; Xing frames x spf without one; VBRI frames x spf; else walk every frame, count x spf | header sample rate | no frame sync followed by a second valid frame; the walk loses sync; Xing byte count past the end |
-| AAC in ADTS | `channel_configuration` (7 means 8) | sum over frames of `(number_of_raw_data_blocks + 1) * 1024` | sampling frequency index | last frame runs past the end; lost sync |
-| AAC in MP4/M4A | AudioSpecificConfig `channelConfiguration`; object type 29 (PS) means 2; 0 means the sample entry's count | with an edit list: sum of `segment_duration` of entries with `media_time >= 0`; without: `mdhd.duration` | `mvhd.timescale` with an edit list; else `mdhd.timescale` | no `moov`; a box runs past the end; no `soun` track |
-| WebM (Matroska) | `Audio/Channels` | `round((Duration * TimestampScale - CodecDelay) / 1000)` | 1,000,000 (microseconds) | an element runs past the end, `Segment` included; a video track (then the file is bucket video, not audio) |
+| Format            | Channels                                                                                                  | ticks                                                                                                                                                                      | tick_rate                                                 | `invalid` when                                                                                             |
+| ----------------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| WAV (`RIFF/WAVE`) | `fmt.channels`                                                                                            | PCM (1), float (3), extensible (0xFFFE): `data_size / block_align`. Other codecs: `fact.sample_length`                                                                     | `fmt.sample_rate`                                         | no `fmt` or `data`; `data` runs past the end                                                               |
+| Ogg Vorbis        | ident header byte 11                                                                                      | last granule position of the first logical stream                                                                                                                          | ident `sample_rate`                                       | first page incomplete; last page runs past the end; no granule                                             |
+| Ogg Opus          | OpusHead byte 9                                                                                           | last granule minus `pre_skip`                                                                                                                                              | always 48000                                              | as Vorbis, and last granule not above `pre_skip`                                                           |
+| MP3               | header mode 3 is mono, else 2                                                                             | Xing/Info frames x spf minus (delay + padding) when a LAME, Lavf or Lavc tag follows; Xing frames x spf without one; VBRI frames x spf; else walk every frame, count x spf | header sample rate                                        | no frame sync followed by a second valid frame; the walk loses sync; Xing byte count past the end          |
+| AAC in ADTS       | `channel_configuration` (7 means 8)                                                                       | sum over frames of `(number_of_raw_data_blocks + 1) * 1024`                                                                                                                | sampling frequency index                                  | last frame runs past the end; lost sync                                                                    |
+| AAC in MP4/M4A    | AudioSpecificConfig `channelConfiguration`; object type 29 (PS) means 2; 0 means the sample entry's count | with an edit list: sum of `segment_duration` of entries with `media_time >= 0`; without: `mdhd.duration`                                                                   | `mvhd.timescale` with an edit list; else `mdhd.timescale` | no `moov`; a box runs past the end; no `soun` track                                                        |
+| WebM (Matroska)   | `Audio/Channels`                                                                                          | `round((Duration * TimestampScale - CodecDelay) / 1000)`                                                                                                                   | 1,000,000 (microseconds)                                  | an element runs past the end, `Segment` included; a video track (then the file is bucket video, not audio) |
 
 Details per reader:
 
@@ -557,11 +557,11 @@ the channels, and what the channels do not share is the difference. For two
 channels that is mid = (L + R) / 2 against side = (L - R) / 2. Every channel
 counts, so a centre channel that cancels left and right is seen.
 
-| Class | When | What the `audio.stereo` rule does |
-|---|---|---|
-| `safe_to_make_mono` | what the channels do not share is at least 40 dB below the mono mix, or the sound is digital silence | a `downmix_to_mono` fix |
-| `changes_the_sound` | neither of the others | a `downmix_to_mono` fix, and the text asks for a listen first |
-| `cancels` | the mono mix keeps 25% of the channel energy or less | no fix: keep it stereo |
+| Class               | When                                                                                                 | What the `audio.stereo` rule does                             |
+| ------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `safe_to_make_mono` | what the channels do not share is at least 40 dB below the mono mix, or the sound is digital silence | a `downmix_to_mono` fix                                       |
+| `changes_the_sound` | neither of the others                                                                                | a `downmix_to_mono` fix, and the text asks for a listen first |
+| `cancels`           | the mono mix keeps 25% of the channel energy or less                                                 | no fix: keep it stereo                                        |
 
 The `cancels` bar is a proposal (R8). The 40 dB bar for `safe_to_make_mono` is
 decided: it does not get looser without a listening test. A
@@ -572,15 +572,15 @@ built. On the 2026-11-05 real builds, the side of the 56 stereo sounds is 21 to
 
 **Known gaps.**
 
-| Gap | How dyno handles it |
-|---|---|
-| symphonia has no Opus decoder | An Opus group is decoded from another file of the group when there is one. Else it is `not_decoded`, listed in `not_covered`, and the stereo rule judges it by its channel count |
-| Opus pre-skip | No Opus decode, so it does not apply |
-| M4A edit lists: symphonia ignores them and returns the priming and padding frames | With one media segment, the MP4 reader gives its start, so the analysis skips the priming and stops before the padding: the frames ffmpeg plays. With more than one, the sound is `not_decoded` |
-| Other formats with padding at the end and no stated start | The extra frames are skipped from the start, so some padding stays and the same count of frames from the start goes. Silence and stereo energy are sums over the sound, so a few ms move them very little |
-| symphonia trims an MP3 to its own length, from the Xing header or, with none, from the first frame's bit rate | A decode shorter than the header's length is `not_decoded`, not measured in part |
-| A stream whose channels change, such as MP3s joined end to end: symphonia refuses the first packet with new channels | The packet is tried once more with a new decoder, and decoding goes on |
-| A damaged packet | It is skipped, as a browser skips it. The length check then judges what decoded |
+| Gap                                                                                                                  | How dyno handles it                                                                                                                                                                                       |
+| -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| symphonia has no Opus decoder                                                                                        | An Opus group is decoded from another file of the group when there is one. Else it is `not_decoded`, listed in `not_covered`, and the stereo rule judges it by its channel count                          |
+| Opus pre-skip                                                                                                        | No Opus decode, so it does not apply                                                                                                                                                                      |
+| M4A edit lists: symphonia ignores them and returns the priming and padding frames                                    | With one media segment, the MP4 reader gives its start, so the analysis skips the priming and stops before the padding: the frames ffmpeg plays. With more than one, the sound is `not_decoded`           |
+| Other formats with padding at the end and no stated start                                                            | The extra frames are skipped from the start, so some padding stays and the same count of frames from the start goes. Silence and stereo energy are sums over the sound, so a few ms move them very little |
+| symphonia trims an MP3 to its own length, from the Xing header or, with none, from the first frame's bit rate        | A decode shorter than the header's length is `not_decoded`, not measured in part                                                                                                                          |
+| A stream whose channels change, such as MP3s joined end to end: symphonia refuses the first packet with new channels | The packet is tried once more with a new decoder, and decoding goes on                                                                                                                                    |
+| A damaged packet                                                                                                     | It is skipped, as a browser skips it. The length check then judges what decoded                                                                                                                           |
 
 ## 6. Sprite maps and silence
 
@@ -591,12 +591,12 @@ file at load, so the gaps between ranges cost decoded memory for nothing.
 
 ### 6.1 Where sprite maps appear
 
-| Source | Shape | Units |
-|---|---|---|
-| JS literal (from bundle as a `HowlSite`) | `new <anything>({src: "..." or [...], sprite: {name: [offset, duration, loop?]}})` | ms |
-| Howler JSON (any `.json` in the build; web-sdk ships one as `sounds.json`; audiosprite `-e howler2`) | `{"src": "..." or [...], "sprite": {name: [offset, duration, loop?]}}` | ms |
-| Howler 1 JSON (audiosprite `-e howler`) | `{"urls": [...], "sprite": {...}}` | ms |
-| audiosprite jukebox JSON (`-e jukebox`, also Phaser) | `{"resources": [...], "spritemap": {name: {"start", "end", "loop"}}}` | seconds |
+| Source                                                                                               | Shape                                                                              | Units   |
+| ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ------- |
+| JS literal (from bundle as a `HowlSite`)                                                             | `new <anything>({src: "..." or [...], sprite: {name: [offset, duration, loop?]}})` | ms      |
+| Howler JSON (any `.json` in the build; web-sdk ships one as `sounds.json`; audiosprite `-e howler2`) | `{"src": "..." or [...], "sprite": {name: [offset, duration, loop?]}}`             | ms      |
+| Howler 1 JSON (audiosprite `-e howler`)                                                              | `{"urls": [...], "sprite": {...}}`                                                 | ms      |
+| audiosprite jukebox JSON (`-e jukebox`, also Phaser)                                                 | `{"resources": [...], "spritemap": {name: {"start", "end", "loop"}}}`              | seconds |
 
 Rules:
 
@@ -653,12 +653,12 @@ every file of kind image and texture, and `BundleSummary.engine`.
 
 Per file, `gpu_bytes` is the sum over the levels the GPU will hold:
 
-| Source | Bytes per level | Levels |
-|---|---|---|
-| PNG, JPEG, WebP, AVIF, GIF | `w * h * 4` (the browser decodes to RGBA8; Pixi uploads RGBA8) | see 7.3 |
-| KTX2 with Basis (ETC1S or UASTC) | ASTC 4x4: `ceil(w/4) * ceil(h/4) * 16` | the file's levels |
-| `.basis` (ETC1S or UASTC) | ASTC 4x4, as above | the file's levels |
-| KTX2, raw (no Basis) | `uncompressedByteLength` from the level index | the file's levels |
+| Source                           | Bytes per level                                                | Levels            |
+| -------------------------------- | -------------------------------------------------------------- | ----------------- |
+| PNG, JPEG, WebP, AVIF, GIF       | `w * h * 4` (the browser decodes to RGBA8; Pixi uploads RGBA8) | see 7.3           |
+| KTX2 with Basis (ETC1S or UASTC) | ASTC 4x4: `ceil(w/4) * ceil(h/4) * 16`                         | the file's levels |
+| `.basis` (ETC1S or UASTC)        | ASTC 4x4, as above                                             | the file's levels |
+| KTX2, raw (no Basis)             | `uncompressedByteLength` from the level index                  | the file's levels |
 
 Totals: `low_bytes = sum of gpu_bytes` over `estimated` files;
 `high_bytes = 2 * low_bytes` (the browser may keep a second, CPU-side copy;
@@ -673,17 +673,17 @@ apart.
 
 ### 7.2 Readers
 
-| Format | Read | Crate | Odd headers |
-|---|---|---|---|
-| PNG | IHDR width and height | `imagesize` 0.15.0 (`blob_size`) | APNG counts one frame. 16-bit and palette images still upload as RGBA8. IHDR must be the first chunk, else `invalid` |
-| JPEG | SOFn marker | `imagesize` | EXIF rotation swaps sides but not the product. No SOF before the end: `invalid` |
-| WebP | `VP8 `, `VP8L` or `VP8X` header | `imagesize` | animated WebP counts the canvas once |
-| AVIF | `ispe` of the primary item | `imagesize` (HEIF path) | grids and `irot` do not change `w * h`. `ftyp` only: `invalid` |
-| GIF | logical screen size | `imagesize` | one frame |
-| KTX2 | 80-byte header, level index, DFD | `ktx2` 0.5.0: `Reader::new` (it checks every section and level against the file length), `header()`, `levels()`, `basic_dfd()` | Do not trust `imagesize` for KTX2: it reports a size for a truncated file; `Reader::new` returns `UnexpectedEnd` |
-| `.basis` | own reader | none needed | see 7.4 |
-| Spine `.atlas` | own text reader | none needed | see 7.5 |
-| SVG | none | | `unsupported` (its raster size depends on how the game draws it) |
+| Format         | Read                             | Crate                                                                                                                          | Odd headers                                                                                                          |
+| -------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| PNG            | IHDR width and height            | `imagesize` 0.15.0 (`blob_size`)                                                                                               | APNG counts one frame. 16-bit and palette images still upload as RGBA8. IHDR must be the first chunk, else `invalid` |
+| JPEG           | SOFn marker                      | `imagesize`                                                                                                                    | EXIF rotation swaps sides but not the product. No SOF before the end: `invalid`                                      |
+| WebP           | `VP8 `, `VP8L` or `VP8X` header  | `imagesize`                                                                                                                    | animated WebP counts the canvas once                                                                                 |
+| AVIF           | `ispe` of the primary item       | `imagesize` (HEIF path)                                                                                                        | grids and `irot` do not change `w * h`. `ftyp` only: `invalid`                                                       |
+| GIF            | logical screen size              | `imagesize`                                                                                                                    | one frame                                                                                                            |
+| KTX2           | 80-byte header, level index, DFD | `ktx2` 0.5.0: `Reader::new` (it checks every section and level against the file length), `header()`, `levels()`, `basic_dfd()` | Do not trust `imagesize` for KTX2: it reports a size for a truncated file; `Reader::new` returns `UnexpectedEnd`     |
+| `.basis`       | own reader                       | none needed                                                                                                                    | see 7.4                                                                                                              |
+| Spine `.atlas` | own text reader                  | none needed                                                                                                                    | see 7.5                                                                                                              |
+| SVG            | none                             |                                                                                                                                | `unsupported` (its raster size depends on how the game draws it)                                                     |
 
 KTX2 details:
 
@@ -705,13 +705,13 @@ KTX2 details:
 The plan says "plus 1/3 for mipmaps". The real rule depends on the engine, so
 this design adds the exact chain only where we know mips exist (R5):
 
-| Case | Mips |
-|---|---|
-| Pixi 7 (`Engine::Pixi7`) | Default `MIPMAP_MODES.POW2`: mips for images whose width and height are both powers of two. |
-| Pixi 8 (`Engine::Pixi8`) | None. `autoGenerateMipmaps` defaults to false. |
-| Unknown engine | None. |
-| A Spine atlas page whose min filter starts with `MipMap` | Full chain, any engine. |
-| KTX2 and `.basis` | The levels in the file. |
+| Case                                                     | Mips                                                                                        |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Pixi 7 (`Engine::Pixi7`)                                 | Default `MIPMAP_MODES.POW2`: mips for images whose width and height are both powers of two. |
+| Pixi 8 (`Engine::Pixi8`)                                 | None. `autoGenerateMipmaps` defaults to false.                                              |
+| Unknown engine                                           | None.                                                                                       |
+| A Spine atlas page whose min filter starts with `MipMap` | Full chain, any engine.                                                                     |
+| KTX2 and `.basis`                                        | The levels in the file.                                                                     |
 
 A full chain for `w x h` has `floor(log2(max(w, h))) + 1` levels; level `i` is
 `max(1, w >> i) x max(1, h >> i)`.
@@ -724,22 +724,22 @@ Fixture `pixi7-aa`: `atlas-1024x1024.png` is 5,592,404 bytes with mips;
 
 All fields are little-endian and packed. The header is 77 bytes:
 
-| Offset | Size | Field |
-|---|---|---|
-| 0 | 2 | signature `sB` |
-| 2 | 2 | version (0x13) |
-| 4 | 2 | header size (77) |
-| 6 | 2 | header CRC-16 |
-| 8 | 4 | data size |
-| 12 | 2 | data CRC-16 |
-| 14 | 3 | total slices |
-| 17 | 3 | total images |
-| 20 | 1 | texture format: 0 ETC1S, 1 UASTC LDR 4x4; others (HDR) `unsupported` |
-| 21 | 2 | flags: bit 0 ETC1S, bit 2 has alpha slices |
-| 23 | 1 | texture type |
-| 24 to 64 | | frame rate, user data, codebook and table offsets (not needed) |
-| 65 | 4 | slice descriptions file offset |
-| 69 | 8 | extended offset and size |
+| Offset   | Size | Field                                                                |
+| -------- | ---- | -------------------------------------------------------------------- |
+| 0        | 2    | signature `sB`                                                       |
+| 2        | 2    | version (0x13)                                                       |
+| 4        | 2    | header size (77)                                                     |
+| 6        | 2    | header CRC-16                                                        |
+| 8        | 4    | data size                                                            |
+| 12       | 2    | data CRC-16                                                          |
+| 14       | 3    | total slices                                                         |
+| 17       | 3    | total images                                                         |
+| 20       | 1    | texture format: 0 ETC1S, 1 UASTC LDR 4x4; others (HDR) `unsupported` |
+| 21       | 2    | flags: bit 0 ETC1S, bit 2 has alpha slices                           |
+| 23       | 1    | texture type                                                         |
+| 24 to 64 |      | frame rate, user data, codebook and table offsets (not needed)       |
+| 65       | 4    | slice descriptions file offset                                       |
+| 69       | 8    | extended offset and size                                             |
 
 Each slice description is 23 bytes: image index (3), level index (1), flags (1,
 bit 0 means alpha slice), original width (2), original height (2), blocks x
@@ -914,15 +914,15 @@ one site, the app's.
 
 **Values.**
 
-| Option | Read | Default when the key is absent |
-|---|---|---|
-| `antialias` | evaluator, as JavaScript truthiness | false (v7 and v8) |
-| `resolution` | evaluator, stored as milli-units: a positive number, rounded, that fits in 32 bits | 1000 (v7 `settings.RESOLUTION`, v8 default) |
-| `forceCanvas` | evaluator, as truthiness. True makes the order 2D only. A value the evaluator cannot read makes the order `Unknown` | absent |
-| `preference` | a string goes first, then the rest of webgl, webgpu, canvas; an array is the whole order. A falsy value is the default order. An unknown name, or a value the evaluator cannot read, is `Unknown`. The site asks for the first | v8: `webgl` (auto-detect order webgl, webgpu, canvas); v7: WebGL only |
-| `autoDensity` | evaluator | false |
-| `resizeTo` | top level only, as Pixi's resize plugin reads it. A falsy value is no resize. A value the evaluator cannot read counts as a resize. A spread the evaluator cannot read may set it, so the frame is assumed | absent |
-| `width`, `height` | evaluator: a positive number, rounded | absent |
+| Option            | Read                                                                                                                                                                                                                           | Default when the key is absent                                        |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------- |
+| `antialias`       | evaluator, as JavaScript truthiness                                                                                                                                                                                            | false (v7 and v8)                                                     |
+| `resolution`      | evaluator, stored as milli-units: a positive number, rounded, that fits in 32 bits                                                                                                                                             | 1000 (v7 `settings.RESOLUTION`, v8 default)                           |
+| `forceCanvas`     | evaluator, as truthiness. True makes the order 2D only. A value the evaluator cannot read makes the order `Unknown`                                                                                                            | absent                                                                |
+| `preference`      | a string goes first, then the rest of webgl, webgpu, canvas; an array is the whole order. A falsy value is the default order. An unknown name, or a value the evaluator cannot read, is `Unknown`. The site asks for the first | v8: `webgl` (auto-detect order webgl, webgpu, canvas); v7: WebGL only |
+| `autoDensity`     | evaluator                                                                                                                                                                                                                      | false                                                                 |
+| `resizeTo`        | top level only, as Pixi's resize plugin reads it. A falsy value is no resize. A value the evaluator cannot read counts as a resize. A spread the evaluator cannot read may set it, so the frame is assumed                     | absent                                                                |
+| `width`, `height` | evaluator: a positive number, rounded                                                                                                                                                                                          | absent                                                                |
 
 Pixi 8 merges the chosen renderer's nested options over the rest
 (`{...options, ...options.webgl}`), so a key in `webgl` (or `webgpu`, or
@@ -1033,15 +1033,15 @@ and whose last quasi ends with ` - https://pixijs.com` (Pixi 7) or ` -
 http://www.pixijs.com/` (Pixi 8). Its major comes from the version when the
 version is read, else from that site.
 
-| Engine | Detection | Version | Reliability |
-|---|---|---|---|
-| Pixi 7 | the banner; 7.4.3 has `` `PixiJS 7.4.3 - ${...} - https://pixijs.com` `` | a semver right after `PixiJS ` in the first quasi | reliable for 7.x |
-| Pixi 8 | the banner; 8.22.0 has `` `PixiJS ${Ci} - ${...} - http://www.pixijs.com/` `` | resolve the first expression with the evaluator. `Ci` is declared `var Ci;` and assigned `Ci="8.22.0"` inside an esbuild lazy-init function, so the evaluator's single-write rule finds it | reliable when it resolves. Do not grep for semver strings: the same bundle has deprecation constants such as `"8.0.0"`, `"8.3.4"`, `"8.21.0"` |
-| Pixi, fallback | a comment containing `pixi.js` and a semver on the same line | the semver, unless the script's banner gives another major | heuristic: only if the build kept comments |
-| Pixi, last resort | the banner without a version the evaluator can read | major only, from the site in the banner | heuristic; version `unsupported` |
-| Howler | the legal comment `howler.js v2.2.4` (esbuild keeps `/*!` comments, inline or at the end) | the semver after `howler.js v` | reliable when comments are kept |
-| Howler, fallback | the string `HTML5 Audio pool exhausted, returning potentially locked audio object.` or a key or property `html5PoolSize` | none | detection is reliable; version `unsupported` |
-| web-sdk (StakeEngine) | at least 2 of the string literals `/wallet/authenticate`, `/wallet/play`, `/wallet/end-round`, `/bet/event`, plus the literal `rgs_url`, plus a `__sveltekit_` name read as a global or as a property of any object, in the HTML or JS | always `unsupported`: its packages are versioned 0.0.0, so no version is in the bundle | heuristic. Its Pixi and Howler copies are reported by their own rows (the plan notes record Pixi 8.8.1 at web-sdk commit 1843d60) |
+| Engine                | Detection                                                                                                                                                                                                                              | Version                                                                                                                                                                                    | Reliability                                                                                                                                   |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pixi 7                | the banner; 7.4.3 has `` `PixiJS 7.4.3 - ${...} - https://pixijs.com` ``                                                                                                                                                               | a semver right after `PixiJS ` in the first quasi                                                                                                                                          | reliable for 7.x                                                                                                                              |
+| Pixi 8                | the banner; 8.22.0 has `` `PixiJS ${Ci} - ${...} - http://www.pixijs.com/` ``                                                                                                                                                          | resolve the first expression with the evaluator. `Ci` is declared `var Ci;` and assigned `Ci="8.22.0"` inside an esbuild lazy-init function, so the evaluator's single-write rule finds it | reliable when it resolves. Do not grep for semver strings: the same bundle has deprecation constants such as `"8.0.0"`, `"8.3.4"`, `"8.21.0"` |
+| Pixi, fallback        | a comment containing `pixi.js` and a semver on the same line                                                                                                                                                                           | the semver, unless the script's banner gives another major                                                                                                                                 | heuristic: only if the build kept comments                                                                                                    |
+| Pixi, last resort     | the banner without a version the evaluator can read                                                                                                                                                                                    | major only, from the site in the banner                                                                                                                                                    | heuristic; version `unsupported`                                                                                                              |
+| Howler                | the legal comment `howler.js v2.2.4` (esbuild keeps `/*!` comments, inline or at the end)                                                                                                                                              | the semver after `howler.js v`                                                                                                                                                             | reliable when comments are kept                                                                                                               |
+| Howler, fallback      | the string `HTML5 Audio pool exhausted, returning potentially locked audio object.` or a key or property `html5PoolSize`                                                                                                               | none                                                                                                                                                                                       | detection is reliable; version `unsupported`                                                                                                  |
+| web-sdk (StakeEngine) | at least 2 of the string literals `/wallet/authenticate`, `/wallet/play`, `/wallet/end-round`, `/bet/event`, plus the literal `rgs_url`, plus a `__sveltekit_` name read as a global or as a property of any object, in the HTML or JS | always `unsupported`: its packages are versioned 0.0.0, so no version is in the bundle                                                                                                     | heuristic. Its Pixi and Howler copies are reported by their own rows (the plan notes record Pixi 8.8.1 at web-sdk commit 1843d60)             |
 
 `Engine` for textures is `Pixi7` or `Pixi8` from the major. With two Pixi
 copies, use the one in the file of the render site with the largest canvas
@@ -1077,14 +1077,14 @@ steps for one position. A chain of `+` uses one level, however long, but each
 servers commonly refuse a longer request line. Each string it reaches is read
 by the first three rows:
 
-| Where | What counts |
-|---|---|
-| JS string literal, or a template with no expressions | the **whole** value is a URL: `http`, `https`, `ws` or `wss` scheme, or protocol-relative `//host`, with a host that has a dot (or is an IPv6 literal) and no whitespace |
-| JS template with expressions | read as `a + b + ...` is: a template that starts with an expression starts with what that expression reads as, and each expression that reads as one whole text is joined in, so with `const h = 'x.com'`, `` `https://${h}/a` `` is the URL `https://x.com/a`. At the first expression read at run time, or one that would make the text longer than 8 KiB, the text so far is the start: if it holds a full host and a `/` (`` `https://cdn.x.com/a/${n}.png` ``), record it. If it is a scheme and part of a host only (`` `https://${host}${path}` ``), count one `dynamic_host_site`. Ignore a start that is protocol-relative (`` `//----${x}` `` appears in shader code) |
-| JS `a + b + ...` | the start, the leftmost part, is read first. A whole start joined with parts that each read as one whole text is whole again, so `'https://api.' + 'x.com/a'` is the URL `https://api.x.com/a`. At the first part read at run time, or one that would make the text longer than 8 KiB, the text so far is only the start and follows the template rule: `'https://api.' + env` counts one `dynamic_host_site` |
-| HTML | `src`, `srcset` (each candidate's URL, read by the HTML standard's rules, so a URL may hold commas; descriptors are skipped, not checked), `poster`, `data`, SVG `href` and `xlink:href`, and `href` and `imagesrcset` on a `<link>` whose `rel` loads it: `apple-touch-icon`, `apple-touch-icon-precomposed`, `dns-prefetch`, `icon`, `manifest`, `mask-icon`, `modulepreload`, `preconnect`, `prefetch`, `preload` or `stylesheet` |
-| CSS | `url(...)` and `@import`, in one pass that skips comments and strings, so `content: "url(x.png)"` does not count. A quoted value ends at its closing quote; a raw newline (LF, CR or form feed) or the end of the text first means no value. An escaped newline, CR LF as one, joins the value |
-| JSON | string values that are whole URLs, in data files other than source maps and in import maps and other data blocks in HTML |
+| Where                                                | What counts                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| JS string literal, or a template with no expressions | the **whole** value is a URL: `http`, `https`, `ws` or `wss` scheme, or protocol-relative `//host`, with a host that has a dot (or is an IPv6 literal) and no whitespace                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| JS template with expressions                         | read as `a + b + ...` is: a template that starts with an expression starts with what that expression reads as, and each expression that reads as one whole text is joined in, so with `const h = 'x.com'`, `` `https://${h}/a` `` is the URL `https://x.com/a`. At the first expression read at run time, or one that would make the text longer than 8 KiB, the text so far is the start: if it holds a full host and a `/` (`` `https://cdn.x.com/a/${n}.png` ``), record it. If it is a scheme and part of a host only (`` `https://${host}${path}` ``), count one `dynamic_host_site`. Ignore a start that is protocol-relative (`` `//----${x}` `` appears in shader code) |
+| JS `a + b + ...`                                     | the start, the leftmost part, is read first. A whole start joined with parts that each read as one whole text is whole again, so `'https://api.' + 'x.com/a'` is the URL `https://api.x.com/a`. At the first part read at run time, or one that would make the text longer than 8 KiB, the text so far is only the start and follows the template rule: `'https://api.' + env` counts one `dynamic_host_site`                                                                                                                                                                                                                                                                   |
+| HTML                                                 | `src`, `srcset` (each candidate's URL, read by the HTML standard's rules, so a URL may hold commas; descriptors are skipped, not checked), `poster`, `data`, SVG `href` and `xlink:href`, and `href` and `imagesrcset` on a `<link>` whose `rel` loads it: `apple-touch-icon`, `apple-touch-icon-precomposed`, `dns-prefetch`, `icon`, `manifest`, `mask-icon`, `modulepreload`, `preconnect`, `prefetch`, `preload` or `stylesheet`                                                                                                                                                                                                                                            |
+| CSS                                                  | `url(...)` and `@import`, in one pass that skips comments and strings, so `content: "url(x.png)"` does not count. A quoted value ends at its closing quote; a raw newline (LF, CR or form feed) or the end of the text first means no value. An escaped newline, CR LF as one, joins the value                                                                                                                                                                                                                                                                                                                                                                                  |
+| JSON                                                 | string values that are whole URLs, in data files other than source maps and in import maps and other data blocks in HTML                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 Drop W3C namespace URIs (`http://www.w3.org/2000/svg`, `.../1999/xhtml`,
 `.../1999/xlink`, `.../XML/1998/namespace`, `.../2000/xmlns/`,
@@ -1286,16 +1286,16 @@ Each budget id says in `ids.rs` who checks it (`CheckedBy`):
 When a check has no budget file, or the file does not set a key, the rule uses
 the key's default:
 
-| Budget key | Checked by | Default (proposal) | Key in the earlier draft |
-|---|---|---|---|
-| `audio.decoded_mb` | score | warn 64, fail 128 | `static.audio.pcm_48k_warn_bytes`, `static.audio.pcm_48k_fail_bytes` |
-| `audio.stereo_saving_mb` | rule `audio.stereo` | warn 4 | `static.audio.stereo_saving_warn_bytes` |
-| `audio.silence_share_bp` | rule `audio.silence_share` | warn 1000 | `static.audio.silence_share_warn_bp` |
-| `audio.silence_saving_mb` | rule `audio.silence_share` | warn 1 | `static.audio.silence_saving_warn_bytes` |
-| `textures.decoded_mb` | score | warn 160, fail 256 | `static.textures.lo_warn_bytes` (192 MiB), `static.textures.lo_fail_bytes` |
-| `render.antialias` | score | `warn` | `static.render.antialias` |
-| `render.resolution_uncapped` | score | `warn` | `static.render.resolution_warn_milli` |
-| `files.duplicate` | rule `files.duplicate` | `warn` | `static.files.duplicate` |
+| Budget key                   | Checked by                 | Default (proposal) | Key in the earlier draft                                                   |
+| ---------------------------- | -------------------------- | ------------------ | -------------------------------------------------------------------------- |
+| `audio.decoded_mb`           | score                      | warn 64, fail 128  | `static.audio.pcm_48k_warn_bytes`, `static.audio.pcm_48k_fail_bytes`       |
+| `audio.stereo_saving_mb`     | rule `audio.stereo`        | warn 4             | `static.audio.stereo_saving_warn_bytes`                                    |
+| `audio.silence_share_bp`     | rule `audio.silence_share` | warn 1000          | `static.audio.silence_share_warn_bp`                                       |
+| `audio.silence_saving_mb`    | rule `audio.silence_share` | warn 1             | `static.audio.silence_saving_warn_bytes`                                   |
+| `textures.decoded_mb`        | score                      | warn 160, fail 256 | `static.textures.lo_warn_bytes` (192 MiB), `static.textures.lo_fail_bytes` |
+| `render.antialias`           | score                      | `warn`             | `static.render.antialias`                                                  |
+| `render.resolution_uncapped` | score                      | `warn`             | `static.render.resolution_warn_milli`                                      |
+| `files.duplicate`            | rule `files.duplicate`     | `warn`             | `static.files.duplicate`                                                   |
 
 - The texture warn is the skeleton's 160, not 192. No fixture has textures
   between 160 and 192 MiB, so no fixture outcome moves.
@@ -1306,15 +1306,15 @@ the key's default:
 
 ### 9.2 The rules
 
-| Rule id | Value | Verdict (`outcome` in fixtures) | `saved_bytes` | Fixes | Fix text |
-|---|---|---|---|---|---|
-| `audio.pcm_over_budget` | `AudioSummary.decoded_bytes_48k` | budget rule (below) on `audio.decoded_mb`, with audio's `not_covered` | `decoded_bytes_48k - decoded_bytes_24k` | one `resample_to_24k`, no path | "Decoded audio is {v} MB at 48 kHz. Run the AudioContext at 24 kHz to save {s} MB, or load long music when it is needed." |
-| `audio.stereo` | sum of `decoded_bytes_48k / 2` over the `stereo_groups` that are not `cancels` | budget rule on `audio.stereo_saving_mb`, with audio's `not_covered`. The default has no fail limit, so by default it never fails | the value | one `downmix_to_mono` per representative that halving shrinks and that is not `cancels`, so a sound of 0 or 1 byte gets none | "{n} stereo sounds decode to {d} MB. Export them as mono to save {s} MB.", then "Mono would change the sound of {c} of them, so listen first." when some are `changes_the_sound`, and "Keep {k} other stereo sounds as they are: mono would cancel them out of phase." when some are `cancels` |
-| `audio.silence_share` | the largest `silence_bp` of the sprite maps | a level (warn or fail) applies when a map is above that level's limit in both silence keys. A level that either key leaves unset never applies. Else `incomplete` if a sprite map is not `estimated`, or `invalid_scripts` is not empty; else pass | sum of `silence_bytes_48k` of the maps at the outcome's level | one `trim_sprite_silence` per such map, with its source | "{p}% of {file} is not covered by any sprite in {source}. Trim the gaps to save up to {s} MB." |
-| `render.antialias_or_resolution` | the largest site's floor `canvas.bytes` | the worse of two checks on what the sites prove: the `render.antialias` severity if a site that may draw on the GPU has antialias on, and the `render.resolution_uncapped` severity if a site's resolution is above `RESOLUTION_CAP_MILLI`. `allow` skips a check. A proven warning or fail wins over a site that sets its options at run time. Else `incomplete` if no site was found, no site can start, or a site sets antialias (on the GPU) or the resolution at run time. A check that would pass is `incomplete` while `invalid_scripts` is not empty, since such a script may hold a worse site. A game that draws with HTML and CSS passes | the fixes' savings | `cap_resolution` for each site whose resolution is one value above the cap, saving `floor(res) - floor(cap)`, which is w x h x 4 x (r^2 - 2^2). No path. Turning antialias off has no fix: what it saves needs a device run (R7), and `Fix.saves_bytes` is a required number | "{file} turns antialias on. Set `antialias: false`. A device run will measure what it saves, so this fix has no number yet." and "{file} sets resolution {r}. Cap `resolution` at 2 (`Math.min(devicePixelRatio, 2)`) to save {s} MB." |
-| `textures.over_budget` | `TextureSummary.low_bytes` | budget rule on `textures.decoded_mb`, with textures' `not_covered` | sum over the top 5 of `gpu_bytes - astc_bytes` | one `shrink_textures` per top file that ASTC would shrink, so a file already in an ASTC-sized format gets none | "Textures decode to {lo} to {hi} MB. The {n} largest: {list}. Ship them as KTX2 (Basis) to save about {s} MB." |
-| `files.duplicate` | number of duplicate groups | the `files.duplicate` severity if there is a group; else, or with `allow`, pass | sum of `wasted_bytes` | for a group with `keep`, one `remove_duplicate` per other copy, saving its bytes. For a group without, one `keep_one_copy` named by the group's first path, saving the group's `wasted_bytes` | "{n} files are copies of files the game names: {list}. Delete them." and "The build does not show which copy the game loads of {first paths}. Keep that copy and delete the others.", then "This saves {w} KB to download and up to {d} MB decoded." |
-| `files.unreferenced` | Phase 2: stays `incomplete` with "not built yet" | | | | |
+| Rule id                          | Value                                                                          | Verdict (`outcome` in fixtures)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | `saved_bytes`                                                 | Fixes                                                                                                                                                                                                                                                                        | Fix text                                                                                                                                                                                                                                                                                       |
+| -------------------------------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `audio.pcm_over_budget`          | `AudioSummary.decoded_bytes_48k`                                               | budget rule (below) on `audio.decoded_mb`, with audio's `not_covered`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | `decoded_bytes_48k - decoded_bytes_24k`                       | one `resample_to_24k`, no path                                                                                                                                                                                                                                               | "Decoded audio is {v} MB at 48 kHz. Run the AudioContext at 24 kHz to save {s} MB, or load long music when it is needed."                                                                                                                                                                      |
+| `audio.stereo`                   | sum of `decoded_bytes_48k / 2` over the `stereo_groups` that are not `cancels` | budget rule on `audio.stereo_saving_mb`, with audio's `not_covered`. The default has no fail limit, so by default it never fails                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | the value                                                     | one `downmix_to_mono` per representative that halving shrinks and that is not `cancels`, so a sound of 0 or 1 byte gets none                                                                                                                                                 | "{n} stereo sounds decode to {d} MB. Export them as mono to save {s} MB.", then "Mono would change the sound of {c} of them, so listen first." when some are `changes_the_sound`, and "Keep {k} other stereo sounds as they are: mono would cancel them out of phase." when some are `cancels` |
+| `audio.silence_share`            | the largest `silence_bp` of the sprite maps                                    | a level (warn or fail) applies when a map is above that level's limit in both silence keys. A level that either key leaves unset never applies. Else `incomplete` if a sprite map is not `estimated`, or `invalid_scripts` is not empty; else pass                                                                                                                                                                                                                                                                                                                                                                                                  | sum of `silence_bytes_48k` of the maps at the outcome's level | one `trim_sprite_silence` per such map, with its source                                                                                                                                                                                                                      | "{p}% of {file} is not covered by any sprite in {source}. Trim the gaps to save up to {s} MB."                                                                                                                                                                                                 |
+| `render.antialias_or_resolution` | the largest site's floor `canvas.bytes`                                        | the worse of two checks on what the sites prove: the `render.antialias` severity if a site that may draw on the GPU has antialias on, and the `render.resolution_uncapped` severity if a site's resolution is above `RESOLUTION_CAP_MILLI`. `allow` skips a check. A proven warning or fail wins over a site that sets its options at run time. Else `incomplete` if no site was found, no site can start, or a site sets antialias (on the GPU) or the resolution at run time. A check that would pass is `incomplete` while `invalid_scripts` is not empty, since such a script may hold a worse site. A game that draws with HTML and CSS passes | the fixes' savings                                            | `cap_resolution` for each site whose resolution is one value above the cap, saving `floor(res) - floor(cap)`, which is w x h x 4 x (r^2 - 2^2). No path. Turning antialias off has no fix: what it saves needs a device run (R7), and `Fix.saves_bytes` is a required number | "{file} turns antialias on. Set `antialias: false`. A device run will measure what it saves, so this fix has no number yet." and "{file} sets resolution {r}. Cap `resolution` at 2 (`Math.min(devicePixelRatio, 2)`) to save {s} MB."                                                         |
+| `textures.over_budget`           | `TextureSummary.low_bytes`                                                     | budget rule on `textures.decoded_mb`, with textures' `not_covered`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | sum over the top 5 of `gpu_bytes - astc_bytes`                | one `shrink_textures` per top file that ASTC would shrink, so a file already in an ASTC-sized format gets none                                                                                                                                                               | "Textures decode to {lo} to {hi} MB. The {n} largest: {list}. Ship them as KTX2 (Basis) to save about {s} MB."                                                                                                                                                                                 |
+| `files.duplicate`                | number of duplicate groups                                                     | the `files.duplicate` severity if there is a group; else, or with `allow`, pass                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | sum of `wasted_bytes`                                         | for a group with `keep`, one `remove_duplicate` per other copy, saving its bytes. For a group without, one `keep_one_copy` named by the group's first path, saving the group's `wasted_bytes`                                                                                | "{n} files are copies of files the game names: {list}. Delete them." and "The build does not show which copy the game loads of {first paths}. Keep that copy and delete the others.", then "This saves {w} KB to download and up to {d} MB decoded."                                           |
+| `files.unreferenced`             | Phase 2: stays `incomplete` with "not built yet"                               |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |                                                               |                                                                                                                                                                                                                                                                              |                                                                                                                                                                                                                                                                                                |
 
 **Budget rule.** `fail` if the value is above the fail limit; `warn` if above
 the warn limit; else `incomplete` if `not_covered` is not empty; else `pass`.
@@ -1371,36 +1371,36 @@ the usual caret.
   `deflate` feature would switch flate2 to the zlib-rs backend, and the
   fixtures' gzip sizes assume miniz_oxide.
 
-| Crate | Version | Licence | Use | Notes |
-|---|---|---|---|---|
-| `oxc_parser`, `oxc_ast`, `oxc_ast_visit`, `oxc_semantic`, `oxc_allocator`, `oxc_span` | =0.157.0 | MIT | JS parse, visit, symbols | released 2026-11-02; the API changes between minor versions |
-| `imagesize` | 0.15.0 | MIT | PNG, JPEG, WebP, AVIF (HEIF), GIF sizes | also knows KTX2, but use `ktx2` for that |
-| `ktx2` | 0.5.0 | Apache-2.0 | KTX2 header, levels, DFD | `Reader::new` validates all bounds |
-| `sha2` | 0.11.1 | MIT or Apache-2.0 | file hashes, `build_id` | |
-| `flate2` | 1.1.10 | MIT or Apache-2.0 | gzip size, and deflate inside a zip | default `miniz_oxide` backend; the gzip numbers in the fixtures depend on it |
-| `brotli` | 9.1.1 | BSD-3-Clause and MIT | brotli size | in the items of `static.bytes.compressed` |
-| `zip` | 9.4.0 | MIT | zip input | features above |
-| `walkdir` | 2.5.0 | MIT or Unlicense | folder walk | `follow_links(false)` |
-| `html5gum` | 0.9.1 | MIT | HTML tokens | a tokenizer is enough; `lol_html` 3.0.3 also works but is a rewriter; `tl` 0.7.8 is stale |
-| `serde_json` | 1.0.154 | MIT or Apache-2.0 | sprite JSON, JSON URLs | |
-| `toml` | 1.2.0 | MIT or Apache-2.0 | tests read `expected.toml` | dev-dependency |
-| `tempfile` | 3.27.0 | MIT or Apache-2.0 | tests make build folders | dev-dependency |
-| `memchr` | 2.8.3 | MIT or Unlicense | `OggS` and sync scans | |
-| `symphonia` (features `aac`, `adpcm`, `isomp4`, `mkv`, `mp3`, `ogg`, `pcm`, `vorbis`, `wav`) | 0.6.1 | MPL-2.0 | decodes audio for silence and stereo (section 5.4); cross-checks the readers in tests | released 2026-08; no Opus decoder |
+| Crate                                                                                        | Version  | Licence              | Use                                                                                   | Notes                                                                                     |
+| -------------------------------------------------------------------------------------------- | -------- | -------------------- | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `oxc_parser`, `oxc_ast`, `oxc_ast_visit`, `oxc_semantic`, `oxc_allocator`, `oxc_span`        | =0.157.0 | MIT                  | JS parse, visit, symbols                                                              | released 2026-11-02; the API changes between minor versions                               |
+| `imagesize`                                                                                  | 0.15.0   | MIT                  | PNG, JPEG, WebP, AVIF (HEIF), GIF sizes                                               | also knows KTX2, but use `ktx2` for that                                                  |
+| `ktx2`                                                                                       | 0.5.0    | Apache-2.0           | KTX2 header, levels, DFD                                                              | `Reader::new` validates all bounds                                                        |
+| `sha2`                                                                                       | 0.11.1   | MIT or Apache-2.0    | file hashes, `build_id`                                                               |                                                                                           |
+| `flate2`                                                                                     | 1.1.10   | MIT or Apache-2.0    | gzip size, and deflate inside a zip                                                   | default `miniz_oxide` backend; the gzip numbers in the fixtures depend on it              |
+| `brotli`                                                                                     | 9.1.1    | BSD-3-Clause and MIT | brotli size                                                                           | in the items of `static.bytes.compressed`                                                 |
+| `zip`                                                                                        | 9.4.0    | MIT                  | zip input                                                                             | features above                                                                            |
+| `walkdir`                                                                                    | 2.5.0    | MIT or Unlicense     | folder walk                                                                           | `follow_links(false)`                                                                     |
+| `html5gum`                                                                                   | 0.9.1    | MIT                  | HTML tokens                                                                           | a tokenizer is enough; `lol_html` 3.0.3 also works but is a rewriter; `tl` 0.7.8 is stale |
+| `serde_json`                                                                                 | 1.0.154  | MIT or Apache-2.0    | sprite JSON, JSON URLs                                                                |                                                                                           |
+| `toml`                                                                                       | 1.2.0    | MIT or Apache-2.0    | tests read `expected.toml`                                                            | dev-dependency                                                                            |
+| `tempfile`                                                                                   | 3.27.0   | MIT or Apache-2.0    | tests make build folders                                                              | dev-dependency                                                                            |
+| `memchr`                                                                                     | 2.8.3    | MIT or Unlicense     | `OggS` and sync scans                                                                 |                                                                                           |
+| `symphonia` (features `aac`, `adpcm`, `isomp4`, `mkv`, `mp3`, `ogg`, `pcm`, `vorbis`, `wav`) | 0.6.1    | MPL-2.0              | decodes audio for silence and stereo (section 5.4); cross-checks the readers in tests | released 2026-08; no Opus decoder                                                         |
 
 Considered and not used:
 
-| Crate | Version | Why not |
-|---|---|---|
-| `ogg` | 0.9.2 | a page reader; the tail scan with CRC is 60 lines, and we need no packets. The skeleton had it as planned; it is dropped from the workspace |
-| `lewton` | 0.10.2 | a Vorbis decoder, last release 2021; we only need the ident header |
-| `mp4parse` | 0.17.0 | MPL, last release 2023; heavy for 6 boxes |
-| `mp4` | 0.14.0 | last release 2023 |
-| `matroska` | 0.30.1 | maintained, but reads the whole file for metadata; we need 6 elements |
-| `basis-universal` | 0.3.1 | C++ bindings for transcoding, last release 2023; we only read the header |
-| `basisu` | 0.1.0 | new pure-Rust transcoder, too young |
-| `image` | 0.25.10 | decodes pixels; we never decode |
-| `swc_ecma_parser` | 47.0.0 | the plan's fallback parser; oxc handled every bundle tested |
+| Crate             | Version | Why not                                                                                                                                     |
+| ----------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ogg`             | 0.9.2   | a page reader; the tail scan with CRC is 60 lines, and we need no packets. The skeleton had it as planned; it is dropped from the workspace |
+| `lewton`          | 0.10.2  | a Vorbis decoder, last release 2021; we only need the ident header                                                                          |
+| `mp4parse`        | 0.17.0  | MPL, last release 2023; heavy for 6 boxes                                                                                                   |
+| `mp4`             | 0.14.0  | last release 2023                                                                                                                           |
+| `matroska`        | 0.30.1  | maintained, but reads the whole file for metadata; we need 6 elements                                                                       |
+| `basis-universal` | 0.3.1   | C++ bindings for transcoding, last release 2023; we only read the header                                                                    |
+| `basisu`          | 0.1.0   | new pure-Rust transcoder, too young                                                                                                         |
+| `image`           | 0.25.10 | decodes pixels; we never decode                                                                                                             |
+| `swc_ecma_parser` | 47.0.0  | the plan's fallback parser; oxc handled every bundle tested                                                                                 |
 
 ## 11. Cross-check results
 
@@ -1408,15 +1408,15 @@ The fixture values were derived with a scratch reader written to this
 document, then compared with symphonia 0.6.1, imagesize 0.15.0, ktx2 0.5.0 and
 ffprobe. Where they differ, this design is deliberate:
 
-| Case | symphonia 0.6.1 | This design |
-|---|---|---|
-| Ogg Opus | `num_frames` 48312 = last granule; pre-skip 312 reported as `delay` | 48000: subtract pre-skip |
-| M4A | `num_frames` 45124 = `mdhd` duration; edit list ignored | 44100 from the edit list |
-| ADTS | `num_frames` from an estimate (`approximate_frame_count`) | walk every frame (same result on the fixtures) |
-| WebM | no `num_frames`; time base 1/1000 | Duration minus CodecDelay, in microseconds |
-| MP3 with a Lavf tag | `delay` 1105 and `padding` 875 (adds the 529-sample decoder delay to one and removes it from the other) | raw tag values 576 and 1404; the same total, so the same length |
-| Truncated WAV, truncated ADTS | reads the header and reports the full length, no error | `invalid` |
-| Truncated KTX2 | (imagesize) reports 64 x 64 | `invalid` (`ktx2::Reader::new` fails) |
+| Case                          | symphonia 0.6.1                                                                                         | This design                                                     |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| Ogg Opus                      | `num_frames` 48312 = last granule; pre-skip 312 reported as `delay`                                     | 48000: subtract pre-skip                                        |
+| M4A                           | `num_frames` 45124 = `mdhd` duration; edit list ignored                                                 | 44100 from the edit list                                        |
+| ADTS                          | `num_frames` from an estimate (`approximate_frame_count`)                                               | walk every frame (same result on the fixtures)                  |
+| WebM                          | no `num_frames`; time base 1/1000                                                                       | Duration minus CodecDelay, in microseconds                      |
+| MP3 with a Lavf tag           | `delay` 1105 and `padding` 875 (adds the 529-sample decoder delay to one and removes it from the other) | raw tag values 576 and 1404; the same total, so the same length |
+| Truncated WAV, truncated ADTS | reads the header and reports the full length, no error                                                  | `invalid`                                                       |
+| Truncated KTX2                | (imagesize) reports 64 x 64                                                                             | `invalid` (`ktx2::Reader::new` fails)                           |
 
 ## 12. Open questions
 

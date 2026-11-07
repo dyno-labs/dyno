@@ -15,23 +15,23 @@ The check summary gives the status and why, the decoded memory and the build siz
 - A build gives the static scan: what dyno can tell from the files alone.
 - A launch URL adds a browser run: dyno loads the game in a harness page and waits for idle.
 
-| Flag | Phase | What it does |
-|---|---|---|
-| `--budget <FILE>` | 1 | The budget file. TOML, or JSON when the name ends in `.json`. See [`examples/budget.toml`](../examples/budget.toml). |
-| `--out <FILE>` | 1 | Write the JSON to this file instead of stdout. |
-| `--host-profile <NAME>` | 1 | How the host page embeds the game, and the contract it checks. Default `reels`, the only profile so far. |
-| `--game <NAME>` | 1 | A game name label for the result. Not in the hash. Not with `--games`. |
-| `--release <VERSION>` | 1 | A release version label for the result. Not in the hash. Not with `--games`. |
-| `--games <FILE>` | 1 | Check every game in a games file instead of a target. |
-| `--shard <I/N>` | 1 | With `--games`: check only shard I of N. |
-| `--driver <DRIVER>` | 1 | The browser driver. `cdp`, the default, is the built-in Chromium driver. `exec:<PROGRAM>` runs PROGRAM, which must speak the runner protocol. Any driver but `cdp` needs a launch URL. |
-| `--scenario <alone\|aged\|overlap>` | 2 | The harness scenario. Default `alone`. Any other scenario needs a launch URL. |
-| `--spins <N>` | 2 | Play N demo spins after load, with N at least 1. Needs a launch URL. |
-| `--device` | 2 | Also run the game on the connected iPhone. Needs a launch URL. |
+| Flag                                | Phase | What it does                                                                                                                                                                           |
+| ----------------------------------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--budget <FILE>`                   | 1     | The budget file. TOML, or JSON when the name ends in `.json`. See [`examples/budget.toml`](../examples/budget.toml).                                                                   |
+| `--out <FILE>`                      | 1     | Write the JSON to this file instead of stdout.                                                                                                                                         |
+| `--host-profile <NAME>`             | 1     | How the host page embeds the game, and the contract it checks. Default `reels`, the only profile so far.                                                                               |
+| `--game <NAME>`                     | 1     | A game name label for the result. Not in the hash. Not with `--games`.                                                                                                                 |
+| `--release <VERSION>`               | 1     | A release version label for the result. Not in the hash. Not with `--games`.                                                                                                           |
+| `--games <FILE>`                    | 1     | Check every game in a games file instead of a target.                                                                                                                                  |
+| `--shard <I/N>`                     | 1     | With `--games`: check only shard I of N.                                                                                                                                               |
+| `--driver <DRIVER>`                 | 1     | The browser driver. `cdp`, the default, is the built-in Chromium driver. `exec:<PROGRAM>` runs PROGRAM, which must speak the runner protocol. Any driver but `cdp` needs a launch URL. |
+| `--scenario <alone\|aged\|overlap>` | 2     | The harness scenario. Default `alone`. Any other scenario needs a launch URL.                                                                                                          |
+| `--spins <N>`                       | 2     | Play N demo spins after load, with N at least 1. Needs a launch URL.                                                                                                                   |
+| `--device`                          | 2     | Also run the game on the connected iPhone. Needs a launch URL.                                                                                                                         |
 
 A flag that needs a launch URL is checked before any work starts. With `--games`, such a flag needs a `launch_url` on every selected game.
 
-With `--driver exec:<PROGRAM>`, dyno starts PROGRAM directly, with no shell and no arguments. A path with no `/` is found on `PATH`. dyno writes one `RunRequest` line of JSON on its stdin, then closes stdin. The program must write `DriverMessage` lines of JSON on stdout: `hello` first, with the `protocol_version` of the request, and `done` or `error` last. `schema/run-request.schema.json` and `schema/driver-message.schema.json` give their shapes. Its stderr is free text. The run fails when the program breaks the protocol, exits before `done` or `error`, or does not end within the run's `timeout_ms`. The reason then names the problem, with the end of stderr when the program exited early.
+With `--driver exec:<PROGRAM>`, dyno starts PROGRAM directly, with no shell and no arguments. A path with no `/` is found on `PATH`. dyno writes one `RunRequest` line of JSON on its stdin, then closes stdin. The program must write `DriverMessage` lines of JSON on stdout: `hello` first, with the `protocol_version` of the request, and `done` or `error` last. `packages/schema/json/run-request.schema.json` and `packages/schema/json/driver-message.schema.json` give their shapes. Its stderr is free text. The run fails when the program breaks the protocol, exits before `done` or `error`, or does not end within the run's `timeout_ms`. The reason then names the problem, with the end of stderr when the program exited early.
 
 A games file starts with `schema_version = 0`, then lists one `[[game]]` table per game. Each has an `id` and a `build`, a `launch_url` or both. A `release` label is optional. Builds are relative to the games file. Shards split the games in id order: game k, counting from 0, falls in shard (k mod N) + 1. The output is a catalogue result. Its status is the worst status of its games. A selection with no games is `incomplete`, because it checked nothing.
 
@@ -39,10 +39,10 @@ A games file starts with `schema_version = 0`, then lists one `[[game]]` table p
 
 `BASE` and `HEAD` are result files from `dyno check`, not build folders. So compare never runs a check again, and a CI job can compare against the stored result of the last release.
 
-| Flag | Phase | What it does |
-|---|---|---|
-| `--budget <FILE>` | 1 | Apply this budget file to both sides, instead of each side's own verdicts. |
-| `--out <FILE>` | 1 | Write the JSON to this file instead of stdout. |
+| Flag              | Phase | What it does                                                               |
+| ----------------- | ----- | -------------------------------------------------------------------------- |
+| `--budget <FILE>` | 1     | Apply this budget file to both sides, instead of each side's own verdicts. |
+| `--out <FILE>`    | 1     | Write the JSON to this file instead of stdout.                             |
 
 Compare checks each side's `result_hash`. If a side does not match its content, someone edited it, and the compare is `invalid`. The check hashes the canonical form of the side's `deterministic` JSON as read, before dyno parses it into its own types. So a field that another dyno version added still counts, and a list in another order is an edit. A file that is not a result, or has another `schema_version`, is a usage error. So is a result with a measure id or other value that this dyno does not know: a newer field is read past, but a newer value is not.
 
@@ -52,9 +52,9 @@ The diff covers the deterministic parts only: every static measure whose status 
 
 Checks that this Mac can run the game on an iPhone: Xcode, a connected iPhone, and trust. Until Phase 2 builds it, it reports its phase and `incomplete`. It runs no command against a device.
 
-| Flag | Phase | What it does |
-|---|---|---|
-| `--out <FILE>` | 2 | Write the JSON to this file instead of stdout. |
+| Flag           | Phase | What it does                                   |
+| -------------- | ----- | ---------------------------------------------- |
+| `--out <FILE>` | 2     | Write the JSON to this file instead of stdout. |
 
 ### `dyno mcp` (Phase 3)
 
@@ -78,11 +78,11 @@ A client that reads a JSON config, such as a project's `.mcp.json`, takes:
 
 The server has three tools. A relative path is relative to the folder the server runs in. A tool that works gives two text blocks: canonical JSON first, then the summary that the command writes to stderr.
 
-| Tool | Arguments | What it gives |
-|---|---|---|
-| `check` | `build` or `launch_url` or both. Optional: `budget`, `host_profile`, `game`, `release` and `out`. | The result that `dyno check` gives. With `out`, dyno also writes the result to that file, so that `compare` can read it later. |
-| `compare` | `base` and `head`. Optional: `budget`. | The result that `dyno compare` gives. |
-| `read_result` | `path`, a result file from `dyno check` | Its `status`, its `result_hash`, and `hash_matches`, which is false when the file was edited. Then the check summary. |
+| Tool          | Arguments                                                                                         | What it gives                                                                                                                  |
+| ------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `check`       | `build` or `launch_url` or both. Optional: `budget`, `host_profile`, `game`, `release` and `out`. | The result that `dyno check` gives. With `out`, dyno also writes the result to that file, so that `compare` can read it later. |
+| `compare`     | `base` and `head`. Optional: `budget`.                                                            | The result that `dyno compare` gives.                                                                                          |
+| `read_result` | `path`, a result file from `dyno check`                                                           | Its `status`, its `result_hash`, and `hash_matches`, which is false when the file was edited. Then the check summary.          |
 
 A check or compare that ends `fail`, `warn`, `incomplete` or `invalid` is a tool call that worked, because the status is in the result. An error that stops the command, such as a bad path or flag, is a tool error (`isError` is true) with the message. A check with a `launch_url` uses the CDP driver and the `alone` scenario. The tools have no spins, device or driver argument.
 
@@ -90,13 +90,13 @@ A check or compare that ends `fail`, `warn`, `incomplete` or `invalid` is a tool
 
 Each measure has one of these statuses:
 
-| Status | Meaning |
-|---|---|
-| `measured` | Read from a browser or a device. |
-| `estimated` | Arithmetic on what the build supplies. Every static value is estimated, never measured. |
+| Status        | Meaning                                                                                                        |
+| ------------- | -------------------------------------------------------------------------------------------------------------- |
+| `measured`    | Read from a browser or a device.                                                                               |
+| `estimated`   | Arithmetic on what the build supplies. Every static value is estimated, never measured.                        |
 | `unsupported` | dyno cannot measure it for this input, and the reason says why. For example, the footprint needs a launch URL. |
-| `missing` | It should be there and is not. A stub gives `missing` with the reason "not built yet". |
-| `invalid` | It failed its own check. For example, a run whose game frame's DPR was not 3. |
+| `missing`     | It should be there and is not. A stub gives `missing` with the reason "not built yet".                         |
+| `invalid`     | It failed its own check. For example, a run whose game frame's DPR was not 3.                                  |
 
 Only a change in size, such as growth, can be negative. A negative value or bound in any other measure makes it `invalid`.
 
@@ -111,13 +111,13 @@ A required measure with no row counts as `missing`. A row that does not fit the 
 
 The overall status of a check comes from four things: the measures, the budget verdicts, the static rule findings and the run coverage. When several statuses apply, the first in this list wins:
 
-| Status | When |
-|---|---|
-| `fail` | A budget or a static rule fails. |
-| `invalid` | A required measure is invalid, or a measure row does not fit the check. |
+| Status       | When                                                                                                                                                         |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `fail`       | A budget or a static rule fails.                                                                                                                             |
+| `invalid`    | A required measure is invalid, or a measure row does not fit the check.                                                                                      |
 | `incomplete` | A required measure is missing or has no row, a budget could not be checked, or a static rule could not be checked because a value from the build is missing. |
-| `warn` | A budget or a static rule warns. |
-| `pass` | None of the above. A stub never passes. |
+| `warn`       | A budget or a static rule warns.                                                                                                                             |
+| `pass`       | None of the above. A stub never passes.                                                                                                                      |
 
 An `unsupported` measure does not block a pass.
 
@@ -140,14 +140,14 @@ A `floor` uncertainty alone does not make a value partial. Only `scope.not_cover
 
 ## Exit codes
 
-| Code | Meaning |
-|---|---|
-| 0 | `pass`, or `warn` |
-| 1 | `fail`: a budget or a static rule fails |
-| 2 | `incomplete` |
-| 3 | `invalid`: a required measure failed its check, a measure row does not fit the check, or an input result was edited |
-| 64 | Usage or config error: bad flags, or an unreadable target, budget, games or result file |
-| 70 | Internal or I/O error, such as an output file that cannot be written |
+| Code | Meaning                                                                                                             |
+| ---- | ------------------------------------------------------------------------------------------------------------------- |
+| 0    | `pass`, or `warn`                                                                                                   |
+| 1    | `fail`: a budget or a static rule fails                                                                             |
+| 2    | `incomplete`                                                                                                        |
+| 3    | `invalid`: a required measure failed its check, a measure row does not fit the check, or an input result was edited |
+| 64   | Usage or config error: bad flags, or an unreadable target, budget, games or result file                             |
+| 70   | Internal or I/O error, such as an output file that cannot be written                                                |
 
 `invalid` gets its own code, because a CI job must not treat a broken run or an edited result as a plain incomplete one.
 

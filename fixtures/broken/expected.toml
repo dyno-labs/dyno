@@ -223,7 +223,15 @@ silence_by_decode_bp = 0
 status = "estimated"
 decoded_bytes_48k = 96000
 decoded_bytes_24k = 48000
-not_covered = ["bad/adts-truncated.aac", "bad/m4a-no-moov.m4a", "bad/mp3-no-sync.mp3", "bad/opus-truncated-head.opus", "bad/vorbis-truncated.ogg", "bad/wav-truncated.wav", "bad/webm-truncated.webm"]
+not_covered = [
+  "bad/adts-truncated.aac",
+  "bad/m4a-no-moov.m4a",
+  "bad/mp3-no-sync.mp3",
+  "bad/opus-truncated-head.opus",
+  "bad/vorbis-truncated.ogg",
+  "bad/wav-truncated.wav",
+  "bad/webm-truncated.webm",
+]
 
 [sprites]
 # silence_us = duration_us - union of sprite ranges clipped to the file. duration_us = floor(ticks * 1e6 / tick_rate).
@@ -286,7 +294,14 @@ status = "estimated"
 lo_bytes = 65536
 hi_bytes = 131072
 top5 = ["ok/valid-128x128.png"]
-not_covered = ["bad/avif-ftyp-only.avif", "bad/basis-truncated.basis", "bad/jpeg-no-sof.jpg", "bad/ktx2-truncated.ktx2", "bad/png-truncated.png", "bad/webp-truncated.webp"]
+not_covered = [
+  "bad/avif-ftyp-only.avif",
+  "bad/basis-truncated.basis",
+  "bad/jpeg-no-sof.jpg",
+  "bad/ktx2-truncated.ktx2",
+  "bad/png-truncated.png",
+  "bad/webp-truncated.webp",
+]
 
 [bundle]
 scanned = ["bad/bad-syntax.js"]

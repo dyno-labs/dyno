@@ -232,3 +232,221 @@ impl Session {
             .await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use tokio::net::TcpListener;
+
+    use super::*;
+
+    /// Long enough that a call which fails before it means the failure came at once.
+    const LONG: Duration = Duration::from_secs(60);
+
+    /// What the fake browser does with one call.
+    enum Answer {
+        Send(Vec<Value>),
+        Close,
+    }
+
+    /// A fake browser on 127.0.0.1 that answers each call it reads with `answer`, and the
+    /// connection to it.
+    async fn connect(
+        call_timeout: Duration,
+        answer: impl Fn(&Value) -> Answer + Send + 'static,
+    ) -> (Arc<Connection>, mpsc::UnboundedReceiver<Event>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            while let Some(Ok(Message::Text(text))) = socket.next().await {
+                let call: Value = serde_json::from_str(&text).unwrap();
+                match answer(&call) {
+                    Answer::Send(messages) => {
+                        for message in messages {
+                            let text = match message {
+                                Value::String(raw) => raw,
+                                message => message.to_string(),
+                            };
+                            socket.send(Message::text(text)).await.unwrap();
+                        }
+                    }
+                    Answer::Close => {
+                        let _ = socket.close(None).await;
+                        return;
+                    }
+                }
+            }
+        });
+        Connection::open(&url, call_timeout).await.unwrap()
+    }
+
+    fn reply(call: &Value, result: Value) -> Value {
+        json!({ "id": call["id"], "result": result })
+    }
+
+    fn detail(error: CdpError) -> (String, String) {
+        match error {
+            CdpError::Call { method, detail } => (method, detail),
+            other => panic!("not a call error: {other}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_reply_resolves_its_call() {
+        let (connection, _events) = connect(LONG, |call| {
+            Answer::Send(vec![reply(call, json!({ "method": call["method"] }))])
+        })
+        .await;
+        let result = Session::browser(&connection)
+            .call("Browser.getVersion", json!({}))
+            .await
+            .unwrap();
+        assert_eq!(result, json!({ "method": "Browser.getVersion" }));
+    }
+
+    #[tokio::test]
+    async fn a_call_on_a_target_carries_its_session_id_and_the_browser_call_none() {
+        let (connection, _events) = connect(LONG, |call| {
+            Answer::Send(vec![reply(call, call["sessionId"].clone())])
+        })
+        .await;
+        let browser = Session::browser(&connection);
+        let target = browser.child("S1");
+        assert_eq!(target.id(), Some("S1"));
+        assert_eq!(target.call("Page.enable", json!({})).await.unwrap(), "S1");
+        assert_eq!(
+            browser.call("Target.getTargets", json!({})).await.unwrap(),
+            Value::Null
+        );
+    }
+
+    #[tokio::test]
+    async fn an_error_reply_fails_the_call_and_names_its_method() {
+        let (connection, _events) = connect(LONG, |call| {
+            Answer::Send(vec![
+                json!({ "id": call["id"], "error": { "message": "No frame" } }),
+            ])
+        })
+        .await;
+        let error = Session::browser(&connection)
+            .call("Page.navigate", json!({}))
+            .await
+            .unwrap_err();
+        let (method, detail) = detail(error);
+        assert_eq!(method, "Page.navigate");
+        assert!(detail.contains("No frame"), "{detail}");
+    }
+
+    #[tokio::test]
+    async fn a_reply_with_no_result_is_null() {
+        let (connection, _events) =
+            connect(LONG, |call| Answer::Send(vec![json!({ "id": call["id"] })])).await;
+        let result = Session::browser(&connection)
+            .call("Page.enable", json!({}))
+            .await;
+        assert_eq!(result.unwrap(), Value::Null);
+    }
+
+    #[tokio::test]
+    async fn a_call_with_no_reply_fails_after_the_call_timeout() {
+        let (connection, _events) =
+            connect(Duration::from_millis(50), |_| Answer::Send(Vec::new())).await;
+        let error = Session::browser(&connection)
+            .call("Runtime.evaluate", json!({}))
+            .await
+            .unwrap_err();
+        assert_eq!(detail(error).1, "no reply in time");
+    }
+
+    #[tokio::test]
+    async fn a_detached_session_fails_its_waiting_calls_at_once() {
+        let (connection, mut events) = connect(LONG, |call| {
+            Answer::Send(vec![json!({
+                "method": DETACHED,
+                "params": { "sessionId": call["sessionId"] },
+            })])
+        })
+        .await;
+        let error = Session::browser(&connection)
+            .child("S1")
+            .call("Runtime.evaluate", json!({}))
+            .await
+            .unwrap_err();
+        assert_eq!(detail(error).1, "the session detached");
+        // The run still sees the event.
+        assert_eq!(events.recv().await.unwrap().method, DETACHED);
+    }
+
+    #[tokio::test]
+    async fn a_detached_session_leaves_the_calls_of_other_sessions_waiting() {
+        let (connection, _events) = connect(LONG, |call| {
+            let detach = json!({ "method": DETACHED, "params": { "sessionId": "other" } });
+            Answer::Send(vec![detach, reply(call, json!("still here"))])
+        })
+        .await;
+        let result = Session::browser(&connection)
+            .child("S1")
+            .call("Runtime.evaluate", json!({}))
+            .await;
+        assert_eq!(result.unwrap(), "still here");
+    }
+
+    #[tokio::test]
+    async fn a_closed_connection_fails_its_waiting_calls() {
+        let (connection, _events) = connect(LONG, |_| Answer::Close).await;
+        let error = Session::browser(&connection)
+            .call("Page.navigate", json!({}))
+            .await
+            .unwrap_err();
+        assert_eq!(detail(error).1, "the browser closed the connection");
+    }
+
+    #[tokio::test]
+    async fn an_event_arrives_with_its_session_id_and_params() {
+        let (connection, mut events) = connect(LONG, |call| {
+            let event = json!({
+                "method": "Page.loadEventFired",
+                "sessionId": "S1",
+                "params": { "timestamp": 1.5 },
+            });
+            Answer::Send(vec![event, reply(call, json!({}))])
+        })
+        .await;
+        Session::browser(&connection)
+            .call("Page.enable", json!({}))
+            .await
+            .unwrap();
+        let event = events.recv().await.unwrap();
+        assert_eq!(event.session_id.as_deref(), Some("S1"));
+        assert_eq!(event.method, "Page.loadEventFired");
+        assert_eq!(event.params, json!({ "timestamp": 1.5 }));
+    }
+
+    #[tokio::test]
+    async fn messages_that_answer_no_call_are_dropped() {
+        let (connection, mut events) = connect(LONG, |call| {
+            Answer::Send(vec![
+                json!("not json"),
+                json!({ "id": 9999, "result": "for no call" }),
+                json!({ "result": "no id and no method" }),
+                reply(call, json!("the reply")),
+            ])
+        })
+        .await;
+        let result = Session::browser(&connection)
+            .call("Page.enable", json!({}))
+            .await;
+        assert_eq!(result.unwrap(), "the reply");
+        assert!(events.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn a_browser_that_does_not_listen_cannot_be_connected_to() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://{}", listener.local_addr().unwrap());
+        drop(listener);
+        let error = Connection::open(&url, LONG).await.err().unwrap();
+        assert!(matches!(error, CdpError::Connect(_)), "{error}");
+    }
+}

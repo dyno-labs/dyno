@@ -196,7 +196,13 @@ astc_bytes = 1048576
 status = "estimated"
 lo_bytes = 289406976
 hi_bytes = 578813952
-top5 = ["assets/textures/big-1-4096x4096.png", "assets/textures/big-2-4096x4096.png", "assets/textures/big-3-4096x4096.png", "assets/textures/big-4-4096x4096.png", "assets/textures/mid-2048x2048.png"]
+top5 = [
+  "assets/textures/big-1-4096x4096.png",
+  "assets/textures/big-2-4096x4096.png",
+  "assets/textures/big-3-4096x4096.png",
+  "assets/textures/big-4-4096x4096.png",
+  "assets/textures/mid-2048x2048.png",
+]
 not_covered = []
 
 [bundle]
@@ -247,7 +253,13 @@ saved_bytes = 0
 outcome = "fail"
 value_bytes = 289406976
 saved_bytes = 213909504
-items = ["assets/textures/big-1-4096x4096.png", "assets/textures/big-2-4096x4096.png", "assets/textures/big-3-4096x4096.png", "assets/textures/big-4-4096x4096.png", "assets/textures/mid-2048x2048.png"]
+items = [
+  "assets/textures/big-1-4096x4096.png",
+  "assets/textures/big-2-4096x4096.png",
+  "assets/textures/big-3-4096x4096.png",
+  "assets/textures/big-4-4096x4096.png",
+  "assets/textures/mid-2048x2048.png",
+]
 
 [rules."files.duplicate"]
 outcome = "pass"

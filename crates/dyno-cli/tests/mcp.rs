@@ -5,10 +5,10 @@ mod common;
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use common::{NO_CHROMIUM, data_dir, dyno, json};
 use dyno_schema::compare::CompareResult;
@@ -21,10 +21,14 @@ const PROTOCOL_VERSION: &str = "2025-06-18";
 /// How long the client waits for each line, so a server that never answers fails the test.
 const LINE_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// How long the server has to exit once the client closes stdin.
+const EXIT_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// One `dyno mcp` server and the client end of its stdin and stdout.
 struct Session {
     server: Child,
-    stdin: ChildStdin,
+    /// None once the client has closed it.
+    stdin: Option<ChildStdin>,
     /// Each line of stdout. The channel closes when stdout does.
     lines: Receiver<String>,
     next_id: u64,
@@ -54,7 +58,7 @@ impl Session {
         });
         let mut session = Session {
             server,
-            stdin,
+            stdin: Some(stdin),
             lines,
             next_id: 1,
         };
@@ -72,8 +76,9 @@ impl Session {
     }
 
     fn send(&mut self, message: &Value) {
-        writeln!(self.stdin, "{message}").unwrap();
-        self.stdin.flush().unwrap();
+        let stdin = self.stdin.as_mut().expect("stdin is open");
+        writeln!(stdin, "{message}").unwrap();
+        stdin.flush().unwrap();
     }
 
     /// Sends a request and returns the `result` of its response. Every line on stdout must be a
@@ -106,10 +111,29 @@ impl Session {
     }
 }
 
+impl Session {
+    /// Closes stdin, as a client that is done does, and waits for the server to exit. None when
+    /// it is still running after `EXIT_TIMEOUT`.
+    fn close(&mut self) -> Option<ExitStatus> {
+        drop(self.stdin.take());
+        let started = Instant::now();
+        while started.elapsed() < EXIT_TIMEOUT {
+            if let Some(status) = self.server.try_wait().unwrap() {
+                return Some(status);
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        None
+    }
+}
+
 impl Drop for Session {
+    /// A server that exits by itself writes its coverage data; a killed one does not.
     fn drop(&mut self) {
-        let _ = self.server.kill();
-        let _ = self.server.wait();
+        if self.close().is_none() {
+            let _ = self.server.kill();
+            let _ = self.server.wait();
+        }
     }
 }
 
@@ -145,6 +169,13 @@ fn the_server_lists_check_compare_and_read_result() {
         .collect();
     names.sort_unstable();
     assert_eq!(names, ["check", "compare", "read_result"]);
+}
+
+#[test]
+fn the_server_exits_cleanly_when_the_client_closes_stdin() {
+    let mut session = Session::start();
+    let status = session.close().expect("the server exits");
+    assert!(status.success(), "{status}");
 }
 
 #[test]

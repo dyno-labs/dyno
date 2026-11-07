@@ -1,0 +1,20 @@
+// oxfmt formats every file type it knows: TypeScript, JSON, Markdown, YAML, TOML, CSS and HTML.
+// Its own defaults, with no options. Only files that are not ours to format are left out.
+{
+  "ignorePatterns": [
+    // Written by tools, which a check or a test compares with what they write.
+    "packages/schema/json/*.json",
+    "packages/schema/ts/*.ts",
+    "fixtures/golden-hashes.json",
+    "crates/dyno-cdp/probe/probe.js",
+    "crates/dyno-cdp/probe/probe.field.js",
+    "THIRD_PARTY_NOTICES.md",
+    "about.hbs",
+    "CHANGELOG.md",
+    ".github/workflows/release.yml",
+    // Scan inputs and the templates copied into them: their bytes are the test.
+    "crates/*/tests/data/**",
+    "fixtures/*/build/**",
+    "fixtures/src/html/**"
+  ]
+}

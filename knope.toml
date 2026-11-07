@@ -1,0 +1,34 @@
+# knope: the engine's version, its change files and CHANGELOG.md. See docs/releasing.md.
+#
+#   knope document-change          write a change file in .changeset/ for your pull request
+#   knope prepare-release          collect the change files into a new version (the release PR
+#                                  workflow runs this; add --dry-run to see what it would do)
+
+# Every crate takes its version from [workspace.package] in Cargo.toml, and the npm package must
+# have the same version. Cargo.lock follows when the last step rebuilds.
+[package]
+versioned_files = ["Cargo.toml", "packages/schema/package.json"]
+changelog = "CHANGELOG.md"
+
+# Only change files make a release. Commit messages do not: they are not written for the public.
+[changes]
+ignore_conventional_commits = true
+
+[[workflows]]
+name = "document-change"
+
+[[workflows.steps]]
+type = "CreateChangeFile"
+
+[[workflows]]
+name = "prepare-release"
+
+[[workflows.steps]]
+type = "PrepareRelease"
+
+# The version is in every result hash, so the saved output changes with it: the snapshots, the
+# golden hashes and Cargo.lock.
+[[workflows.steps]]
+type = "Command"
+command = "DYNO_UPDATE_GENERATED=1 INSTA_UPDATE=always cargo test --workspace"
+shell = true

@@ -1,0 +1,18 @@
+// The settings that each TypeScript project in the engine extends. The checks are the strict ones
+// that `tsc --init` turns on. tsc only checks: nothing here is compiled by it.
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "preserve",
+    "noEmit": true,
+    "types": [],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "noUncheckedSideEffectImports": true,
+    "moduleDetection": "force",
+    "skipLibCheck": true
+  }
+}

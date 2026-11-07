@@ -1,0 +1,15 @@
+# Settings for zizmor (`mise run health:workflow-security`).
+rules:
+  # dist generate writes release.yml, so it is never edited by hand (see actionlint.yaml). Its
+  # expansions in `run:` hold the plan that dist itself made and the name of the pushed tag, its
+  # build container is null for every target here, and it needs contents: write to make the
+  # GitHub Release.
+  excessive-permissions:
+    ignore:
+      - release.yml
+  template-injection:
+    ignore:
+      - release.yml
+  unpinned-images:
+    ignore:
+      - release.yml

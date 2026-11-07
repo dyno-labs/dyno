@@ -15,7 +15,7 @@ pub mod connection;
 pub mod harness;
 pub mod run;
 
-/// The lab build of the probe, built from `probe/probe.ts` by `probe/build.mjs`. dyno injects it
+/// The lab build of the probe, built from `probe/probe.ts` by `probe/build.ts`. dyno injects it
 /// over CDP; it never ships in a game.
 pub const PROBE: &str = include_str!("../probe/probe.js");
 
@@ -151,9 +151,9 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "needs Node 22.13 or later"]
+    #[ignore = "needs Node 22.18 or later"]
     fn the_probe_is_built_from_its_typescript() {
-        let build = Path::new(env!("CARGO_MANIFEST_DIR")).join("probe/build.mjs");
+        let build = Path::new(env!("CARGO_MANIFEST_DIR")).join("probe/build.ts");
         let status = Command::new("node")
             .arg(build)
             .arg("--check")

@@ -1,4 +1,4 @@
-//! The golden result hashes in `parity/golden-hashes.json`: the status and `result_hash` that
+//! The golden result hashes in `fixtures/golden-hashes.json`: the status and `result_hash` that
 //! `dyno check` gives for each fixture build, with no flags.
 //!
 //! A build-only check gives the same hash on every machine, so anyone who runs another copy of the
@@ -15,7 +15,7 @@ use dyno_schema::TOOL_VERSION;
 use dyno_schema::generate::UPDATE_GENERATED_VARIABLE;
 use serde::{Deserialize, Serialize};
 
-/// The golden file, as written to `parity/golden-hashes.json`.
+/// The golden file, as written to `fixtures/golden-hashes.json`.
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct GoldenHashes {
     /// The dyno version that gave these hashes. The hash covers the version, so each release has
@@ -77,7 +77,7 @@ fn the_golden_hashes_match_this_build() {
             .collect(),
     };
     assert!(!generated.checks.is_empty(), "no fixture builds were found");
-    let path = repo_root().join("parity/golden-hashes.json");
+    let path = repo_root().join("fixtures/golden-hashes.json");
     let mut written = serde_json::to_string_pretty(&generated).unwrap();
     written.push('\n');
     if std::env::var(UPDATE_GENERATED_VARIABLE).is_ok_and(|value| value == "1") {

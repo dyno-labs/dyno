@@ -1,0 +1,17 @@
+Change files: one Markdown file per change that users will notice. The release pull request
+collects them into CHANGELOG.md and deletes them. Make one with `knope document-change`, or by
+hand:
+
+    ---
+    default: minor
+    ---
+
+    # Compare results from two different versions
+
+    Any more detail goes here, under the title.
+
+The type is `major` (it breaks something that worked), `minor` (a new feature) or `patch` (a
+fix). See docs/releasing.md.
+
+This file has no .md ending, so knope does not read it as a change file. Keep it: it keeps this
+folder in git when there are no change files.

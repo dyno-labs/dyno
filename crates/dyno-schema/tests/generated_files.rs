@@ -9,8 +9,10 @@ use std::path::{Path, PathBuf};
 
 use dyno_schema::generate::{self, UPDATE_GENERATED_VARIABLE};
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+/// The npm package `@dyno-labs/schema`: the JSON Schema in `json/` and the TypeScript types in
+/// `ts/`, next to its `package.json`.
+fn package_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/schema")
 }
 
 fn updating_generated_files() -> bool {
@@ -20,25 +22,18 @@ fn updating_generated_files() -> bool {
 /// The extensions of generated files. Other files, such as a Finder `.DS_Store`, are not compared.
 const GENERATED_EXTENSIONS: &[&str] = &["json", "ts"];
 
-/// Files that people write next to the generated ones. `ts/package.json` makes `ts/` the npm
-/// package of the types.
-const HAND_WRITTEN_FILES: &[&str] = &["package.json"];
-
-/// The npm package of the TypeScript types.
+/// The npm package of the JSON Schema and the TypeScript types.
 const NPM_PACKAGE_NAME: &str = "@dyno-labs/schema";
 
 fn is_generated_file(path: &Path) -> bool {
     let file_name = path.file_name().map(|name| name.to_string_lossy());
     let hidden = file_name.as_ref().is_some_and(|name| name.starts_with('.'));
-    let hand_written = file_name
-        .as_ref()
-        .is_some_and(|name| HAND_WRITTEN_FILES.contains(&name.as_ref()));
     let generated_extension = path.extension().is_some_and(|extension| {
         GENERATED_EXTENSIONS
             .iter()
             .any(|generated| extension == *generated)
     });
-    !hidden && !hand_written && generated_extension
+    !hidden && generated_extension
 }
 
 /// Every generated file under `dir`, by path relative to `dir`, with its content.
@@ -109,18 +104,18 @@ fn json_schemas_are_current() {
         .into_iter()
         .map(|(name, content)| (name.to_owned(), content))
         .collect();
-    check_tree(&repo_root().join("schema"), &generated);
+    check_tree(&package_dir().join("json"), &generated);
 }
 
 #[test]
 fn typescript_types_are_current() {
     let generated_dir = tempfile::tempdir().unwrap();
     generate::export_typescript(generated_dir.path()).unwrap();
-    check_tree(&repo_root().join("ts"), &read_tree(generated_dir.path()));
+    check_tree(&package_dir().join("ts"), &read_tree(generated_dir.path()));
 }
 
 fn npm_package() -> serde_json::Value {
-    let text = fs::read_to_string(repo_root().join("ts/package.json")).unwrap();
+    let text = fs::read_to_string(package_dir().join("package.json")).unwrap();
     serde_json::from_str(&text).unwrap()
 }
 
@@ -141,9 +136,19 @@ fn the_types_package_points_at_the_generated_index() {
     let package = npm_package();
     assert_eq!(
         package["types"],
-        format!("./{}", generate::TYPESCRIPT_INDEX)
+        format!("./ts/{}", generate::TYPESCRIPT_INDEX)
     );
     let index =
-        fs::read_to_string(repo_root().join("ts").join(generate::TYPESCRIPT_INDEX)).unwrap();
+        fs::read_to_string(package_dir().join("ts").join(generate::TYPESCRIPT_INDEX)).unwrap();
     assert!(index.contains("export type * from \"./CheckResult\";"));
+}
+
+#[test]
+fn the_types_package_ships_the_json_schemas() {
+    let package = npm_package();
+    assert_eq!(
+        package["files"],
+        serde_json::json!(["json/*.json", "ts/*.ts"])
+    );
+    assert_eq!(package["exports"]["./json/*"], "./json/*");
 }

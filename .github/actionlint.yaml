@@ -1,0 +1,8 @@
+# Settings for actionlint (`mise run health:workflows`).
+paths:
+  # dist generate writes this file, so it is never edited by hand. Its scripts leave some words
+  # unquoted on purpose, and write to a file once per line.
+  .github/workflows/release.yml:
+    ignore:
+      - "shellcheck reported issue in this script: SC2086:.+"
+      - "shellcheck reported issue in this script: SC2129:.+"

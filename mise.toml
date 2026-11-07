@@ -1,0 +1,199 @@
+# The engine's tools and tasks. CI runs these same tasks, one per step, so a check that passes
+# here passes there.
+#
+#   mise install       # the tools below, at these versions
+#   mise run health    # fast static checks: formatting, lint, types, licences, workflows
+#   mise run test      # the tests, and a check with the minimum Rust version
+#   mise run build     # the release plan
+#   mise run coverage  # test coverage of each part, and the check that CI makes
+#   mise tasks         # every task, with what it does
+#
+# `mise run health` runs every task named `health:<something>`, and the same for `test`, `build`
+# and `coverage`. To add a check, add a task with one of those names, and a step that runs it in the
+# matching workflow (.github/workflows/health.yml or test.yml). Plain cargo works too: the tasks
+# only name the flags that CI uses.
+min_version = "2026.9.14"
+
+[tools]
+# The probe build (crates/dyno-cdp/probe/build.ts), the TypeScript checks and the npm package in
+# packages/schema. TypeScript itself is in package.json.
+node = "24.22.0"
+# The formatter and the linter of the TypeScript, and the formatter of the JSON, Markdown, YAML,
+# TOML, CSS and HTML: each with its defaults (.oxfmtrc.json and .oxlintrc.json only leave files
+# out).
+"npm:oxfmt" = "0.76.0"
+"npm:oxlint" = "1.91.0"
+# The shell scripts' linter and formatter. actionlint also runs shellcheck on each `run:` script.
+shellcheck = "0.11.0"
+shfmt = "3.14.1"
+# The workflows' linter, and their security check (.github/zizmor.yml).
+actionlint = "1.7.12"
+zizmor = "1.32.0"
+# Test coverage (coverage:rust). It needs the llvm-tools component, which the task adds.
+"github:taiki-e/cargo-llvm-cov" = "0.9.1"
+# The versions that deny.toml, about.toml and about.hbs were written for.
+cargo-deny = "0.20.2"
+"github:EmbarkStudios/cargo-about" = "0.9.3"
+# The cargo-dist version in dist-workspace.toml.
+cargo-dist = "0.34.0"
+# Change files and the release pull request (knope.toml, docs/releasing.md). knope tags its own
+# releases knope/v<version>.
+"github:knope-dev/knope" = { version = "0.23.2", version_prefix = "knope/v" }
+# The toolchain CI uses. The minimum version is rust-version in Cargo.toml (see test:msrv). It is
+# last, so that the tools above come before ~/.cargo/bin on the PATH.
+rust = { version = "1.99.1", components = "clippy,rustfmt", profile = "minimal" }
+
+[tasks.health]
+description = "Fast static checks: every health:* task"
+depends = ["health:*"]
+
+[tasks."health:rust-fmt"]
+description = "Rust formatting (rustfmt)"
+run = "cargo fmt --all --check"
+
+[tasks."health:rust-clippy"]
+description = "Rust lint (clippy), with warnings as errors"
+run = "cargo clippy --workspace --all-targets --locked -- -D warnings"
+
+[tasks."health:licences"]
+description = "Advisories, licences, bans and sources (cargo-deny), and THIRD_PARTY_NOTICES.md (cargo-about)"
+run = [
+  "cargo deny check",
+  # The notices in every release archive must match the dependencies.
+  "cargo fetch --locked",
+  "cargo about generate --frozen --fail about.hbs --output-file THIRD_PARTY_NOTICES.md",
+  "git diff --exit-code THIRD_PARTY_NOTICES.md",
+]
+
+[tasks."health:workflows"]
+description = "GitHub Actions workflows (actionlint)"
+run = "actionlint"
+
+[tasks."health:workflow-security"]
+description = "Security problems in the GitHub Actions workflows (zizmor)"
+run = "zizmor ."
+
+# The format and lint tasks check every file of the checkout that their tool reads, not only the
+# engine's.
+
+[tasks."health:format"]
+description = "Formatting of the TypeScript, JSON, Markdown, YAML, TOML, CSS and HTML (oxfmt)"
+run = "oxfmt --check"
+
+[tasks."health:ts-lint"]
+description = "TypeScript lint (oxlint), with warnings as errors"
+run = "oxlint --deny-warnings"
+
+[tasks."health:shell-lint"]
+description = "Shell script lint (shellcheck)"
+# The scripts in crates/*/tests/data are test input.
+run = "git ls-files -z '*.sh' ':!:crates/*/tests/data/**' | xargs -0 shellcheck"
+
+[tasks."health:shell-format"]
+description = "Shell script formatting (shfmt)"
+run = "git ls-files -z '*.sh' ':!:crates/*/tests/data/**' | xargs -0 shfmt --diff"
+
+[tasks."ts:install"]
+description = "Install TypeScript and the types it checks against (npm ci), when package-lock.json changed"
+run = "npm ci --no-audit --no-fund"
+sources = ["package.json", "package-lock.json"]
+outputs = ["node_modules/.package-lock.json"]
+
+[tasks."fixtures:install"]
+description = "Install the packages that the fixture apps import (npm ci in fixtures/src), for their type check"
+dir = "fixtures/src"
+run = "npm ci --no-audit --no-fund"
+sources = ["package.json", "package-lock.json"]
+outputs = ["node_modules/.package-lock.json"]
+
+[tasks."health:probe-types"]
+description = "TypeScript type check of the probe and its build (tsc)"
+depends = ["ts:install"]
+run = "npx --no-install tsc -p crates/dyno-cdp/probe"
+
+[tasks."health:coverage-types"]
+description = "TypeScript type check of the coverage report and its tests (tsc)"
+depends = ["ts:install"]
+run = "npx --no-install tsc -p .github/coverage"
+
+[tasks."health:schema-types"]
+description = "TypeScript type check of the npm package's types (tsc)"
+depends = ["ts:install"]
+run = "npx --no-install tsc -p packages/schema"
+
+[tasks."health:fixtures-types"]
+description = "TypeScript type check of the fixture apps, against the Pixi version each is bundled with (tsc)"
+depends = ["ts:install", "fixtures:install"]
+run = [
+  "npx --no-install tsc -p fixtures/src",
+  "npx --no-install tsc -p fixtures/src/tsconfig.pixi7.json",
+]
+
+[tasks.test]
+description = "Tests: every test:* task"
+depends = ["test:*"]
+
+[tasks."test:rust"]
+description = "Rust unit, golden and snapshot tests"
+run = "cargo test --workspace --locked"
+
+[tasks."test:probe"]
+description = "The probe's unit tests, in a fake browser frame (node:test)"
+run = "node --test 'crates/dyno-cdp/probe/*.test.ts'"
+
+[tasks."test:coverage-report"]
+description = "The coverage report's own tests (node:test)"
+run = "node --test '.github/coverage/*.test.ts'"
+
+[tasks."test:msrv"]
+description = "Build the workspace with the minimum Rust version, rust-version in Cargo.toml"
+# Change this with rust-version in Cargo.toml and the MSRV job in test.yml.
+run = [
+  "rustup toolchain install 1.97.0 --profile minimal --no-self-update",
+  "cargo +1.97.0 check --workspace --all-targets --locked",
+]
+
+[tasks.coverage]
+description = "Coverage of every part (every coverage:* task), then each report and its check (every coverage-report:* task)"
+depends = ["coverage:*"]
+depends_post = ["coverage-report:*"]
+
+[tasks."coverage:rust"]
+description = "Rust coverage of every test, the ignored Chromium and Node ones too: target/coverage/rust.lcov"
+# One Chromium test is left out: it bounds the wall clock of a run that times out, and a 2-core
+# CI machine under coverage takes 28 s, not under 12. `cargo test -p dyno-cdp -- --ignored` runs it.
+run = [
+  "rustup component add llvm-tools",
+  "mkdir -p target/coverage",
+  """cargo llvm-cov --workspace --locked --lcov --output-path target/coverage/rust.lcov \
+  -- --include-ignored --skip a_game_stuck_in_a_loop_times_out_near_the_deadline""",
+]
+
+[tasks."coverage:probe"]
+description = "Coverage of probe.ts by its unit tests: target/coverage/probe.lcov"
+run = [
+  "mkdir -p target/coverage",
+  """node --test --experimental-test-coverage --test-coverage-include=crates/dyno-cdp/probe/probe.ts \
+  --test-reporter=spec --test-reporter-destination=stdout \
+  --test-reporter=lcov --test-reporter-destination=target/coverage/probe.lcov 'crates/dyno-cdp/probe/*.test.ts'""",
+]
+
+[tasks."coverage-report:engine"]
+description = "The engine's coverage report and its check against .github/coverage/engine.json: target/coverage/engine"
+run = "node .github/coverage/report.ts --config .github/coverage/engine.json --out target/coverage/engine"
+
+[tasks.build]
+description = "Builds that show the engine ships: every build:* task"
+depends = ["build:*"]
+
+[tasks."release:prepare"]
+description = "Collect the change files into a new version, as the release pull request does (knope)"
+run = "knope prepare-release"
+
+[tasks."release:preview"]
+description = "Show what the next release pull request would hold, and change nothing"
+run = "knope prepare-release --dry-run"
+
+[tasks."build:dist-plan"]
+description = "The release plan (cargo-dist), as release.yml checks it on a pull request"
+run = "dist plan"

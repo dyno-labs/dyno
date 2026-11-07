@@ -1,0 +1,183 @@
+# Keeps the release pull request up to date, and tags each new version. See docs/releasing.md.
+#
+# Each pull request that changes the engine adds a change file in .changeset/ (change-file.yml
+# checks it). On every push to main, the "Release PR" job collects the change files with knope
+# (`mise run release:prepare`): it bumps the version in Cargo.toml and packages/schema/package.json,
+# writes the new section of CHANGELOG.md, updates the saved output that holds the version, and
+# pushes all of it to the release branch with a pull request. Merging that pull request, by any
+# method, puts the new version on main. Then the "Tag" job tags it, and the tag starts release.yml,
+# which builds the binaries and makes the GitHub Release, with the changelog section as its notes.
+# Neither job pushes to main.
+#
+# Both jobs push with a token of the dyno-bot GitHub App, because a branch or tag pushed with
+# GITHUB_TOKEN starts no other workflow. They need the variable DYNO_BOT_CLIENT_ID and the secret
+# DYNO_BOT_PRIVATE_KEY, and skip with a notice until both are set. Each job is also off until a
+# repository variable is "true": RELEASE_PR in the repository where engine work happens, and
+# RELEASE_TAGS in the repository whose GitHub Releases are the downloads.
+name: release-pr
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+  MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
+  # Each job installs only the tools it names in install_args, and a task must not install more.
+  MISE_TASK_RUN_AUTO_INSTALL: "false"
+
+jobs:
+  pr:
+    name: Release PR
+    if: vars.RELEASE_PR == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ${{ (github.event.pull_request.head.repo.fork && 'ubuntu-latest') || vars.LINUX_RUNNER || 'ubuntu-latest' }}
+    # A newer push to main makes the pull request again from scratch.
+    concurrency:
+      group: release-pr
+      cancel-in-progress: true
+    steps:
+      - name: Check for the bot app
+        id: bot
+        env:
+          CLIENT_ID: ${{ vars.DYNO_BOT_CLIENT_ID }}
+          HAS_KEY: ${{ secrets.DYNO_BOT_PRIVATE_KEY != '' }}
+        run: |
+          if [[ -z "$CLIENT_ID" || "$HAS_KEY" != true ]]; then
+            echo "::notice::Release PR skipped: set the variable DYNO_BOT_CLIENT_ID and the secret DYNO_BOT_PRIVATE_KEY of the dyno-bot GitHub App."
+            echo "ready=false" >>"$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >>"$GITHUB_OUTPUT"
+          fi
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: token
+        if: steps.bot.outputs.ready == 'true'
+        with:
+          client-id: ${{ vars.DYNO_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.DYNO_BOT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          # Moving the release branch onto a main that changed a workflow counts as changing it.
+          permission-workflows: write
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.bot.outputs.ready == 'true'
+        with:
+          persist-credentials: true # zizmor: ignore[artipacked] the job pushes the release branch with this token
+          token: ${{ steps.token.outputs.token }}
+      - name: Look for change files
+        id: changes
+        if: steps.bot.outputs.ready == 'true'
+        run: |
+          if compgen -G '.changeset/*.md' >/dev/null; then
+            echo "found=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "No change files on main: nothing to release."
+            echo "found=false" >>"$GITHUB_OUTPUT"
+          fi
+      - name: Close the release pull request
+        if: steps.changes.outputs.found == 'false'
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          number="$(gh pr list --head release --base main --state open --json number --jq '.[0].number // empty')"
+          if [[ -n "$number" ]]; then
+            gh pr close "$number" --comment "Main has no change files now, so there is nothing to release."
+          fi
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        if: steps.changes.outputs.found == 'true'
+        with:
+          version: 2026.10.17
+          install_args: rust github:knope-dev/knope
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: steps.changes.outputs.found == 'true'
+      - name: Make the release commit
+        id: release
+        if: steps.changes.outputs.found == 'true'
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          APP_SLUG: ${{ steps.token.outputs.app-slug }}
+        run: |
+          user_id="$(gh api "/users/${APP_SLUG}[bot]" --jq .id)"
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${user_id}+${APP_SLUG}[bot]@users.noreply.github.com"
+          git switch --force-create release
+          mise run release:prepare
+          version="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')"
+          git add --all
+          git commit --signoff --message "chore(release): v${version}"
+          git push --force origin release
+          echo "version=${version}" >>"$GITHUB_OUTPUT"
+      - name: Open or update the pull request
+        if: steps.changes.outputs.found == 'true'
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          body="$RUNNER_TEMP/body.md"
+          {
+            echo "Merging this pull request releases v${VERSION}. The release-pr workflow wrote it from the change files on main, and writes it again after each push to main, so do not edit it by hand."
+            echo
+            # The new section of CHANGELOG.md, without its heading.
+            awk -v heading="## ${VERSION}" '
+              index($0, heading " ") == 1 || $0 == heading { found = 1; next }
+              found && /^## / { exit }
+              found { print }
+            ' CHANGELOG.md
+          } >"$body"
+          title="chore(release): v${VERSION}"
+          number="$(gh pr list --head release --base main --state open --json number --jq '.[0].number // empty')"
+          if [[ -n "$number" ]]; then
+            gh pr edit "$number" --title "$title" --body-file "$body"
+          else
+            gh pr create --base main --head release --title "$title" --body-file "$body"
+          fi
+
+  tag:
+    name: Tag
+    if: vars.RELEASE_TAGS == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ${{ (github.event.pull_request.head.repo.fork && 'ubuntu-latest') || vars.LINUX_RUNNER || 'ubuntu-latest' }}
+    concurrency:
+      group: release-tag
+      cancel-in-progress: false
+    steps:
+      - name: Check for the bot app
+        id: bot
+        env:
+          CLIENT_ID: ${{ vars.DYNO_BOT_CLIENT_ID }}
+          HAS_KEY: ${{ secrets.DYNO_BOT_PRIVATE_KEY != '' }}
+        run: |
+          if [[ -z "$CLIENT_ID" || "$HAS_KEY" != true ]]; then
+            echo "::notice::Tag skipped: set the variable DYNO_BOT_CLIENT_ID and the secret DYNO_BOT_PRIVATE_KEY of the dyno-bot GitHub App."
+            echo "ready=false" >>"$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >>"$GITHUB_OUTPUT"
+          fi
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: token
+        if: steps.bot.outputs.ready == 'true'
+        with:
+          client-id: ${{ vars.DYNO_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.DYNO_BOT_PRIVATE_KEY }}
+          permission-contents: write
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.bot.outputs.ready == 'true'
+        with:
+          persist-credentials: true # zizmor: ignore[artipacked] the job pushes the tag with this token
+          token: ${{ steps.token.outputs.token }}
+      # A version that has no tag yet gets one on the commit this job runs on. So a version set
+      # by hand gets a tag too, and the next push makes up for a run that failed.
+      - name: Tag the version if it has no tag
+        if: steps.bot.outputs.ready == 'true'
+        run: |
+          version="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')"
+          tag="v${version}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null; then
+            echo "${tag} has a tag already."
+            exit 0
+          fi
+          git push origin "${GITHUB_SHA}:refs/tags/${tag}"
+          echo "::notice::Tagged ${GITHUB_SHA} as ${tag}. release.yml now builds and publishes it."

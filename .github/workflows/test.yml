@@ -1,0 +1,206 @@
+# The engine's tests on every push and pull request, on Linux, their coverage, and a build with
+# the minimum Rust version. Run it by hand to add macOS: both must give the same result_hash,
+# which the snapshots and fixtures/golden-hashes.json check. The static checks are in health.yml.
+#
+# Each step runs one mise task from mise.toml, so `mise run test` runs the same tests on your
+# machine, and `mise run coverage` the same coverage. To add one, add a `test:<name>` task there,
+# and a step or a job here. Add a new job to the `needs` of `ok`: that job is the required check,
+# so it must see every job.
+#
+# Pull requests from forks always run on GitHub-hosted runners, never on LINUX_RUNNER, so code
+# from outside cannot run on a self-hosted machine.
+name: test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch or pull request cancels the run it replaces.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+  # Fail on a stale or missing snapshot instead of writing a new one.
+  INSTA_UPDATE: "no"
+  MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
+  # Each job installs only the tools it names in install_args, and a task must not install more.
+  MISE_TASK_RUN_AUTO_INSTALL: "false"
+
+jobs:
+  rust:
+    name: Rust tests (Linux)
+    runs-on: ${{ (github.event.pull_request.head.repo.fork && 'ubuntu-latest') || vars.LINUX_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        with:
+          version: 2026.10.17
+          install_args: rust
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: mise run test:rust
+
+  msrv:
+    name: Minimum Rust (1.97)
+    runs-on: ${{ (github.event.pull_request.head.repo.fork && 'ubuntu-latest') || vars.LINUX_RUNNER || 'ubuntu-latest' }}
+    env:
+      # rust-version in Cargo.toml is 1.97, because the oxc parser needs it. This job keeps that
+      # true. mise installs this toolchain in place of the one in mise.toml, so the cache key
+      # names the toolchain that builds.
+      MISE_RUST_VERSION: "1.97.0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        with:
+          version: 2026.10.17
+          install_args: rust
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: mise run test:msrv
+
+  macos:
+    name: macOS
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        with:
+          version: 2026.10.17
+          install_args: rust
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: mise run health:rust-clippy
+      - run: mise run test:rust
+
+  node:
+    name: Probe and coverage report tests (Node)
+    runs-on: ${{ (github.event.pull_request.head.repo.fork && 'ubuntu-latest') || vars.LINUX_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        with:
+          version: 2026.10.17
+          install_args: node
+      - run: mise run test:probe
+      - run: mise run test:coverage-report
+
+  # Coverage of every engine test, with the Chromium and Node tests that `cargo test` leaves out.
+  # It fails when a part is under its floor in .github/coverage/engine.json, or drops below main
+  # at the pull request's base commit (CONTRIBUTING.md, "Coverage"). The report is in the job
+  # summary and the coverage-engine artifact; coverage-comment posts it on the pull request.
+  coverage:
+    name: Engine coverage
+    runs-on: ${{ (github.event.pull_request.head.repo.fork && 'ubuntu-latest') || vars.LINUX_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+      # Main's report at the base commit, and the pull request's labels.
+      actions: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        with:
+          version: 2026.10.17
+          install_args: rust node github:taiki-e/cargo-llvm-cov
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      # The Chromium tests use the Chromium or Chrome on the runner's PATH. Ubuntu 24.04 lets no
+      # unprivileged process make a user namespace, so Chromium's sandbox could not start. This
+      # lets it on the job's machine, which goes when the job ends, and keeps the sandbox on.
+      - name: Let Chromium's sandbox start
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          for browser in chromium chromium-browser google-chrome google-chrome-stable; do
+            if command -v "$browser" >/dev/null; then echo "$browser: $("$browser" --version)"; fi
+          done
+      - run: mise run coverage:rust
+      - run: mise run coverage:probe
+      - name: Main's report at the base commit
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: .github/coverage/base.sh test.yml coverage-engine "$BASE_SHA" target/coverage/base
+      - name: Report and check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          args=(--base target/coverage/base/engine/summary.json)
+          # A pull request that loses coverage on purpose carries this label.
+          if [[ -n "$PR" ]] && gh pr view "$PR" --json labels --jq '.labels[].name' | grep -qx coverage-drop-ok; then
+            args+=(--allow-drop)
+          fi
+          mise run coverage-report:engine -- "${args[@]}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: coverage-engine
+          path: |
+            target/coverage/rust.lcov
+            target/coverage/probe.lcov
+            target/coverage/engine/
+          if-no-files-found: ignore
+
+  # Posts the engine's coverage report on the pull request, or updates the comment it posted
+  # before. It is not in `ok`: a comment that GitHub fails to take must not block a merge. A pull
+  # request from a fork gets no comment, as its token cannot write one.
+  coverage-comment:
+    name: Engine coverage comment
+    needs: coverage
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork }}
+    runs-on: ${{ (github.event.pull_request.head.repo.fork && 'ubuntu-latest') || vars.LINUX_RUNNER || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/coverage
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        continue-on-error: true
+        with:
+          name: coverage-engine
+          path: target/coverage
+      - name: Post or update the comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if [[ -f target/coverage/engine/comment.md ]]; then
+            .github/coverage/comment.sh target/coverage/engine/comment.md "$PR"
+          else
+            echo "the coverage job wrote no report"
+          fi
+
+  # The required check. It runs even when a job it needs failed, and fails unless every one passed
+  # or was skipped. macOS is skipped unless the run was started by hand.
+  ok:
+    name: test ok
+    if: always()
+    needs: [rust, node, coverage, msrv, macos]
+    runs-on: ${{ (github.event.pull_request.head.repo.fork && 'ubuntu-latest') || vars.LINUX_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - name: Every job passed or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: $RESULTS"
+          for result in $RESULTS; do
+            case "$result" in success | skipped) ;; *) exit 1 ;; esac
+          done

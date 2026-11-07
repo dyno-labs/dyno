@@ -422,7 +422,13 @@ astc_bytes = 131072
 status = "estimated"
 lo_bytes = 43069392
 hi_bytes = 86138784
-top5 = ["assets/png/flat-2048x2048.png", "assets/png/bg-2080x1560.png", "assets/spine/hero.png", "assets/jpg/progressive-1024x768.jpg", "assets/ktx2/etc1s-mips-1024x1024.ktx2"]
+top5 = [
+  "assets/png/flat-2048x2048.png",
+  "assets/png/bg-2080x1560.png",
+  "assets/spine/hero.png",
+  "assets/jpg/progressive-1024x768.jpg",
+  "assets/ktx2/etc1s-mips-1024x1024.ktx2",
+]
 not_covered = ["assets/svg/icon.svg"]
 
 [bundle]
@@ -471,7 +477,12 @@ saved_bytes = 0
 outcome = "incomplete"
 value_bytes = 43069392
 saved_bytes = 27822336
-items = ["assets/png/flat-2048x2048.png", "assets/png/bg-2080x1560.png", "assets/spine/hero.png", "assets/jpg/progressive-1024x768.jpg"]
+items = [
+  "assets/png/flat-2048x2048.png",
+  "assets/png/bg-2080x1560.png",
+  "assets/spine/hero.png",
+  "assets/jpg/progressive-1024x768.jpg",
+]
 
 [rules."files.duplicate"]
 outcome = "pass"

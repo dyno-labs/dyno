@@ -1,0 +1,12 @@
+// The coverage report and its tests run in Node, which strips their types, so they may only use
+// TypeScript syntax that can be erased.
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["esnext"],
+    "types": ["node"],
+    "erasableSyntaxOnly": true,
+    "allowImportingTsExtensions": true
+  },
+  "include": ["*.ts"]
+}

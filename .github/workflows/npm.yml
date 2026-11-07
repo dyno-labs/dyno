@@ -1,11 +1,18 @@
-# Publishes the TypeScript types in ts/ to npm as @dyno-labs/schema, from the same tag as the
-# binary release. Off until the repository variable NPM_PUBLISH is "true" and npm trusts this
-# workflow (trusted publishing, so no npm token is stored). See docs/releasing.md.
+# Publishes packages/schema (the TypeScript types and the JSON Schema) to npm as
+# @dyno-labs/schema, from the same tag as the binary release. Off until the repository variable
+# NPM_PUBLISH is "true" and npm trusts this workflow (trusted publishing, so no npm token is
+# stored). See docs/releasing.md.
+#
+# It starts when release.yml finishes a tag's release. release.yml makes the GitHub Release with
+# GITHUB_TOKEN, and an event made with GITHUB_TOKEN starts no workflow, so "release: published"
+# would never fire here. Run it by hand on a tag to publish that tag again.
 name: npm
 
 on:
-  release:
-    types: [published]
+  # The job runs only for a push's run of Release that succeeded, never for a pull request's.
+  workflow_run: # zizmor: ignore[dangerous-triggers]
+    workflows: [Release]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -14,7 +21,10 @@ permissions:
 jobs:
   publish:
     name: Publish @dyno-labs/schema
-    if: vars.NPM_PUBLISH == 'true'
+    # Only a release from a tag that succeeded: release.yml also runs on pull requests.
+    if: >-
+      vars.NPM_PUBLISH == 'true' && (github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success'))
     runs-on: ubuntu-latest
     environment: release
     permissions:
@@ -23,14 +33,30 @@ jobs:
       id-token: write
     defaults:
       run:
-        working-directory: ts
+        working-directory: packages/schema
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The commit of the tag that release.yml built.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
           registry-url: https://registry.npmjs.org
-      # The package version must be the release's version, without the "v".
-      - run: test "v$(node -p 'require("./package.json").version')" = "${GITHUB_REF_NAME}"
-        if: github.event_name == 'release'
-      - run: npm publish --provenance --access public
+      # The package version must be the tag's version, without the "v". A version with a
+      # pre-release part, such as 0.2.0-rc.1, goes to the "next" dist-tag, not "latest".
+      - name: Publish
+        env:
+          TAG: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          if [[ "v${version}" != "${TAG}" ]]; then
+            echo "::error::packages/schema/package.json has version ${version}, but the tag is ${TAG}."
+            exit 1
+          fi
+          dist_tag=latest
+          if [[ "${version}" == *-* ]]; then
+            dist_tag=next
+          fi
+          npm publish --provenance --access public --tag "${dist_tag}"

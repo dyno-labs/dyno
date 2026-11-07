@@ -54,3 +54,30 @@ pub fn check_schema_version(schema_version: u32) -> Result<(), String> {
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_json_extension_in_any_case_is_read_as_json() {
+        for name in ["budget.json", "budget.JSON", "dir.toml/budget.Json"] {
+            assert_eq!(
+                ConfigFormat::from_extension(Path::new(name)),
+                ConfigFormat::Json,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn any_other_file_is_read_as_toml() {
+        for name in ["budget.toml", "budget", "budget.json.bak", "json"] {
+            assert_eq!(
+                ConfigFormat::from_extension(Path::new(name)),
+                ConfigFormat::Toml,
+                "{name}"
+            );
+        }
+    }
+}

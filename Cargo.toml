@@ -1,8 +1,6 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
-# The CDP feasibility spike is its own Cargo package and never joins the workspace.
-exclude = ["spikes"]
 
 [workspace.package]
 version = "0.1.0"
@@ -61,7 +59,17 @@ zip = { version = "9.4.0", default-features = false, features = ["deflate-flate2
 # Decodes audio for the stereo and silence analysis. MPL-2.0: its files are used unmodified, and
 # THIRD_PARTY_NOTICES.md says where their source is. Only the codecs and containers the audio scan
 # reads; symphonia has no Opus decoder.
-symphonia = { version = "0.6.1", default-features = false, features = ["aac", "adpcm", "isomp4", "mkv", "mp3", "ogg", "pcm", "vorbis", "wav"] }
+symphonia = { version = "0.6.1", default-features = false, features = [
+  "aac",
+  "adpcm",
+  "isomp4",
+  "mkv",
+  "mp3",
+  "ogg",
+  "pcm",
+  "vorbis",
+  "wav",
+] }
 
 # Planned for later steps. Declared here so parallel work
 # does not edit this file. Unused entries are not built.
@@ -71,12 +79,24 @@ quick-xml = "0.42.0"
 # The CDP driver. Raw CDP over one WebSocket, with our own message envelope: the CDP feasibility
 # test found that chromiumoxide_types drops the top-level sessionId of flat sessions.
 futures-util = { version = "0.3.31", default-features = false, features = ["sink", "std"] }
-tokio = { version = "1.54.1", features = ["io-util", "macros", "net", "process", "rt", "sync", "time"] }
+tokio = { version = "1.54.1", features = [
+  "io-util",
+  "macros",
+  "net",
+  "process",
+  "rt",
+  "sync",
+  "time",
+] }
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect"] }
 
 # `dyno mcp`, the MCP server: the official MCP Rust SDK. Only the server, its
 # tool macros and the stdio transport.
-rmcp = { version = "3.9.0", default-features = false, features = ["macros", "server", "transport-io"] }
+rmcp = { version = "3.9.0", default-features = false, features = [
+  "macros",
+  "server",
+  "transport-io",
+] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

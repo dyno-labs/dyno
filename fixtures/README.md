@@ -11,7 +11,7 @@ in [`docs/design/static-scan.md`](../docs/design/static-scan.md).
 fixtures/
   generate.sh               rebuilds every build folder
   src/                      inputs for the generator (our own code)
-    apps/*.js               tiny fixture apps, bundled with esbuild
+    apps/*.ts               tiny fixture apps, bundled with esbuild
     html/*                  index.html templates and app.css
     tools/fixture_tool.rs   std-only Rust helper (KTX2 writer, Opus header patch, fake font)
     package.json            pinned npm versions for the bundles
@@ -23,23 +23,28 @@ fixtures/
   zip-input/
     build.zip               the scan input is a zip, not a folder
     expected.toml
+  golden-hashes.json        the status, exit code and result_hash of `dyno check` on
+                            each build, for the parity check of other copies of dyno
 ```
+
+`golden-hashes.json` is generated: a test in `crates/dyno-cli/tests/parity.rs` fails when it is
+stale, and `DYNO_UPDATE_GENERATED=1 cargo test --workspace` rewrites it.
 
 ## Fixtures
 
-| Fixture | What it covers | Rules that fire at the default thresholds |
-|---|---|---|
-| `audio-formats` | WAV, Ogg Vorbis, Ogg Opus (with a 44.1 kHz input rate field and a 48 kHz mono file), MP3 CBR, MP3 VBR (MPEG-2), MP3 without a Xing header, AAC in ADTS, AAC in M4A (moov first and moov last), WebM Opus, live WebM with no Duration. Stereo and mono. | none (render is `incomplete`: no JS) |
-| `howler-sprites` | A Howler sprite map as a literal in the bundle, a Howler JSON map and an audiosprite (jukebox) JSON map, with known silent gaps. Sound groups of 2 formats. No canvas, so it draws with HTML: Howler only plays audio. | `audio.silence_share` warns |
-| `images` | PNG (RGBA, RGB, palette, 16-bit grey), JPEG (baseline, progressive), WebP (lossy, lossless, alpha), AVIF, GIF, SVG, KTX2 (raw RGBA8 with mips, ASTC 4x4, Basis ETC1S with mips, Basis UASTC with Zstandard), `.basis` (ETC1S), a Spine atlas with 2 pages, one with a MipMap filter. | textures `incomplete` (SVG is not covered) |
-| `pixi8-inline` | Pixi 8.22.0 and Howler 2.2.4 bundled into an inline module script in `index.html`, the way SvelteKit inline builds do. `app.init` with antialias on and resolution `devicePixelRatio`. web-sdk markers (RGS paths, `rgs_url`, a `__sveltekit_` global). External URLs in JS, HTML and CSS, and one dynamic host. A fake font and a short video. | render `warn` |
-| `pixi8-webgpu` | Pixi 8.22.0 with `preference: 'webgpu'`, antialias off, resolution capped at 2 through a `const`. A Basis KTX2 texture with mips. A protocol-relative URL. | none |
-| `pixi7-aa` | Pixi 7.4.3 `new Application` with antialias on, resolution uncapped, `resizeTo`. Power of two images, so v7 mipmaps apply. | render `warn` |
-| `pixi7-opts` | Pixi 7.4.3 with the options object in a variable, no antialias key (default off), resolution `window.devicePixelRatio \|\| 1`, a fixed 720 x 1280 stage. | render `warn` |
-| `duplicates` | The same PNG three times, an MP3 twice, a JSON file twice, two empty files (they never count). A page with no script, so it draws with HTML. | `files.duplicate` warns |
-| `broken` | One damaged file per family: PNG, JPEG, WebP, AVIF, KTX2, Basis, Ogg Vorbis, Ogg Opus, MP3, ADTS, M4A, WAV, WebM, a JS file with a syntax error and a sprite JSON that does not parse. Two good files keep the totals above zero. | audio, stereo, silence, render and textures are `incomplete` |
-| `zip-input` | `duplicates/build` zipped under one top-level folder `game/`. The scan strips that folder, so every value, `build_id` included, equals `duplicates`. | `files.duplicate` warns |
-| `over-budget` | 6 minutes of silent stereo Vorbis (36 KB, 138 MB decoded) and flat 4096 x 4096 PNGs. | audio `fail`, stereo `warn`, textures `fail` |
+| Fixture          | What it covers                                                                                                                                                                                                                                                                                                                                  | Rules that fire at the default thresholds                    |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `audio-formats`  | WAV, Ogg Vorbis, Ogg Opus (with a 44.1 kHz input rate field and a 48 kHz mono file), MP3 CBR, MP3 VBR (MPEG-2), MP3 without a Xing header, AAC in ADTS, AAC in M4A (moov first and moov last), WebM Opus, live WebM with no Duration. Stereo and mono.                                                                                          | none (render is `incomplete`: no JS)                         |
+| `howler-sprites` | A Howler sprite map as a literal in the bundle, a Howler JSON map and an audiosprite (jukebox) JSON map, with known silent gaps. Sound groups of 2 formats. No canvas, so it draws with HTML: Howler only plays audio.                                                                                                                          | `audio.silence_share` warns                                  |
+| `images`         | PNG (RGBA, RGB, palette, 16-bit grey), JPEG (baseline, progressive), WebP (lossy, lossless, alpha), AVIF, GIF, SVG, KTX2 (raw RGBA8 with mips, ASTC 4x4, Basis ETC1S with mips, Basis UASTC with Zstandard), `.basis` (ETC1S), a Spine atlas with 2 pages, one with a MipMap filter.                                                            | textures `incomplete` (SVG is not covered)                   |
+| `pixi8-inline`   | Pixi 8.22.0 and Howler 2.2.4 bundled into an inline module script in `index.html`, the way SvelteKit inline builds do. `app.init` with antialias on and resolution `devicePixelRatio`. web-sdk markers (RGS paths, `rgs_url`, a `__sveltekit_` global). External URLs in JS, HTML and CSS, and one dynamic host. A fake font and a short video. | render `warn`                                                |
+| `pixi8-webgpu`   | Pixi 8.22.0 with `preference: 'webgpu'`, antialias off, resolution capped at 2 through a `const`. A Basis KTX2 texture with mips. A protocol-relative URL.                                                                                                                                                                                      | none                                                         |
+| `pixi7-aa`       | Pixi 7.4.3 `new Application` with antialias on, resolution uncapped, `resizeTo`. Power of two images, so v7 mipmaps apply.                                                                                                                                                                                                                      | render `warn`                                                |
+| `pixi7-opts`     | Pixi 7.4.3 with the options object in a variable, no antialias key (default off), resolution `window.devicePixelRatio \|\| 1`, a fixed 720 x 1280 stage.                                                                                                                                                                                        | render `warn`                                                |
+| `duplicates`     | The same PNG three times, an MP3 twice, a JSON file twice, two empty files (they never count). A page with no script, so it draws with HTML.                                                                                                                                                                                                    | `files.duplicate` warns                                      |
+| `broken`         | One damaged file per family: PNG, JPEG, WebP, AVIF, KTX2, Basis, Ogg Vorbis, Ogg Opus, MP3, ADTS, M4A, WAV, WebM, a JS file with a syntax error and a sprite JSON that does not parse. Two good files keep the totals above zero.                                                                                                               | audio, stereo, silence, render and textures are `incomplete` |
+| `zip-input`      | `duplicates/build` zipped under one top-level folder `game/`. The scan strips that folder, so every value, `build_id` included, equals `duplicates`.                                                                                                                                                                                            | `files.duplicate` warns                                      |
+| `over-budget`    | 6 minutes of silent stereo Vorbis (36 KB, 138 MB decoded) and flat 4096 x 4096 PNGs.                                                                                                                                                                                                                                                            | audio `fail`, stereo `warn`, textures `fail`                 |
 
 The fixture apps use hosts under `.invalid`, so nothing in them can reach a real
 server. The web-sdk markers in `pixi8-inline` are our own code. They use the
@@ -54,13 +59,13 @@ contains, and nothing else from that project.
 Each file has one top-level table per module, so a module's tests read only
 their own table:
 
-| Table | Owner (see the design doc) |
-|---|---|
-| `[profile]` | shared: the proposed device profile the numbers assume |
-| `[inventory]`, `[bytes]`, `[duplicates]`, `[rules]` | inventory, bytes and rules |
-| `[audio]`, `[sprites]` | audio |
-| `[textures]` | textures |
-| `[bundle]` | bundle |
+| Table                                               | Owner (see the design doc)                             |
+| --------------------------------------------------- | ------------------------------------------------------ |
+| `[profile]`                                         | shared: the proposed device profile the numbers assume |
+| `[inventory]`, `[bytes]`, `[duplicates]`, `[rules]` | inventory, bytes and rules                             |
+| `[audio]`, `[sprites]`                              | audio                                                  |
+| `[textures]`                                        | textures                                               |
+| `[bundle]`                                          | bundle                                                 |
 
 All sizes are integer bytes. File lists are sorted by path in byte order. A
 Howler `src` list keeps its written order. A rule's `items` put the most bytes
@@ -97,17 +102,17 @@ fields, and npm installs from the lock file.
 
 Tool versions used for the committed files:
 
-| Tool | Version |
-|---|---|
-| ffmpeg | 9.0.2 (libopus 1.6.1, LAME 4.0, SVT-AV1 4.3.0, x264 r3222, native AAC) |
-| oggenc (vorbis-tools) | 1.4.3 (libvorbis 1.3.7) |
-| cwebp (webp) | 1.6.0 |
-| jpegtran (jpeg-turbo) | 3.2.0 |
-| basisu (basis_universal) | 2.50.0 |
-| rustc | 1.99.1 |
-| node, npm | 26.12.1, 11.20.0 |
-| esbuild | 0.28.2 (from `src/package.json`) |
-| pixi.js | 7.4.3 and 8.22.0; howler 2.2.4 |
+| Tool                     | Version                                                                |
+| ------------------------ | ---------------------------------------------------------------------- |
+| ffmpeg                   | 9.0.2 (libopus 1.6.1, LAME 4.0, SVT-AV1 4.3.0, x264 r3222, native AAC) |
+| oggenc (vorbis-tools)    | 1.4.3 (libvorbis 1.3.7)                                                |
+| cwebp (webp)             | 1.6.0                                                                  |
+| jpegtran (jpeg-turbo)    | 3.2.0                                                                  |
+| basisu (basis_universal) | 2.50.0                                                                 |
+| rustc                    | 1.99.1                                                                 |
+| node, npm                | 26.12.1, 11.20.0                                                       |
+| esbuild                  | 0.28.2 (from `src/package.json`)                                       |
+| pixi.js                  | 7.4.3 and 8.22.0; howler 2.2.4                                         |
 
 A different version of any of these can change the bytes. After a rebuild,
 if `git status fixtures` shows a changed file under `build/`, the

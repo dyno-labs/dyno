@@ -1,0 +1,11 @@
+// The fixture apps that use Pixi 8 or no Pixi. generate.sh bundles each app with `pixi.js` as an
+// alias of one Pixi version, so tsc maps it the same way. tsconfig.pixi7.json checks the Pixi 7
+// apps. Run `npm ci` here first, for the packages the apps import.
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["esnext", "dom"],
+    "paths": { "pixi.js": ["./node_modules/pixi8"] }
+  },
+  "include": ["./apps/howler-sprites.ts", "./apps/pixi8-inline.ts", "./apps/pixi8-webgpu.ts"]
+}

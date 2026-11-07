@@ -230,3 +230,20 @@ fn asset_changes(base: &LoadedResult, head: &LoadedResult) -> Vec<AssetChange> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_warn_ranks_above_a_pass_and_below_a_fail() {
+        assert!(rank(Some(Verdict::Warn)) > rank(Some(Verdict::Pass)));
+        assert!(rank(Some(Verdict::Fail)) > rank(Some(Verdict::Warn)));
+    }
+
+    #[test]
+    fn no_verdict_and_an_incomplete_one_rank_as_a_pass() {
+        assert_eq!(rank(None), rank(Some(Verdict::Pass)));
+        assert_eq!(rank(Some(Verdict::Incomplete)), rank(Some(Verdict::Pass)));
+    }
+}

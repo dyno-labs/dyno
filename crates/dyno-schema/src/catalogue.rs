@@ -288,6 +288,22 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_or_blank_id_is_rejected() {
+        for id in ["", "  "] {
+            let text = format!("schema_version = 0\n[[game]]\nid = \"{id}\"\nbuild = \"x\"\n");
+            let error = GamesFile::parse(&text, ConfigFormat::Toml).unwrap_err();
+            assert!(error.to_string().contains("empty id"), "{error}");
+        }
+    }
+
+    #[test]
+    fn a_shard_is_written_as_index_slash_count() {
+        let shard: Shard = " 2 / 4 ".parse().unwrap();
+        assert_eq!((shard.index(), shard.count()), (2, 4));
+        assert_eq!(shard.to_string(), "2/4");
+    }
+
+    #[test]
     fn a_game_needs_a_target() {
         let text = "schema_version = 0\n[[game]]\nid = \"a\"\n";
         let error = GamesFile::parse(text, ConfigFormat::Toml).unwrap_err();

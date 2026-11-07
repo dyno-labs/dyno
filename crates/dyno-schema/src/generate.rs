@@ -1,4 +1,5 @@
-//! The generated files: JSON Schema in `schema/` and TypeScript types in `ts/`.
+//! The generated files: JSON Schema in `packages/schema/json/` and TypeScript types in
+//! `packages/schema/ts/`, the two halves of the npm package `@dyno-labs/schema`.
 //!
 //! Tests compare these with the committed files and fail when they are stale. To update the
 //! committed files, run `DYNO_UPDATE_GENERATED=1 INSTA_UPDATE=always cargo test --workspace`.
@@ -22,7 +23,7 @@ use crate::runner::{DriverMessage, RunRequest};
 /// when it is set to 1.
 pub const UPDATE_GENERATED_VARIABLE: &str = "DYNO_UPDATE_GENERATED";
 
-/// Each JSON Schema file this crate owns: its name in `schema/` and its content.
+/// Each JSON Schema file this crate owns: its name in `packages/schema/json/` and its content.
 pub fn json_schemas() -> Vec<(&'static str, String)> {
     vec![
         ("budget.schema.json", pretty_schema::<Budget>()),
@@ -80,7 +81,8 @@ pub fn export_typescript(dir: &Path) -> Result<(), ExportError> {
     Ok(())
 }
 
-/// The file in `ts/` that re-exports every type, so the npm package has one entry point.
+/// The file in `packages/schema/ts/` that re-exports every type, so the npm package has one entry
+/// point.
 pub const TYPESCRIPT_INDEX: &str = "index.ts";
 
 /// Writes `index.ts`: one `export type *` line per type file in `dir`, sorted by name.

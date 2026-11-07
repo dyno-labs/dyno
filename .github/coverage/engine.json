@@ -1,0 +1,13 @@
+{
+  "id": "engine",
+  "title": "Engine coverage",
+  "tolerance": 0.1,
+  "parts": [
+    { "name": "Rust", "lcov": "target/coverage/rust.lcov", "floor": { "lines": 97.5 } },
+    {
+      "name": "Probe",
+      "lcov": "target/coverage/probe.lcov",
+      "floor": { "lines": 99.5, "branches": 96 }
+    }
+  ]
+}

@@ -2,8 +2,9 @@
 //!
 //! Every type that crosses a process or language boundary lives here: the check result, the
 //! compare diff, the catalogue result, the doctor report, the budget and games files, the in-page
-//! probe events, the runner protocol and the host's unclean exit record. The JSON Schema files in `schema/`
-//! and the TypeScript types in `ts/` are generated from these types by [`generate`].
+//! probe events, the runner protocol and the host's unclean exit record. The JSON Schema files in
+//! `packages/schema/json/` and the TypeScript types in `packages/schema/ts/` are generated from
+//! these types by [`generate`].
 //!
 //! After the first release, changes are additive. A breaking change bumps [`SCHEMA_VERSION`].
 

@@ -1,8 +1,8 @@
 // Builds the two probes from probe.ts by stripping the types: probe.js, the lab build
 // that dyno injects over CDP, and probe.field.js, the field build that a platform adds to a game.
 // The field build leaves out each block between the lines `// lab: begin` and `// lab: end`.
-// Needs Node 22.13 or later; it adds no dependency. Run it from any folder:
-// node crates/dyno-cdp/probe/build.mjs
+// Needs Node 22.18 or later, which runs TypeScript; it adds no dependency. Run it from any folder:
+// node crates/dyno-cdp/probe/build.ts
 // With --check it writes nothing, and exits 1 when a probe is not what probe.ts gives.
 import { readFileSync, writeFileSync } from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
@@ -12,8 +12,8 @@ const LAB_BEGIN = "// lab: begin";
 const LAB_END = "// lab: end";
 
 /** probe.ts without its lab blocks. */
-const withoutLabBlocks = (source) => {
-  const kept = [];
+const withoutLabBlocks = (source: string): string => {
+  const kept: string[] = [];
   let inBlock = false;
   for (const line of source.split("\n")) {
     const marker = line.trim();
@@ -29,7 +29,7 @@ const withoutLabBlocks = (source) => {
 };
 
 /** The script that a TypeScript source gives. */
-const build = (source) => {
+const build = (source: string): string => {
   const stripped = stripTypeScriptTypes(source, { mode: "strip" });
   // Stripping keeps every position: a type becomes spaces in the same place. So a run of spaces
   // in the output that holds a position where the source has another character is a stripped type,
@@ -37,7 +37,7 @@ const build = (source) => {
   // position, so space the source wrote there is kept as it is.
   if (stripped.length !== source.length) throw new Error("stripping moved the text");
   let compact = "";
-  for (let start = 0; start < stripped.length; ) {
+  for (let start = 0; start < stripped.length;) {
     if (stripped[start] !== " ") {
       compact += stripped[start++];
       continue;
@@ -58,8 +58,19 @@ const build = (source) => {
     .map((line) => line.trim())
     .filter((line) => line !== "" && !line.startsWith("//"));
   const withBacktick = lines.find((line) => line.includes("`"));
-  if (withBacktick) throw new Error(`probe.ts: a template literal the build would change: ${withBacktick}`);
-  return "// Generated from probe.ts by build.mjs. Do not edit.\n" + lines.join("\n") + "\n";
+  if (withBacktick)
+    throw new Error(`probe.ts: a template literal the build would change: ${withBacktick}`);
+  // A line that ends with `(`, `[`, `{` or `,` never ends a statement, so the next line joins it,
+  // and a call or a list that the source wraps costs no more than one on a single line. A line
+  // that holds `//` is left as it is: a comment there would hide the joined text.
+  const joined: string[] = [];
+  for (const line of lines) {
+    const last = joined.at(-1);
+    if (last !== undefined && /[([{,]$/.test(last) && !last.includes("//"))
+      joined[joined.length - 1] = last + line;
+    else joined.push(line);
+  }
+  return "// Generated from probe.ts by build.ts. Do not edit.\n" + joined.join("\n") + "\n";
 };
 
 const source = readFileSync(new URL("probe.ts", here), "utf8");
@@ -70,7 +81,7 @@ for (const [name, script] of Object.entries(probes)) {
   if (!process.argv.includes("--check")) {
     writeFileSync(target, script);
   } else if (readFileSync(target, "utf8") !== script) {
-    console.error(`${name} is out of date: run node crates/dyno-cdp/probe/build.mjs`);
+    console.error(`${name} is out of date: run node crates/dyno-cdp/probe/build.ts`);
     stale = true;
   }
 }

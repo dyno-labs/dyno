@@ -1,0 +1,11 @@
+// oxlint's default rules, with warnings as errors (`--deny-warnings` in mise.toml).
+{
+  "ignorePatterns": [
+    // Built from probe.ts, which is linted.
+    "crates/dyno-cdp/probe/probe.js",
+    "crates/dyno-cdp/probe/probe.field.js",
+    // Scan inputs: minified bundles and broken files, whose bytes are the test.
+    "crates/*/tests/data/**",
+    "fixtures/*/build/**"
+  ]
+}

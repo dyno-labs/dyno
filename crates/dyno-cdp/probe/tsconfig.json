@@ -1,0 +1,11 @@
+// The probe runs in a browser, and its build and its tests run in Node. All of them lose their
+// types by stripping alone, so they may only use TypeScript syntax that can be erased.
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["esnext", "dom"],
+    "types": ["node"],
+    "erasableSyntaxOnly": true
+  },
+  "include": ["probe.ts", "build.ts", "probe.test.ts"]
+}

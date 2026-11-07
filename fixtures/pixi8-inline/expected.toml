@@ -202,7 +202,11 @@ astc_bytes = 524288
 status = "estimated"
 lo_bytes = 22560768
 hi_bytes = 45121536
-top5 = ["assets/images/reels-2048x2048.png", "assets/images/bg-1280x720.jpg", "assets/images/symbols-1024x512.webp"]
+top5 = [
+  "assets/images/reels-2048x2048.png",
+  "assets/images/bg-1280x720.jpg",
+  "assets/images/symbols-1024x512.webp",
+]
 not_covered = []
 
 [bundle]
@@ -233,7 +237,13 @@ canvas_pixels = 3162132
 canvas_bytes = 12648528
 
 [bundle.external]
-hosts = ["api.example.invalid", "cdn.example.invalid", "fonts.googleapis.com", "fonts.gstatic.com", "live.example.invalid"]
+hosts = [
+  "api.example.invalid",
+  "cdn.example.invalid",
+  "fonts.googleapis.com",
+  "fonts.gstatic.com",
+  "live.example.invalid",
+]
 dynamic_host_sites = 1
 
 [[bundle.external.url]]
@@ -295,7 +305,11 @@ items = ["index.html"]
 outcome = "pass"
 value_bytes = 22560768
 saved_bytes = 16920576
-items = ["assets/images/reels-2048x2048.png", "assets/images/bg-1280x720.jpg", "assets/images/symbols-1024x512.webp"]
+items = [
+  "assets/images/reels-2048x2048.png",
+  "assets/images/bg-1280x720.jpg",
+  "assets/images/symbols-1024x512.webp",
+]
 
 [rules."files.duplicate"]
 outcome = "pass"

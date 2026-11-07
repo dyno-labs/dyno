@@ -366,4 +366,30 @@ mod tests {
             .collect();
         assert_eq!(budgets, [BudgetId::AudioDecodedMb]);
     }
+
+    #[test]
+    fn the_worst_verdict_of_a_limit_comes_from_its_strictest_side() {
+        let bytes = |warn_above, fail_above| BudgetLimit::Bytes {
+            warn_above,
+            fail_above,
+        };
+        let shares = |warn_above, fail_above| BudgetLimit::BasisPoints {
+            warn_above,
+            fail_above,
+        };
+        assert_eq!(worst_verdict(bytes(Some(1), Some(2))), Verdict::Fail);
+        assert_eq!(worst_verdict(bytes(None, Some(2))), Verdict::Fail);
+        assert_eq!(worst_verdict(bytes(Some(1), None)), Verdict::Warn);
+        assert_eq!(worst_verdict(shares(Some(1), None)), Verdict::Warn);
+        assert_eq!(worst_verdict(shares(None, Some(2))), Verdict::Fail);
+    }
+
+    #[test]
+    fn a_limit_with_no_sides_can_do_no_worse_than_pass() {
+        let none = BudgetLimit::Bytes {
+            warn_above: None,
+            fail_above: None,
+        };
+        assert_eq!(worst_verdict(none), Verdict::Pass);
+    }
 }

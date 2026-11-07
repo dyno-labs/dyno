@@ -1,0 +1,64 @@
+# Checks that a pull request which changes the engine (crates/ or packages/schema/) adds a change
+# file in .changeset/, for the release notes. See docs/releasing.md. The root Cargo.toml and
+# Cargo.lock do not count, so a dependency update alone needs none. A change that users will not
+# notice, such as a refactor or a new test, takes the label "no change file" instead. Renovate adds
+# that label to the updates it merges by itself.
+#
+# It is its own workflow, not a job in health.yml, because adding or removing the label must run it
+# again, and only this check. It needs no tools, so it uses no mise task.
+#
+# Pull requests from forks always run on GitHub-hosted runners, never on LINUX_RUNNER, so code
+# from outside cannot run on a self-hosted machine.
+name: change-file
+
+on:
+  pull_request:
+    # Adding or removing the label runs the check again.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: change-file-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Change file
+    runs-on: ${{ (github.event.pull_request.head.repo.fork && 'ubuntu-latest') || vars.LINUX_RUNNER || 'ubuntu-latest' }}
+    steps:
+      # The merge of the pull request into its base, and the base before it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Look for a change file
+        env:
+          NO_CHANGE_FILE: ${{ contains(github.event.pull_request.labels.*.name, 'no change file') }}
+          # The release pull request removes the change files that it collects.
+          RELEASE_PR: ${{ github.head_ref == 'release' && github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          if [[ "$RELEASE_PR" == true ]]; then
+            echo "This is the release pull request: it needs no change file."
+            exit 0
+          fi
+          engine="$(git diff --name-only --no-renames HEAD^1 HEAD -- crates packages/schema)"
+          if [[ -z "$engine" ]]; then
+            echo "No engine files changed: no change file is needed."
+            exit 0
+          fi
+          added="$(git diff --name-only --diff-filter=AM HEAD^1 HEAD -- '.changeset/*.md')"
+          if [[ -n "$added" ]]; then
+            echo "Change files:"
+            echo "$added"
+            exit 0
+          fi
+          if [[ "$NO_CHANGE_FILE" == true ]]; then
+            echo "::notice::No change file: the pull request has the label \"no change file\"."
+            exit 0
+          fi
+          echo "Engine files changed:"
+          echo "$engine"
+          echo "::error::Add a change file for the release notes: run 'knope document-change', or write .changeset/<name>.md by hand (see docs/releasing.md). If users will not notice the change, add the label \"no change file\" instead."
+          exit 1

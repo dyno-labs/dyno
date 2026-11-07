@@ -1,0 +1,132 @@
+# Fast static checks of the engine on every push and pull request: formatting, lint, types,
+# licences and the workflows. The tests are in test.yml, and the release plan in release.yml.
+#
+# Each linter and formatter runs with its own defaults, and a warning fails the check. The format
+# and lint tasks check every file in the checkout that their tool reads.
+#
+# Each step runs one mise task from mise.toml, so `mise run health` runs the same checks on your
+# machine. To add a check, add a `health:<name>` task there, and a step that runs it in the job
+# for its language here, or a new job. Add a new job to the `needs` of `ok`: that job is the
+# required check, so it must see every job.
+#
+# Pull requests from forks always run on GitHub-hosted runners, never on LINUX_RUNNER, so code
+# from outside cannot run on a self-hosted machine.
+name: health
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch or pull request cancels the run it replaces.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+  MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
+  # Each job installs only the tools it names in install_args, and a task must not install more.
+  MISE_TASK_RUN_AUTO_INSTALL: "false"
+
+jobs:
+  rust:
+    name: Rust format and lint
+    runs-on: ${{ (github.event.pull_request.head.repo.fork && 'ubuntu-latest') || vars.LINUX_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        with:
+          version: 2026.10.17
+          install_args: rust
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: mise run health:rust-fmt
+      - run: mise run health:rust-clippy
+
+  licences:
+    name: Licences, advisories and notices
+    runs-on: ${{ (github.event.pull_request.head.repo.fork && 'ubuntu-latest') || vars.LINUX_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        with:
+          version: 2026.10.17
+          install_args: rust cargo-deny github:EmbarkStudios/cargo-about
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: mise run health:licences
+
+  workflows:
+    name: Workflow lint
+    runs-on: ${{ (github.event.pull_request.head.repo.fork && 'ubuntu-latest') || vars.LINUX_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        with:
+          version: 2026.10.17
+          install_args: actionlint shellcheck zizmor
+      - run: mise run health:workflows
+      - run: mise run health:workflow-security
+
+  typescript:
+    name: Formatting, TypeScript lint and types
+    runs-on: ${{ (github.event.pull_request.head.repo.fork && 'ubuntu-latest') || vars.LINUX_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        with:
+          version: 2026.10.17
+          install_args: node npm:oxfmt npm:oxlint
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('package-lock.json', 'fixtures/src/package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-
+      - run: mise run health:format
+      - run: mise run health:ts-lint
+      - run: mise run health:probe-types
+      - run: mise run health:coverage-types
+      - run: mise run health:schema-types
+      - run: mise run health:fixtures-types
+
+  shell:
+    name: Shell lint and formatting
+    runs-on: ${{ (github.event.pull_request.head.repo.fork && 'ubuntu-latest') || vars.LINUX_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+        with:
+          version: 2026.10.17
+          install_args: shellcheck shfmt
+      - run: mise run health:shell-lint
+      - run: mise run health:shell-format
+
+  # The required check. It runs even when a job it needs failed, and fails unless every one passed
+  # or was skipped.
+  ok:
+    name: health ok
+    if: always()
+    needs: [rust, licences, workflows, typescript, shell]
+    runs-on: ${{ (github.event.pull_request.head.repo.fork && 'ubuntu-latest') || vars.LINUX_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - name: Every job passed or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: $RESULTS"
+          for result in $RESULTS; do
+            case "$result" in success | skipped) ;; *) exit 1 ;; esac
+          done

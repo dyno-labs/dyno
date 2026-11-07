@@ -1,0 +1,10 @@
+{
+  "private": true,
+  "description": "The engine's TypeScript tools: the type checker, and the types that the probe build and the fixture apps need. Run `npm ci` here, then `mise run health`.",
+  "type": "module",
+  "devDependencies": {
+    "@types/howler": "2.2.13",
+    "@types/node": "24.19.2",
+    "typescript": "5.9.3"
+  }
+}

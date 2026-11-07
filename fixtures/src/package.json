@@ -1,7 +1,7 @@
 {
   "name": "dyno-fixture-bundles",
-  "private": true,
   "version": "0.0.0",
+  "private": true,
   "description": "Pinned npm inputs for the dyno fixture bundles. generate.sh installs these in a temporary folder.",
   "dependencies": {
     "esbuild": "0.28.2",

@@ -12,7 +12,23 @@ cargo build
 cargo test --workspace
 ```
 
-Before you open a pull request, run the same checks as CI:
+Before you open a pull request, run the same checks as CI. [mise](https://mise.jdx.dev) installs
+the tools at the versions CI uses, and runs the tasks in `mise.toml` that CI runs:
+
+```sh
+mise install
+mise run health   # formatting, lint and types in every language, licences and advisories, the workflows
+mise run test     # the tests, and a build with the minimum Rust version
+```
+
+Each linter and formatter runs with its own defaults, and a warning fails the check: rustfmt and
+clippy for Rust, oxfmt and oxlint for TypeScript (oxfmt also formats JSON, Markdown, YAML, TOML,
+CSS and HTML), tsc for the types, shellcheck and shfmt for shell scripts, and actionlint and zizmor
+for the workflows. To fix the formatting, run `cargo fmt --all`, `mise exec -- oxfmt` and
+`mise exec -- shfmt -w <script>`. Disable a rule on one line only when it is wrong for that line,
+with a comment that says why.
+
+Without mise, run at least:
 
 ```sh
 cargo fmt --all --check
@@ -20,19 +36,59 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-Some tests compare the output with saved copies in the repo: the JSON Schema in `schema/`, the
-TypeScript types in `ts/`, the CLI snapshots and `parity/golden-hashes.json`. When you change the
-output on purpose, update the saved copies, then read the diff before you commit:
+Some tests compare the output with saved copies in the repo: the JSON Schema in
+`packages/schema/json/`, the TypeScript types in `packages/schema/ts/`, the CLI snapshots and
+`fixtures/golden-hashes.json`. When you change the output on purpose, update the saved copies,
+then read the diff before you commit:
 
 ```sh
 DYNO_UPDATE_GENERATED=1 INSTA_UPDATE=always cargo test --workspace
 ```
 
-The tests that start Chromium are ignored by default. Run them with
+The tests that start Chromium are ignored by default, and so is the one that rebuilds the probe
+from `probe.ts`, which needs Node 22.18 or later. Run them with
 `cargo test -p dyno-cdp -- --ignored`.
+The probe has unit tests too, which run it in a fake browser frame:
+`node --test 'crates/dyno-cdp/probe/*.test.ts'`, with Node 24 or later.
+
+## Coverage
+
+CI measures how much of the code the tests run, and fails a pull request that lowers it. Get the
+same report on your machine:
+
+```sh
+mise run coverage                 # every part, then the report and its check
+mise run coverage:rust            # one part: target/coverage/rust.lcov
+mise run coverage:probe           # target/coverage/probe.lcov
+mise run coverage-report:engine   # the report from the files above, as CI checks it
+```
+
+`coverage:rust` runs every Rust test with cargo-llvm-cov, also the ignored ones, so it needs
+Chromium and Node. It leaves out one timing test, which a small CI machine is too slow for (see
+`mise.toml`). The report is a table on the terminal, and `target/coverage/engine/`.
+
+The check fails a part when:
+
+- its lines, or its branches where a floor names them, are under the floor in
+  `.github/coverage/engine.json`; or
+- on a pull request, its lines are more than 0.1 points below main's at the pull request's base
+  commit. With no report from main at that commit, only the floors apply.
+
+To lose coverage on purpose, such as when you remove code that had good tests, add the label
+`coverage-drop-ok` to the pull request and run the coverage job again. The drop is then a note in
+the report. The floors still apply.
+
+**Raise a floor** when your tests raise the coverage. The report says when a part is a point or
+more over its floor, and the whole number the floor can go up to. Change it in the config, in the
+same pull request as the tests. Do not lower a floor to make a pull request pass. Stable Rust gives
+no branch coverage, so the Rust floor is for lines only.
 
 ## What a change needs
 
+- **A change file** when the change touches `crates/` or `packages/schema/` and users will
+  notice it: run `knope document-change`, or write one in `.changeset/` by hand. It becomes a line of the
+  release notes. A check on the pull request asks for it. See
+  [`docs/releasing.md`](docs/releasing.md#change-files).
 - **Keep the result shape.** Add fields and measures. Do not rename or remove them. A breaking
   change bumps `SCHEMA_VERSION`. See [`docs/architecture.md`](docs/architecture.md).
 - **Facts only.** dyno reports values that it reads from a build, or works out from them by fixed

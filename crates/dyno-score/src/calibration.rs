@@ -161,8 +161,15 @@ const RUN_SELF_CHECKS: [MeasureId; 2] = [
 /// value, or the self-check the browser run failed: a run at the wrong pixel ratio, or with no
 /// requests, measured something other than the game.
 pub fn parts(result: &CheckResult, recipe: Recipe) -> Result<(f64, f64), String> {
-    let deterministic = &result.deterministic.measures;
-    let run = &result.run.measures;
+    parts_of(&result.deterministic.measures, &result.run.measures, recipe)
+}
+
+/// `parts` from the static and the run measures of a result.
+fn parts_of(
+    deterministic: &[Measure],
+    run: &[Measure],
+    recipe: Recipe,
+) -> Result<(f64, f64), String> {
     for id in RUN_SELF_CHECKS {
         let check = run.iter().find(|measure| measure.id == id);
         if check.is_none_or(|check| check.status != MeasureStatus::Measured) {
@@ -473,6 +480,125 @@ mod tests {
         ]
     }
 
+    fn megabytes(id: MeasureId, megabytes: u64) -> Measure {
+        Measure {
+            value: Some(MeasureValue::Integer(i64::try_from(mb(megabytes)).unwrap())),
+            ..Measure::blank(id, MeasureStatus::Measured)
+        }
+    }
+
+    /// A browser run that passed its self-checks, with lab parts of 1, 2 and 4 MB and a 7 MB heap.
+    fn run_measures() -> Vec<Measure> {
+        let mut run: Vec<Measure> = RUN_SELF_CHECKS
+            .iter()
+            .map(|&id| Measure::blank(id, MeasureStatus::Measured))
+            .collect();
+        run.extend([
+            megabytes(MeasureId::LabAudioDecoded, 1),
+            megabytes(MeasureId::LabTexturesResident, 2),
+            megabytes(MeasureId::LabCanvasBytes, 4),
+            megabytes(MeasureId::LabJsHeap, 7),
+        ]);
+        run
+    }
+
+    /// Static parts of 10, 20 and 40 MB.
+    fn static_measures() -> Vec<Measure> {
+        vec![
+            megabytes(MeasureId::StaticAudioDecoded48k, 10),
+            megabytes(MeasureId::StaticTexturesDecoded, 20),
+            megabytes(MeasureId::StaticRenderCanvas, 40),
+        ]
+    }
+
+    fn replaced(mut measures: Vec<Measure>, measure: Measure) -> Vec<Measure> {
+        measures.retain(|other| other.id != measure.id);
+        measures.push(measure);
+        measures
+    }
+
+    #[test]
+    fn the_static_recipe_takes_the_parts_from_the_build_and_the_heap_from_the_run() {
+        let parts = parts_of(&static_measures(), &run_measures(), Recipe::Static);
+        assert_eq!(parts, Ok((70.0 * MB, 7.0 * MB)));
+    }
+
+    #[test]
+    fn the_lab_recipe_takes_the_parts_and_the_heap_from_the_run() {
+        let parts = parts_of(&static_measures(), &run_measures(), Recipe::Lab);
+        assert_eq!(parts, Ok((7.0 * MB, 7.0 * MB)));
+    }
+
+    #[test]
+    fn an_estimated_part_counts() {
+        let mut audio = megabytes(MeasureId::StaticAudioDecoded48k, 10);
+        audio.status = MeasureStatus::Estimated;
+        let measures = replaced(static_measures(), audio);
+        let parts = parts_of(&measures, &run_measures(), Recipe::Static);
+        assert_eq!(parts, Ok((70.0 * MB, 7.0 * MB)));
+    }
+
+    #[test]
+    fn a_failed_self_check_gives_no_parts_and_says_why() {
+        let failed = Measure {
+            reason: Some("the frame ran at 2, not 3".to_owned()),
+            ..Measure::blank(MeasureId::LabSelfCheckFrameDpr, MeasureStatus::Invalid)
+        };
+        let run = replaced(run_measures(), failed);
+        let error = parts_of(&static_measures(), &run, Recipe::Static).unwrap_err();
+        assert_eq!(
+            error,
+            format!(
+                "the browser run failed its self-check {}: the frame ran at 2, not 3",
+                MeasureId::LabSelfCheckFrameDpr
+            )
+        );
+    }
+
+    #[test]
+    fn a_self_check_that_is_not_in_the_run_has_no_reading() {
+        let mut run = run_measures();
+        run.retain(|measure| measure.id != MeasureId::LabSelfCheckFrameRequests);
+        let error = parts_of(&static_measures(), &run, Recipe::Lab).unwrap_err();
+        assert!(error.ends_with(": no reading"), "{error}");
+    }
+
+    #[test]
+    fn a_part_that_is_not_in_the_result_is_named() {
+        let mut measures = static_measures();
+        measures.retain(|measure| measure.id != MeasureId::StaticRenderCanvas);
+        let error = parts_of(&measures, &run_measures(), Recipe::Static).unwrap_err();
+        assert_eq!(
+            error,
+            format!("{} is not in the result", MeasureId::StaticRenderCanvas)
+        );
+    }
+
+    #[test]
+    fn a_part_with_no_value_gives_its_reason() {
+        let missing = Measure {
+            reason: Some("no texture was uploaded".to_owned()),
+            ..Measure::blank(MeasureId::LabTexturesResident, MeasureStatus::Missing)
+        };
+        let run = replaced(run_measures(), missing);
+        let error = parts_of(&static_measures(), &run, Recipe::Lab).unwrap_err();
+        assert_eq!(
+            error,
+            format!(
+                "{} has no value: no texture was uploaded",
+                MeasureId::LabTexturesResident
+            )
+        );
+    }
+
+    #[test]
+    fn a_heap_with_no_value_and_no_reason_says_so() {
+        let heap = Measure::blank(MeasureId::LabJsHeap, MeasureStatus::Unsupported);
+        let run = replaced(run_measures(), heap);
+        let error = parts_of(&static_measures(), &run, Recipe::Static).unwrap_err();
+        assert!(error.ends_with("has no value: no reason"), "{error}");
+    }
+
     #[test]
     fn the_phone_value_is_the_median_run_less_the_median_baseline() {
         let runs = game("a", Role::Fit, &[400, 300, 350]);
@@ -610,6 +736,37 @@ mod tests {
                 .any(|note| note.starts_with("one-kill: 1 killed run"))
         );
         assert!(notes.iter().any(|note| note.starts_with("k is negative")));
+    }
+
+    #[test]
+    fn the_notes_name_a_baseline_with_the_wrong_number_of_runs() {
+        let mut calibration = file(Vec::new());
+        calibration.device.baseline_bytes.pop();
+        let notes = method_notes(&calibration, 1.0);
+        assert!(notes.contains(&"2 baseline runs, not 3".to_owned()));
+    }
+
+    #[test]
+    fn a_game_with_no_runs_at_all_is_left_out() {
+        let none = row(&game("none", Role::Fit, &[]), &device(), (0.0, 0.0)).unwrap();
+        assert_eq!(
+            none.left_out().as_deref(),
+            Some("no run that was not killed")
+        );
+    }
+
+    #[test]
+    fn with_no_sound_fit_game_k_and_b_are_zero() {
+        let report = report(Recipe::Static, &held_out(100.0, 100.0), &file(Vec::new()));
+        assert_eq!((report.k, report.b), (0.0, 0.0));
+    }
+
+    #[test]
+    fn a_device_with_no_baseline_runs_gives_no_row() {
+        let mut device = device();
+        device.baseline_bytes.clear();
+        let error = row(&game("a", Role::Fit, &[400]), &device, (0.0, 0.0)).unwrap_err();
+        assert_eq!(error, "the device has no baseline runs");
     }
 
     #[test]

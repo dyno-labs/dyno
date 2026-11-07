@@ -311,7 +311,12 @@ decoded_bytes_24k = 192288
 not_decoded = "symphonia has no Opus decoder"
 
 [[audio.group]]
-paths = ["assets/audio/tone-mono.aac", "assets/audio/tone-mono.m4a", "assets/audio/tone-mono.ogg", "assets/audio/tone-mono.webm"]
+paths = [
+  "assets/audio/tone-mono.aac",
+  "assets/audio/tone-mono.m4a",
+  "assets/audio/tone-mono.ogg",
+  "assets/audio/tone-mono.webm",
+]
 representative = "assets/audio/tone-mono.aac"
 channels = 1
 decoded_bytes_48k = 107000
@@ -336,7 +341,14 @@ silence_bp = 381
 stereo_class = "changes_the_sound"
 
 [[audio.group]]
-paths = ["assets/audio/tone-stereo.aac", "assets/audio/tone-stereo.m4a", "assets/audio/tone-stereo.mp3", "assets/audio/tone-stereo.ogg", "assets/audio/tone-stereo.opus", "assets/audio/tone-stereo.webm"]
+paths = [
+  "assets/audio/tone-stereo.aac",
+  "assets/audio/tone-stereo.m4a",
+  "assets/audio/tone-stereo.mp3",
+  "assets/audio/tone-stereo.ogg",
+  "assets/audio/tone-stereo.opus",
+  "assets/audio/tone-stereo.webm",
+]
 representative = "assets/audio/tone-stereo.aac"
 channels = 2
 decoded_bytes_48k = 401248
@@ -399,7 +411,12 @@ saved_bytes = 935036
 outcome = "pass"
 value_bytes = 785536
 saved_bytes = 785536
-items = ["assets/audio/tone-noxing.mp3", "assets/audio/tone-stereo.aac", "assets/audio/tone-live.webm", "assets/audio/tone-stereo-44k.wav"]
+items = [
+  "assets/audio/tone-noxing.mp3",
+  "assets/audio/tone-stereo.aac",
+  "assets/audio/tone-live.webm",
+  "assets/audio/tone-stereo-44k.wav",
+]
 
 [rules."audio.silence_share"]
 outcome = "pass"

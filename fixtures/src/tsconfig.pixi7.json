@@ -1,0 +1,8 @@
+// The fixture apps that use Pixi 7. See tsconfig.json.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": { "pixi.js": ["./node_modules/pixi7"] }
+  },
+  "include": ["./apps/pixi7-aa.ts", "./apps/pixi7-opts.ts"]
+}

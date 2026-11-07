@@ -45,10 +45,10 @@ so they are not a part. `dyno-score/src/calibration.rs` holds the method; the pa
 two recipes, so both can be compared on the same runs before one is chosen for the model
 version:
 
-| Recipe | Audio | Textures | Canvas | JS heap |
-|---|---|---|---|---|
+| Recipe   | Audio                      | Textures                             | Canvas                         | JS heap       |
+| -------- | -------------------------- | ------------------------------------ | ------------------------------ | ------------- |
 | `static` | `static.audio.decoded_48k` | `static.textures.decoded` (one copy) | `static.render.canvas` (floor) | `lab.js_heap` |
-| `lab` | `lab.audio.decoded` | `lab.textures.resident` | `lab.canvas.bytes` (floor) | `lab.js_heap` |
+| `lab`    | `lab.audio.decoded`        | `lab.textures.resident`              | `lab.canvas.bytes` (floor)     | `lab.js_heap` |
 
 ## Each game, before its phone runs
 
@@ -76,5 +76,6 @@ negative k).
 ## Not built yet
 
 - The `dyno-ios` parser for xctrace output. It waits for a trace recorded on the reference phone.
+
 - Model versioning: the fitted k and b as a versioned data file in `dyno-score`, and
   `model.footprint` from it. It waits for the first fit.

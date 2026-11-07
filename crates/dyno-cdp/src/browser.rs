@@ -188,3 +188,53 @@ fn on_path(candidate: &Path) -> Option<PathBuf> {
         .map(|folder| folder.join(candidate))
         .find(|binary| binary.is_file())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The DevTools URL that a process gives on stderr, when it writes `script` there.
+    #[cfg(unix)]
+    async fn devtools_url_of(script: &str) -> Result<String, CdpError> {
+        let mut child = Command::new("sh")
+            .args(["-c", script])
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let url = devtools_url(child.stderr.take().unwrap()).await;
+        let _ = child.wait().await;
+        url
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_devtools_url_is_read_from_its_line_on_stderr() {
+        let url = devtools_url_of(
+            "echo 'a warning' >&2; echo 'DevTools listening on ws://127.0.0.1:9/devtools/browser/x ' >&2",
+        )
+        .await;
+        assert_eq!(url.unwrap(), "ws://127.0.0.1:9/devtools/browser/x");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_browser_that_exits_before_it_listens_is_a_launch_error() {
+        let error = devtools_url_of("echo 'cannot open display' >&2")
+            .await
+            .unwrap_err();
+        assert!(matches!(error, CdpError::Launch(_)), "{error}");
+    }
+
+    #[test]
+    fn an_absolute_candidate_is_used_when_it_is_a_file() {
+        let file = env::current_exe().unwrap();
+        assert_eq!(on_path(&file), Some(file));
+    }
+
+    #[test]
+    fn an_absolute_candidate_that_is_not_a_file_is_not_found() {
+        let folder = env::temp_dir();
+        assert_eq!(on_path(&folder), None);
+        assert_eq!(on_path(&folder.join("no-such-chromium")), None);
+    }
+}

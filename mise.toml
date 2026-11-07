@@ -17,7 +17,7 @@ min_version = "2026.9.14"
 [tools]
 # The probe build (crates/dyno-cdp/probe/build.ts), the TypeScript checks and the npm package in
 # packages/schema. TypeScript itself is in package.json.
-node = "24.22.0"
+node = "26.13.0"
 # The formatter and the linter of the TypeScript, and the formatter of the JSON, Markdown, YAML,
 # TOML, CSS and HTML: each with its defaults (.oxfmtrc.json and .oxlintrc.json only leave files
 # out).

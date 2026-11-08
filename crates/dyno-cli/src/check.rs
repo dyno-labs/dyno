@@ -27,9 +27,10 @@ use dyno_serve::{DEFAULT_PORT, DEFAULT_WAIT_FOR_BROWSER, ServeDriver, ServeError
 
 use crate::cli::{CheckArgs, DriverArg};
 use crate::device;
-use crate::exit::CliError;
+use crate::exit::{self, CliError};
 use crate::output::{self, ResultPlace};
 use crate::run_info::{Clock, machine, tool_build};
+use crate::upload::Uploader;
 
 /// What one check looks at.
 #[derive(Debug, Default)]
@@ -103,12 +104,22 @@ pub fn run(args: CheckArgs) -> Result<Status, CliError> {
         serve_query: args.serve_query,
         ..CheckOptions::new(args.host_profile, args.budget.as_deref())?
     };
+    // Not signed in is an error before the check, not after it.
+    let uploader = args.upload.then(Uploader::signed_in).transpose()?;
     let place = ResultPlace::of_out(args.out.as_deref());
     if let Some(games_file) = &args.games {
         let catalogue = check_catalogue(games_file, args.shard, &options)?;
         output::write_json(&catalogue, args.out.as_deref())?;
         output::print_summary(&output::catalogue_summary(&catalogue, place));
-        return Ok(catalogue.status);
+        let Some(uploader) = uploader else {
+            return Ok(catalogue.status);
+        };
+        let uploads = catalogue
+            .games
+            .iter()
+            .map(|game| Ok((Some(game.id.as_str()), output::json_text(&game.result)?)))
+            .collect::<Result<Vec<_>, CliError>>()?;
+        return upload_results(&uploader, &uploads, catalogue.status);
     }
     let target = parse_targets(&args.targets)?;
     let release = Release {
@@ -116,9 +127,45 @@ pub fn run(args: CheckArgs) -> Result<Status, CliError> {
         version: args.release,
     };
     let result = check_target(&target, release, &options)?;
-    output::write_json(&result, args.out.as_deref())?;
+    let json = output::json_text(&result)?;
+    output::write_text(&json, args.out.as_deref())?;
     output::print_summary(&output::check_summary(&result, place));
-    Ok(result.deterministic.status)
+    let status = result.deterministic.status;
+    match uploader {
+        Some(uploader) => upload_results(&uploader, &[(None, json)], status),
+        None => Ok(status),
+    }
+}
+
+/// Uploads each result, by its game id with --games, and prints each one's link. A failed upload
+/// is an error line. It is the command's error only when the check passed, so a check that fails
+/// keeps its own exit code.
+fn upload_results(
+    uploader: &Uploader,
+    results: &[(Option<&str>, String)],
+    status: Status,
+) -> Result<Status, CliError> {
+    let mut failed = 0;
+    for (game, json) in results {
+        let prefix = match game {
+            Some(game) => format!("dyno check: game {game:?}"),
+            None => "dyno check".to_owned(),
+        };
+        match uploader.upload(json.as_bytes()) {
+            Ok(page) => eprintln!("{prefix}: uploaded to {page}"),
+            Err(error) => {
+                eprintln!("{prefix}: upload failed: {error}");
+                failed += 1;
+            }
+        }
+    }
+    if failed > 0 && exit::for_status(status) == exit::PASS {
+        return Err(CliError::internal(format!(
+            "{failed} of {} results did not upload",
+            results.len()
+        )));
+    }
+    Ok(status)
 }
 
 /// Checks one target and returns its result. It writes nothing.

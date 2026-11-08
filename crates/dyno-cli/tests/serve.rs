@@ -222,11 +222,10 @@ fn a_device_check_records_the_phone_and_reads_its_footprint_at_idle() {
     let footprint = run_measure(&result, "device.phys_footprint");
     assert_eq!(footprint["status"], "measured", "{footprint}");
     assert_eq!(footprint["value"], 209_715_200);
-    assert!(
-        footprint["evidence"][0]["detail"]
-            .as_str()
-            .unwrap()
-            .contains("Test iPhone, a iPhone 14 Pro Max on 26.6.2")
+    assert_eq!(
+        footprint["evidence"][0]["detail"],
+        "an Activity Monitor trace of Test iPhone: iPhone 14 Pro Max, iOS 26.6.2, process \
+         com.apple.WebKit.WebContent (412)"
     );
     let kills = run_measure(&result, "device.kills");
     assert_eq!(kills["value"], 0, "{kills}");

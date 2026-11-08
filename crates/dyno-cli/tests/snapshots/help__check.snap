@@ -71,6 +71,9 @@ Options:
       --no-open
           [phase 2] With --device, do not open the page in the phone's Safari: open it by hand
 
+      --upload
+          [phase 3] Upload the result to the dyno site and print its link, or each game's with --games. Needs dyno login or DYNO_TOKEN
+
   -h, --help
           Print help (see a summary with '-h')
 

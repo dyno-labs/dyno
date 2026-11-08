@@ -1,0 +1,16 @@
+---
+source: crates/dyno-cli/tests/help.rs
+expression: "help(&[\"login\", \"--help\"])"
+---
+[phase 3] Sign in to the dyno site with a token from its Account page, to upload results
+
+Usage: dyno login [OPTIONS]
+
+Options:
+      --token <TOKEN>  [phase 3] The token, instead of pasting it on stdin. It shows in the shell's history
+  -h, --help           Print help
+
+Exit codes:
+  0   signed in, and the token is saved
+  64  usage error, or the site does not take the token
+  70  the site cannot be reached, or the token cannot be saved

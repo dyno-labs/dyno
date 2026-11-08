@@ -115,7 +115,7 @@ pub fn device_measures(trace: &Trace, run: &RunWindow) -> Vec<Measure> {
     let evidence = vec![Evidence {
         method: Method::Xctrace,
         detail: format!(
-            "an Activity Monitor trace of {}, a {} on {}: {WEB_CONTENT} ({game_pid})",
+            "an Activity Monitor trace of {}: {}, iOS {}, process {WEB_CONTENT} ({game_pid})",
             trace.device.name, trace.device.model, trace.device.os_version
         ),
     }];
@@ -297,7 +297,11 @@ mod tests {
         assert_eq!(footprint.status, MeasureStatus::Measured);
         assert_eq!(value(&footprint), Some(300));
         assert_eq!(footprint.items[0].value, MeasureValue::Integer(400));
-        assert!(footprint.evidence[0].detail.contains("(412)"));
+        assert_eq!(
+            footprint.evidence[0].detail,
+            "an Activity Monitor trace of Dev’s iPhone: iPhone 14 Pro Max, iOS 26.6.2, process \
+             com.apple.WebKit.WebContent (412)"
+        );
         assert!(footprint.required);
         assert_eq!(value(&kills), Some(0));
         assert!(kills.items.is_empty());

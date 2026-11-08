@@ -1,0 +1,15 @@
+---
+source: crates/dyno-cli/tests/help.rs
+expression: "help(&[\"logout\", \"--help\"])"
+---
+[phase 3] Remove the token that dyno login saved
+
+Usage: dyno logout
+
+Options:
+  -h, --help  Print help
+
+Exit codes:
+  0   no token is saved now
+  64  usage error
+  70  the saved token cannot be removed

@@ -104,6 +104,9 @@ rmcp = { version = "3.9.0", default-features = false, features = [
   "transport-io",
 ] }
 
+# `dyno login` and `dyno upload`: a small blocking HTTP client, with rustls for TLS.
+ureq = { version = "3.5.1", default-features = false, features = ["rustls"] }
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 

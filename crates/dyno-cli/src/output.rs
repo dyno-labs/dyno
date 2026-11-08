@@ -95,8 +95,18 @@ const ROW_DOES_NOT_FIT: &str = "a measure row does not fit the check";
 
 /// Writes `value` as RFC 8785 canonical JSON and a newline, to `out` or else to stdout.
 pub fn write_json<T: Serialize>(value: &T, out: Option<&Path>) -> Result<(), CliError> {
+    write_text(&json_text(value)?, out)
+}
+
+/// `value` as RFC 8785 canonical JSON and a newline: what [`write_json`] writes.
+pub fn json_text<T: Serialize>(value: &T) -> Result<String, CliError> {
     let mut json = to_canonical_json(value).map_err(CliError::internal)?;
     json.push('\n');
+    Ok(json)
+}
+
+/// Writes JSON text to `out` or else to stdout.
+pub fn write_text(json: &str, out: Option<&Path>) -> Result<(), CliError> {
     match out {
         Some(path) => fs::write(path, json).map_err(|error| {
             CliError::internal(format!("cannot write {}: {error}", path.display()))

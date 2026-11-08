@@ -15,8 +15,9 @@ use dyno_schema::profile::{DEFAULT_HOST_PROFILE, HostProfile, Scenario};
     version,
     about = "Predicts how much memory an HTML5 game in an iframe will use on an iPhone, from its build.",
     long_about = "Predicts how much memory an HTML5 game in an iframe will use on an iPhone, from its \
-build.\n\nEach command but mcp writes one canonical JSON result to stdout, or to --out. A short \
-summary for people goes to stderr. It has no stable format, so do not parse it.",
+build.\n\ncheck, compare and doctor each write one canonical JSON result to stdout, or to --out. \
+A short summary for people goes to stderr. It has no stable format, so do not parse it. login, \
+logout and upload write only that summary.",
     after_help = EXIT_CODES,
     arg_required_else_help = true
 )]
@@ -39,6 +40,15 @@ pub enum Command {
     /// [phase 3] Serve check, compare and read_result to an MCP client on stdin and stdout
     #[command(after_help = MCP_EXIT_CODES)]
     Mcp,
+    /// [phase 3] Sign in to the dyno site with a token from its Account page, to upload results
+    #[command(after_help = LOGIN_EXIT_CODES)]
+    Login(LoginArgs),
+    /// [phase 3] Remove the token that dyno login saved
+    #[command(after_help = LOGOUT_EXIT_CODES)]
+    Logout,
+    /// [phase 3] Upload result files from `dyno check` to the dyno site, and print each one's link
+    #[command(after_help = UPLOAD_EXIT_CODES)]
+    Upload(UploadArgs),
 }
 
 #[derive(Debug, Args)]
@@ -138,6 +148,25 @@ pub struct CheckArgs {
     /// [phase 2] With --device, do not open the page in the phone's Safari: open it by hand
     #[arg(long)]
     pub no_open: bool,
+
+    /// [phase 3] Upload the result to the dyno site and print its link, or each game's with
+    /// --games. Needs dyno login or DYNO_TOKEN
+    #[arg(long)]
+    pub upload: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct LoginArgs {
+    /// [phase 3] The token, instead of pasting it on stdin. It shows in the shell's history
+    #[arg(long, value_name = "TOKEN")]
+    pub token: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct UploadArgs {
+    /// [phase 3] Result files from `dyno check`
+    #[arg(value_name = "RESULT", required = true)]
+    pub results: Vec<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -228,6 +257,27 @@ Exit codes:
   0   the client closed stdin
   64  usage error
   70  the MCP session did not start, or failed";
+
+/// The exit codes of `dyno login`.
+const LOGIN_EXIT_CODES: &str = "\
+Exit codes:
+  0   signed in, and the token is saved
+  64  usage error, or the site does not take the token
+  70  the site cannot be reached, or the token cannot be saved";
+
+/// The exit codes of `dyno logout`.
+const LOGOUT_EXIT_CODES: &str = "\
+Exit codes:
+  0   no token is saved now
+  64  usage error
+  70  the saved token cannot be removed";
+
+/// The exit codes of `dyno upload`.
+const UPLOAD_EXIT_CODES: &str = "\
+Exit codes:
+  0   every result uploaded
+  64  usage error: not signed in, or a result file that cannot be read or is not JSON
+  70  a result did not upload: the site cannot be reached, or did not take it";
 
 /// Parses `--host-profile`. Help lists the known names, and the value is the profile itself.
 fn host_profile_parser() -> impl TypedValueParser<Value = HostProfile> {

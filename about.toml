@@ -7,6 +7,7 @@ accepted = [
   "Apache-2.0 WITH LLVM-exception",
   "BSD-3-Clause",
   "BSL-1.0",
+  "ISC",
   "MIT",
   "Unicode-3.0",
   "Unlicense",
@@ -17,6 +18,10 @@ ignore-dev-dependencies = true
 ignore-build-dependencies = true
 # Our own crates (`publish = false`) are not third-party code, so they get no notice.
 private = { ignore = true }
+
+# webpki-roots, Mozilla's root certificates for TLS, is CDLA-Permissive-2.0, as in deny.toml.
+[webpki-roots]
+accepted = ["CDLA-Permissive-2.0"]
 
 # symphonia, the audio decoder, is MPL-2.0: used unmodified, with its source linked from the
 # notices. Only these crates may use it, as in deny.toml.

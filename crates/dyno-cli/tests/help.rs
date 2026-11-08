@@ -34,3 +34,18 @@ fn doctor_help() {
 fn mcp_help() {
     insta::assert_snapshot!("mcp", help(&["mcp", "--help"]));
 }
+
+#[test]
+fn login_help() {
+    insta::assert_snapshot!("login", help(&["login", "--help"]));
+}
+
+#[test]
+fn logout_help() {
+    insta::assert_snapshot!("logout", help(&["logout", "--help"]));
+}
+
+#[test]
+fn upload_help() {
+    insta::assert_snapshot!("upload", help(&["upload", "--help"]));
+}

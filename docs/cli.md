@@ -1,6 +1,6 @@
 # The dyno command line
 
-dyno has four commands. `check`, `compare` and `doctor` each write one JSON result to stdout, or to the file `--out` names. Each one also writes a short summary for people to stderr. `mcp` gives `check` and `compare` to an MCP client instead. The summary has no stable format, so no tool may parse it. There is no other output format.
+dyno has seven commands. `check`, `compare` and `doctor` each write one JSON result to stdout, or to the file `--out` names. Each one also writes a short summary for people to stderr. `mcp` gives `check` and `compare` to an MCP client instead. `login`, `logout` and `upload` sign in to the dyno site and upload results to it, and write only to stderr. The summary has no stable format, so no tool may parse it. There is no other output format.
 
 The check summary gives the status and why, the decoded memory and the build size, and each rule that warns or fails with its 3 largest fixes. Sizes are in MB with one decimal. A floor shows as "at least", and a range shows its two ends. The last lines tell you where the full result is, and give its `result_hash`.
 
@@ -33,6 +33,7 @@ The check summary gives the status and why, the decoded memory and the build siz
 | `--device`                          | 2     | Also record the game's memory on the connected iPhone with xctrace, while its Safari runs the check. Needs `--driver serve` and a Mac with Xcode.                                                                                                                       |
 | `--device-id <ID>`                  | 2     | With `--device`: the device to record, by its UDID or name as `xcrun xctrace list devices` gives them. Default: the only connected iPhone.                                                                                                                              |
 | `--no-open`                         | 2     | With `--device`: do not open the page in the phone's Safari. Open it by hand.                                                                                                                                                                                           |
+| `--upload`                          | 3     | After the check, upload the result to the dyno site and print its link to stderr. With `--games`, upload each game's result. Needs `dyno login` or `DYNO_TOKEN`. See [Upload results to the dyno site](#upload-results-to-the-dyno-site).                               |
 
 A flag that needs a launch URL is checked before any work starts. With `--games`, such a flag needs a `launch_url` on every selected game.
 
@@ -108,6 +109,34 @@ The server has three tools. A relative path is relative to the folder the server
 
 A check or compare that ends `fail`, `warn`, `incomplete` or `invalid` is a tool call that worked, because the status is in the result. An error that stops the command, such as a bad path or flag, is a tool error (`isError` is true) with the message. A check with a `launch_url` uses the CDP driver and the `alone` scenario. The tools have no spins, device or driver argument.
 
+### `dyno login` (Phase 3)
+
+Signs in to the dyno site with a token, so that `upload` and `check --upload` can upload results. Make a token on the site's Account page, <https://dynoapp.io/#/account>. dyno asks you to paste it on stdin, asks the site who the token belongs to, and saves it. It then prints the email you signed in as. A token the site does not take is a usage error (64), with the site's reason. A site that cannot be reached is an I/O error (70).
+
+| Flag              | Phase | What it does                                                                     |
+| ----------------- | ----- | -------------------------------------------------------------------------------- |
+| `--token <TOKEN>` | 3     | The token, instead of pasting it on stdin. It then shows in the shell's history. |
+
+### `dyno logout` (Phase 3)
+
+Removes the saved token, and says whether there was one. It does not unset `DYNO_TOKEN`.
+
+### `dyno upload <RESULT>...` (Phase 3)
+
+Uploads each result file from `dyno check` to the dyno site, as its bytes are, and prints the link to each one's page. dyno reads every file before it uploads any, so a file that cannot be read or is not JSON is a usage error (64) and uploads nothing. A file the site does not take, such as one over 4 MiB, gives the site's reason, and the upload goes on to the next file. Then dyno exits with 70.
+
+## Upload results to the dyno site
+
+The dyno site at <https://dynoapp.io> keeps your results, such as the device runs from a phone, so that your team can see them. To upload:
+
+1. Make a token on the site's Account page.
+2. Run `dyno login` and paste the token, or set `DYNO_TOKEN` to it, as in CI.
+3. Run `dyno upload result.json`, or add `--upload` to a check: `dyno check dist --driver serve --device --out result.json --upload`.
+
+Each upload prints the link to the result's page. `check --upload` stops before the check when you are not signed in. A failed upload prints the reason, and makes a check that passed exit with 70. A check that did not pass keeps its own exit code.
+
+dyno saves the token in `credentials.json` in its config folder: `DYNO_CONFIG_DIR`, or else `dyno` in `XDG_CONFIG_HOME`, or else `~/.config/dyno`. Only you can read the file. `DYNO_TOKEN` wins over the saved token. `DYNO_API_URL` names another site, such as one on your own machine.
+
 ## Statuses
 
 Each measure has one of these statuses:
@@ -168,8 +197,8 @@ A `floor` uncertainty alone does not make a value partial. Only `scope.not_cover
 | 1    | `fail`: a budget or a static rule fails                                                                             |
 | 2    | `incomplete`                                                                                                        |
 | 3    | `invalid`: a required measure failed its check, a measure row does not fit the check, or an input result was edited |
-| 64   | Usage or config error: bad flags, or an unreadable target, budget, games or result file                             |
-| 70   | Internal or I/O error, such as an output file that cannot be written                                                |
+| 64   | Usage or config error: bad flags, an unreadable target, budget, games or result file, or no token or a bad token    |
+| 70   | Internal or I/O error, such as an output file that cannot be written, or a site that cannot be reached              |
 
 `invalid` gets its own code, because a CI job must not treat a broken run or an edited result as a plain incomplete one.
 

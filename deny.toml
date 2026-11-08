@@ -20,16 +20,22 @@ allow = [
   "Apache-2.0 WITH LLVM-exception",
   "BSD-3-Clause",
   "BSL-1.0",
+  "ISC",
   "MIT",
   "Unicode-3.0",
   "Unlicense",
   "Zlib",
 ]
 confidence-threshold = 0.93
+# webpki-roots holds Mozilla's root certificates for the TLS of `dyno login` and `dyno upload`.
+# CDLA-Permissive-2.0 is a permissive licence for data. Only this crate may use it.
 # symphonia decodes audio (design decision R4). MPL-2.0 is file-level copyleft: the binary may use
 # its files while they stay unmodified, and THIRD_PARTY_NOTICES.md says where their source is. Only
 # these crates may use it.
 exceptions = [
+  { allow = [
+    "CDLA-Permissive-2.0",
+  ], crate = "webpki-roots" },
   { allow = [
     "MPL-2.0",
   ], crate = "symphonia" },

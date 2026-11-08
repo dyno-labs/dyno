@@ -4,7 +4,7 @@ expression: "help(&[\"--help\"])"
 ---
 Predicts how much memory an HTML5 game in an iframe will use on an iPhone, from its build.
 
-Each command but mcp writes one canonical JSON result to stdout, or to --out. A short summary for people goes to stderr. It has no stable format, so do not parse it.
+check, compare and doctor each write one canonical JSON result to stdout, or to --out. A short summary for people goes to stderr. It has no stable format, so do not parse it. login, logout and upload write only that summary.
 
 Usage: dyno <COMMAND>
 
@@ -13,6 +13,9 @@ Commands:
   compare  [phase 1] Diff two result files from `dyno check`
   doctor   [phase 2] Check that this Mac can run the game on an iPhone
   mcp      [phase 3] Serve check, compare and read_result to an MCP client on stdin and stdout
+  login    [phase 3] Sign in to the dyno site with a token from its Account page, to upload results
+  logout   [phase 3] Remove the token that dyno login saved
+  upload   [phase 3] Upload result files from `dyno check` to the dyno site, and print each one's link
   help     Print this message or the help of the given subcommand(s)
 
 Options:

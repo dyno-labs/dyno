@@ -1,0 +1,18 @@
+---
+source: crates/dyno-cli/tests/help.rs
+expression: "help(&[\"upload\", \"--help\"])"
+---
+[phase 3] Upload result files from `dyno check` to the dyno site, and print each one's link
+
+Usage: dyno upload <RESULT>...
+
+Arguments:
+  <RESULT>...  [phase 3] Result files from `dyno check`
+
+Options:
+  -h, --help  Print help
+
+Exit codes:
+  0   every result uploaded
+  64  usage error: not signed in, or a result file that cannot be read or is not JSON
+  70  a result did not upload: the site cannot be reached, or did not take it

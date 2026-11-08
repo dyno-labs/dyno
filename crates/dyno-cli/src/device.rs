@@ -3,7 +3,6 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::thread;
 use std::time::Duration;
 
 use dyno_ios::RunWindow;
@@ -13,10 +12,6 @@ use dyno_schema::measure::Measure;
 use dyno_serve::RunTimes;
 
 use crate::exit::CliError;
-
-/// How long to wait after Safari opens before recording. A devicectl launch disconnects the
-/// phone from xctrace for a moment, which ends a recording that is on.
-const OPEN_PAUSE: Duration = Duration::from_secs(5);
 
 /// A recording in progress, and where its trace is.
 pub struct DeviceRun {
@@ -28,7 +23,7 @@ pub struct DeviceRun {
     _scratch: Option<tempfile::TempDir>,
 }
 
-/// Chooses the device, opens `open` in its Safari when given, and starts recording it. The trace
+/// Chooses the device, starts recording it, and opens `open` in its Safari when given. The trace
 /// goes to `keep_at` when given, and to a folder deleted after the check otherwise. A problem the
 /// person fixes, such as no phone or a locked one, is a usage error. Safari that does not open
 /// is not: the person can open the page.
@@ -58,18 +53,13 @@ pub fn start(
             CliError::internal(format!("cannot remove {}: {error}", trace.display()))
         })?;
     }
-    // Only a phone has Safari to open. The Mac itself has no OS version.
+    let recording = Recording::start(&device, &trace, limit).map_err(CliError::internal)?;
+    // Only a phone has Safari to open. The Mac itself has no OS version. On a cable, the launch
+    // leaves the recording on.
     let opened = match open {
-        Some(url) if device.os_version.is_some() => {
-            let opened = open_in_safari(&device, url);
-            if opened.is_ok() {
-                thread::sleep(OPEN_PAUSE);
-            }
-            Some(opened)
-        }
+        Some(url) if device.os_version.is_some() => Some(open_in_safari(&device, url)),
         _ => None,
     };
-    let recording = Recording::start(&device, &trace, limit).map_err(CliError::internal)?;
     Ok(DeviceRun {
         recording,
         name: device.name,

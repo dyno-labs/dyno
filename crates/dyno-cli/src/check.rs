@@ -339,8 +339,7 @@ fn check_one(
     let mut run_findings = Vec::new();
     let mut driver = None;
     // The recording starts before the person is told to open the page, so it sees the whole run.
-    // Safari opens the page before the recording starts, as a launch ends a recording that is on.
-    // The page waits for the run to start.
+    // Safari opens the page once the recording is on. The page waits for the run to start.
     let device_run = match (&served, options.device) {
         (Some(served), true) => Some(device::start(
             options.device_id.as_deref(),

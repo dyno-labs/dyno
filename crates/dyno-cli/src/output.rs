@@ -6,6 +6,7 @@ use std::cmp::Reverse;
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
+use std::time::Duration;
 
 use dyno_schema::budget::{BYTES_PER_MB, BudgetVerdict};
 use dyno_schema::canonical::to_canonical_json;
@@ -112,6 +113,19 @@ pub fn print_summary(lines: &[String]) {
     for line in lines {
         eprintln!("{line}");
     }
+}
+
+/// What to do for a served run: open the harness page in the browser to test.
+pub fn serve_lines(harness_url: &str, wait: Duration) -> Vec<String> {
+    vec![
+        format!(
+            "dyno check: open {harness_url} in the browser to test, such as Safari on the iPhone."
+        ),
+        format!(
+            "dyno check: the phone must be on this machine's network. Waiting up to {} minutes.",
+            wait.as_secs().div_ceil(60)
+        ),
+    ]
 }
 
 /// The status and why, the key numbers, the advice, and where the full result is.

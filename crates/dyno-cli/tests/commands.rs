@@ -403,6 +403,50 @@ fn a_driver_other_than_cdp_without_a_launch_url_is_a_usage_error() {
     );
 }
 
+#[test]
+fn a_served_run_needs_a_build_folder_and_no_launch_url() {
+    for args in [
+        &["check", LAUNCH_URL, "--driver", "serve"][..],
+        &["check", "tiny-build", LAUNCH_URL, "--driver", "serve"],
+    ] {
+        let outcome = dyno(args);
+        assert_exit(&outcome, USAGE);
+        assert!(
+            outcome
+                .stderr
+                .contains("give a build folder and no launch URL"),
+            "{}",
+            outcome.stderr
+        );
+    }
+}
+
+#[test]
+fn a_served_run_of_a_zip_is_a_usage_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let zip = write_file(dir.path(), "build.zip", "PK");
+    let outcome = dyno(&["check", &zip, "--driver", "serve", "--serve-port", "0"]);
+    assert_exit(&outcome, USAGE);
+    assert!(outcome.stderr.contains("unzip"), "{}", outcome.stderr);
+}
+
+#[test]
+fn serve_flags_without_the_serve_driver_are_a_usage_error() {
+    for args in [
+        &["check", "tiny-build", "--serve-host", "10.0.0.2"][..],
+        &["check", "tiny-build", "--serve-port", "8000"],
+        &["check", "tiny-build", "--serve-query", "sessionID=s"],
+    ] {
+        let outcome = dyno(args);
+        assert_exit(&outcome, USAGE);
+        assert!(
+            outcome.stderr.contains("need --driver serve"),
+            "{}",
+            outcome.stderr
+        );
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn an_exec_driver_runs_the_browser_part_of_a_check() {

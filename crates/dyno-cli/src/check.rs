@@ -22,6 +22,7 @@ use dyno_score::SCORING_VERSION;
 use dyno_score::budget::budget_verdicts;
 use dyno_score::model::{MODEL_VERSION, model_measures, provisional_tier};
 use dyno_score::status::{overall_status, run_coverage, worst};
+use dyno_serve::{DEFAULT_PORT, DEFAULT_WAIT_FOR_BROWSER, ServeDriver, ServeError, ServeOptions};
 
 use crate::cli::{CheckArgs, DriverArg};
 use crate::exit::CliError;
@@ -47,6 +48,11 @@ pub struct CheckOptions {
     spins: Option<u32>,
     device: bool,
     driver: DriverArg,
+    /// Where `--driver serve` serves.
+    serve: ServeOptions,
+    /// The query string the served game loads with. It can hold a session, so no result
+    /// records it.
+    serve_query: Option<String>,
 }
 
 /// The game frame is idle after this long with no new requests.
@@ -57,11 +63,24 @@ const RUN_TIMEOUT_MS: u32 = 120_000;
 
 /// Runs `dyno check` and returns the status for the exit code.
 pub fn run(args: CheckArgs) -> Result<Status, CliError> {
+    let serve_flags =
+        args.serve_host.is_some() || args.serve_port.is_some() || args.serve_query.is_some();
+    if serve_flags && args.driver != DriverArg::Serve {
+        return Err(CliError::usage(
+            "--serve-host, --serve-port and --serve-query need --driver serve",
+        ));
+    }
     let options = CheckOptions {
         scenario: args.scenario.into(),
         spins: args.spins,
         device: args.device,
         driver: args.driver,
+        serve: ServeOptions {
+            host: args.serve_host,
+            port: args.serve_port.unwrap_or(DEFAULT_PORT),
+            wait_for_browser: DEFAULT_WAIT_FOR_BROWSER,
+        },
+        serve_query: args.serve_query,
         ..CheckOptions::new(args.host_profile, args.budget.as_deref())?
     };
     let place = ResultPlace::of_out(args.out.as_deref());
@@ -88,7 +107,7 @@ pub fn check_target(
     release: Release,
     options: &CheckOptions,
 ) -> Result<CheckResult, CliError> {
-    check_run_flags(options, target.launch_url.is_some())?;
+    check_run_flags(options, target)?;
     check_one(target, release, options)
 }
 
@@ -127,6 +146,12 @@ impl CheckOptions {
             spins: None,
             device: false,
             driver: DriverArg::Cdp,
+            serve: ServeOptions {
+                host: None,
+                port: DEFAULT_PORT,
+                wait_for_browser: DEFAULT_WAIT_FOR_BROWSER,
+            },
+            serve_query: None,
         })
     }
 }
@@ -139,10 +164,20 @@ pub fn load_budget(path: Option<&Path>) -> Result<Option<Budget>, CliError> {
     }
 }
 
-/// An error when a flag asks for a browser or device run and there is no launch URL.
+/// An error when a flag asks for a browser or device run and there is no launch URL, or when
+/// `--driver serve` has no build folder to serve or a launch URL it would not use.
 ///
 /// Every check calls it before any work starts, so a bad flag never leaves half a catalogue.
-fn check_run_flags(options: &CheckOptions, has_launch_url: bool) -> Result<(), CliError> {
+fn check_run_flags(options: &CheckOptions, target: &CheckTarget) -> Result<(), CliError> {
+    if options.driver == DriverArg::Serve {
+        if target.build.is_none() || target.launch_url.is_some() {
+            return Err(CliError::usage(
+                "--driver serve serves the build to a browser, so give a build folder and no launch URL",
+            ));
+        }
+        return Ok(());
+    }
+    let has_launch_url = target.launch_url.is_some();
     let asks_for_a_run = options.spins.is_some()
         || options.device
         || options.scenario != Scenario::Alone
@@ -167,7 +202,7 @@ fn check_catalogue(
     let mut planned = Vec::new();
     for game in games.select(shard) {
         let target = catalogue_target(root, game).map_err(in_game(game))?;
-        check_run_flags(options, target.launch_url.is_some()).map_err(in_game(game))?;
+        check_run_flags(options, &target).map_err(in_game(game))?;
         planned.push((game, target));
     }
     let mut entries = Vec::new();
@@ -249,7 +284,19 @@ fn check_one(
     options: &CheckOptions,
 ) -> Result<CheckResult, CliError> {
     let clock = Clock::start();
-    let has_launch_url = target.launch_url.is_some();
+    // A served run's launch URL is dyno's own server. The result records the build, not that URL.
+    let served = match (&options.driver, &target.build) {
+        (DriverArg::Serve, Some(build)) => Some(serve(build, &options.serve)?),
+        _ => None,
+    };
+    let launch_url = match &served {
+        Some(driver) => Some(
+            LaunchUrl::parse(&driver.launch_url(options.serve_query.as_deref()))
+                .map_err(CliError::usage)?,
+        ),
+        None => target.launch_url.clone(),
+    };
+    let has_launch_url = launch_url.is_some();
 
     let scan = match &target.build {
         Some(build) => dyno_static::scan(build, &options.host_profile, options.budget.as_ref())
@@ -264,7 +311,7 @@ fn check_one(
     let mut run_measures = model_measures(has_launch_url);
     let mut run_findings = Vec::new();
     let mut driver = None;
-    if let Some(launch_url) = &target.launch_url {
+    if let Some(launch_url) = &launch_url {
         let request = RunRequest {
             protocol_version: RUNNER_PROTOCOL_VERSION,
             launch_url: launch_url.as_str().to_owned(),
@@ -274,7 +321,11 @@ fn check_one(
             idle_after_ms: IDLE_AFTER_MS,
             timeout_ms: RUN_TIMEOUT_MS,
         };
-        let lab = dyno_run::run_lab(new_driver(&options.driver).as_mut(), &request);
+        let mut browser_driver: Box<dyn Driver> = match served {
+            Some(driver) => Box::new(driver),
+            None => new_driver(&options.driver),
+        };
+        let lab = dyno_run::run_lab(browser_driver.as_mut(), &request);
         run_measures.extend(lab.measures);
         run_findings = lab.findings;
         driver = lab.driver;
@@ -338,9 +389,24 @@ fn check_one(
 
 fn new_driver(driver: &DriverArg) -> Box<dyn Driver> {
     match driver {
-        DriverArg::Cdp => Box::new(CdpDriver),
+        // A served run gets its driver from `serve`, bound to its build, so this is not reached.
+        DriverArg::Cdp | DriverArg::Serve => Box::new(CdpDriver),
         DriverArg::Exec(program) => Box::new(ExecDriver::new(program)),
     }
+}
+
+/// Binds the served run's servers and tells the person which URL to open. A build that is not a
+/// folder is a usage error; a port in use is an I/O error.
+fn serve(build: &Path, options: &ServeOptions) -> Result<ServeDriver, CliError> {
+    let driver = ServeDriver::bind(build, options).map_err(|error| match error {
+        ServeError::Build(_) => CliError::usage(error),
+        _ => CliError::internal(error),
+    })?;
+    output::print_summary(&output::serve_lines(
+        driver.harness_url(),
+        options.wait_for_browser,
+    ));
+    Ok(driver)
 }
 
 #[cfg(test)]

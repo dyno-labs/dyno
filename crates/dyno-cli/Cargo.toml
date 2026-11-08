@@ -24,6 +24,7 @@ dyno-ios.workspace = true
 dyno-run.workspace = true
 dyno-schema.workspace = true
 dyno-score.workspace = true
+dyno-serve.workspace = true
 dyno-static.workspace = true
 humantime.workspace = true
 rmcp.workspace = true

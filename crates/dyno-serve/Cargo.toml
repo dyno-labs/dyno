@@ -1,0 +1,26 @@
+[package]
+name = "dyno-serve"
+description = "The served run: dyno serves the build, with the probe, and the harness page to any browser on the network, such as Safari on an iPhone."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+dyno-cdp.workspace = true
+dyno-run.workspace = true
+dyno-schema.workspace = true
+httparse.workspace = true
+memchr.workspace = true
+percent-encoding.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

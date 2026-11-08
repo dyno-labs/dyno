@@ -36,9 +36,18 @@ Options:
           [phase 1] The release version to label the result with, such as v12. Outside the result hash
 
       --driver <DRIVER>
-          [phase 1] The browser driver: cdp, the built-in Chromium driver, or exec:PROGRAM, a program that speaks the runner protocol on stdin and stdout. Any driver but cdp needs a launch URL
+          [phase 1] The browser driver: cdp, the built-in Chromium driver; exec:PROGRAM, a program that speaks the runner protocol on stdin and stdout; or serve, which serves the build and waits for a browser on the network to open it, such as Safari on an iPhone. exec needs a launch URL, and serve needs a build folder and no launch URL
           
           [default: cdp]
+
+      --serve-host <HOST>
+          [phase 1] With --driver serve, the address a browser reaches this machine at. Default: this machine's address on its local network
+
+      --serve-port <PORT>
+          [phase 1] With --driver serve, the harness page's port. The game is on the next one [default: 7370]
+
+      --serve-query <QUERY>
+          [phase 1] With --driver serve, the query string the game loads with, such as a demo session's sessionID and rgs_url. No result records it
 
       --scenario <SCENARIO>
           [phase 2] The harness scenario of the browser run. Any scenario but `alone` needs a launch URL

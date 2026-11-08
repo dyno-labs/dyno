@@ -37,7 +37,7 @@ fn main() -> ExitCode {
         }
     };
     let outcome = match cli.command {
-        Command::Check(args) => check::run(args).map(exit_code_for),
+        Command::Check(args) => check::run(*args).map(exit_code_for),
         Command::Compare(args) => compare::run(args).map(exit_code_for),
         Command::Doctor(args) => doctor::run(args).map(exit_code_for),
         Command::Mcp => mcp::run().map(|()| ExitCode::SUCCESS),

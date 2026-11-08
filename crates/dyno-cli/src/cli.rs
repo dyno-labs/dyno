@@ -29,7 +29,7 @@ pub struct Cli {
 pub enum Command {
     /// [phase 1] Check a build folder, a launch URL, or every game in a games file
     #[command(after_help = EXIT_CODES)]
-    Check(CheckArgs),
+    Check(Box<CheckArgs>),
     /// [phase 1] Diff two result files from `dyno check`
     #[command(after_help = EXIT_CODES)]
     Compare(CompareArgs),
@@ -94,11 +94,27 @@ pub struct CheckArgs {
     #[arg(long, value_name = "VERSION", conflicts_with = "games")]
     pub release: Option<String>,
 
-    /// [phase 1] The browser driver: cdp, the built-in Chromium driver, or exec:PROGRAM, a
-    /// program that speaks the runner protocol on stdin and stdout. Any driver but cdp needs a
-    /// launch URL
+    /// [phase 1] The browser driver: cdp, the built-in Chromium driver; exec:PROGRAM, a program
+    /// that speaks the runner protocol on stdin and stdout; or serve, which serves the build and
+    /// waits for a browser on the network to open it, such as Safari on an iPhone. exec needs a
+    /// launch URL, and serve needs a build folder and no launch URL
     #[arg(long, value_name = "DRIVER", default_value = "cdp")]
     pub driver: DriverArg,
+
+    /// [phase 1] With --driver serve, the address a browser reaches this machine at. Default:
+    /// this machine's address on its local network
+    #[arg(long, value_name = "HOST")]
+    pub serve_host: Option<String>,
+
+    /// [phase 1] With --driver serve, the harness page's port. The game is on the next one
+    /// [default: 7370]
+    #[arg(long, value_name = "PORT")]
+    pub serve_port: Option<u16>,
+
+    /// [phase 1] With --driver serve, the query string the game loads with, such as a demo
+    /// session's sessionID and rgs_url. No result records it
+    #[arg(long, value_name = "QUERY")]
+    pub serve_query: Option<String>,
 
     /// [phase 2] The harness scenario of the browser run. Any scenario but `alone` needs a
     /// launch URL
@@ -158,6 +174,8 @@ pub enum DriverArg {
     Cdp,
     /// A program that speaks the runner protocol: `exec:PROGRAM`.
     Exec(PathBuf),
+    /// dyno serves the build to a browser on the network: `serve`.
+    Serve,
 }
 
 /// What `--driver` puts before a program.
@@ -167,12 +185,16 @@ impl FromStr for DriverArg {
     type Err = String;
 
     fn from_str(text: &str) -> Result<DriverArg, String> {
-        if text == "cdp" {
-            return Ok(DriverArg::Cdp);
+        match text {
+            "cdp" => return Ok(DriverArg::Cdp),
+            "serve" => return Ok(DriverArg::Serve),
+            _ => {}
         }
         match text.strip_prefix(EXEC_PREFIX) {
             Some(program) if !program.is_empty() => Ok(DriverArg::Exec(PathBuf::from(program))),
-            _ => Err(format!("driver {text:?} must be cdp or exec:PROGRAM")),
+            _ => Err(format!(
+                "driver {text:?} must be cdp, exec:PROGRAM or serve"
+            )),
         }
     }
 }
@@ -263,8 +285,13 @@ mod tests {
     }
 
     #[test]
-    fn a_driver_that_is_not_cdp_or_exec_with_a_program_is_an_error() {
-        for text in ["exec:", "playwright", "CDP"] {
+    fn driver_serve_serves_the_build() {
+        assert_eq!("serve".parse(), Ok(DriverArg::Serve));
+    }
+
+    #[test]
+    fn a_driver_that_is_not_cdp_exec_with_a_program_or_serve_is_an_error() {
+        for text in ["exec:", "playwright", "CDP", "serve:"] {
             assert!(text.parse::<DriverArg>().is_err(), "{text}");
         }
     }

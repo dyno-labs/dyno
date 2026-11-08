@@ -2,7 +2,8 @@
 // `ProbeEvent`s and never scores: Rust turns the events into measures.
 //
 // It wraps only calls that run at load or once per frame, never per-draw calls. Each event goes
-// to the `__dynoProbe` binding that the driver adds to the frame. Build `probe.js` from this file
+// to the `__dynoProbe` binding that the driver adds to the frame, or, in a build that dyno serves
+// (`dyno-serve`), to the harness page around the frame. Build `probe.js` from this file
 // with `node crates/dyno-cdp/probe/build.ts`; it only strips the types.
 
 import type { ProbeEvent } from "../../../packages/schema/ts/ProbeEvent";
@@ -25,6 +26,24 @@ import type { SourceKind } from "../../../packages/schema/ts/SourceKind";
       // No driver is listening.
     }
   };
+  // lab: begin
+  // A build that dyno serves to a browser has no driver binding. Its script tag asks for the
+  // relay instead: the game frame posts each event to the harness page around it. A frame inside
+  // the game frame posts nothing, as only the game frame's own document counts.
+  const script = (scope.document as Document | undefined)?.currentScript;
+  if (script && script.hasAttribute("data-dyno-relay") && parent !== window && parent === top) {
+    scope.__dynoProbe = (payload: string): void =>
+      parent.postMessage({ dyno: "probe", payload }, "*");
+    parent.postMessage(
+      {
+        dyno: "document",
+        time_origin: performance.timeOrigin,
+        device_pixel_ratio: devicePixelRatio,
+      },
+      "*",
+    );
+  }
+  // lab: end
   const wrap = (
     owner: object | undefined,
     name: string,

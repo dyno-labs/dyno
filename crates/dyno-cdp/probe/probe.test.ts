@@ -86,10 +86,19 @@ class FakeGl {
 
 /**
  * A game frame with the APIs the probe wraps, and the probe in it. `run` is the probe build to
- * run; `topLevel` makes the frame its own parent.
+ * run; `topLevel` makes the frame its own parent. `script` gives the frame a document whose script
+ * tag asks for the relay or not; `nested` puts the frame inside another frame.
  */
-function frame({ run = LAB, topLevel = false, driver = true } = {}) {
+function frame({
+  run = LAB,
+  topLevel = false,
+  driver = true,
+  script = undefined as "relay" | "plain" | undefined,
+  nested = false,
+} = {}) {
   const events: ProbeEvent[] = [];
+  /** What the frame posted to its parent. */
+  const posted: unknown[] = [];
   const clock = { now: 0 };
   const intervals: (() => void)[] = [];
   const animationFrames: ((time: number) => void)[] = [];
@@ -161,7 +170,7 @@ function frame({ run = LAB, topLevel = false, driver = true } = {}) {
   }
 
   const context = vm.createContext({
-    performance: { now: () => clock.now },
+    performance: { now: () => clock.now, timeOrigin: 1_000 },
     setInterval: (callback: () => void) => intervals.push(callback),
     requestAnimationFrame: (callback: (time: number) => void) => animationFrames.push(callback),
     addEventListener: (type: string, listener: Listener) => window.addEventListener(type, listener),
@@ -180,7 +189,15 @@ function frame({ run = LAB, topLevel = false, driver = true } = {}) {
     Worker,
   });
   context.window = context;
-  context.parent = topLevel ? context : {};
+  context.parent = topLevel ? context : { postMessage: (data: unknown) => posted.push(data) };
+  context.top = nested ? {} : context.parent;
+  if (script) {
+    context.document = {
+      currentScript: {
+        hasAttribute: (name: string) => script === "relay" && name === "data-dyno-relay",
+      },
+    };
+  }
   if (driver) {
     context.__dynoProbe = (payload: string) => events.push(JSON.parse(payload) as ProbeEvent);
   }
@@ -191,6 +208,7 @@ function frame({ run = LAB, topLevel = false, driver = true } = {}) {
   return {
     context,
     events,
+    posted,
     clock,
     /** Events of one type, without their time. */
     sent(type: string): Record<string, unknown>[] {
@@ -702,6 +720,30 @@ test("the field build sends the same uploads with no source kind", () => {
     bytes: 64,
     source: null,
   });
+});
+
+test("a served build's probe posts its document, then each event, to the harness page", () => {
+  const probe = frame({ driver: false, script: "relay" });
+  probe.context.requestAnimationFrame(() => {});
+  probe.animationFrame(16);
+  // The posts are the frame's own objects, so they are compared as JSON.
+  assert.deepEqual(JSON.parse(JSON.stringify(probe.posted)), [
+    { dyno: "document", time_origin: 1_000, device_pixel_ratio: 3 },
+    { dyno: "probe", payload: JSON.stringify({ type: "first_frame", t_ms: 0 }) },
+  ]);
+});
+
+test("the probe posts nothing without the relay tag, inside another frame, or at the top", () => {
+  for (const options of [
+    { script: "plain" as const },
+    { script: "relay" as const, nested: true },
+    { script: "relay" as const, topLevel: true },
+  ]) {
+    const probe = frame({ driver: false, ...options });
+    probe.context.requestAnimationFrame(() => {});
+    probe.animationFrame(16);
+    assert.deepEqual(probe.posted, [], JSON.stringify(options));
+  }
 });
 
 test("with no driver listening, the game runs as before", () => {

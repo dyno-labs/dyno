@@ -427,6 +427,7 @@ dependencies = [
  "dyno-run",
  "dyno-schema",
  "dyno-score",
+ "dyno-serve",
  "dyno-static",
  "humantime",
  "insta",
@@ -480,6 +481,23 @@ dependencies = [
  "serde",
  "serde_json",
  "toml",
+]
+
+[[package]]
+name = "dyno-serve"
+version = "0.1.0"
+dependencies = [
+ "dyno-cdp",
+ "dyno-run",
+ "dyno-schema",
+ "httparse",
+ "memchr",
+ "percent-encoding",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]

@@ -9,6 +9,11 @@ const now = () => performance.now();
 const send = (event ) => {try {(scope.__dynoProbe )(JSON.stringify(event));
 } catch {}
 };
+const script = (scope.document )?.currentScript;
+if (script && script.hasAttribute("data-dyno-relay") && parent !== window && parent === top) {scope.__dynoProbe = (payload ) =>
+parent.postMessage({ dyno: "probe", payload }, "*");
+parent.postMessage({dyno: "document",time_origin: performance.timeOrigin,device_pixel_ratio: devicePixelRatio,},"*",);
+}
 const wrap = (owner ,name ,around ,) => {if (!owner) return;
 const original = (owner )[name];
 if (typeof original === "function") (owner )[name] = around(original);

@@ -19,6 +19,7 @@ dyno-ios = { path = "crates/dyno-ios" }
 dyno-run = { path = "crates/dyno-run" }
 dyno-schema = { path = "crates/dyno-schema" }
 dyno-score = { path = "crates/dyno-score" }
+dyno-serve = { path = "crates/dyno-serve" }
 dyno-static = { path = "crates/dyno-static" }
 
 # Used by the skeleton.
@@ -89,6 +90,11 @@ tokio = { version = "1.54.1", features = [
   "time",
 ] }
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect"] }
+
+# The served run: a small HTTP server that serves the build and the harness page to a browser on
+# the network. Both crates are already in the tree through tungstenite and url.
+httparse = "1.10.1"
+percent-encoding = "2.3.2"
 
 # `dyno mcp`, the MCP server: the official MCP Rust SDK. Only the server, its
 # tool macros and the stdio transport.

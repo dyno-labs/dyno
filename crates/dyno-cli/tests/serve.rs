@@ -6,6 +6,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::process::{Child, Command, Stdio};
 use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 use common::{NO_CHROMIUM, Outcome, data_dir};
 
@@ -232,6 +233,130 @@ fn a_device_check_records_the_phone_and_reads_its_footprint_at_idle() {
     assert!(folder.path().join("result.trace").is_dir());
 }
 
+/// A device check with the fake xcrun's environment and these extra flags, run to the end with
+/// this test as the phone's browser. It gives the outcome, the result and the harness page's host
+/// and port.
+fn device_check(env: &[(&str, &str)], args: &[&str]) -> (Outcome, serde_json::Value, String) {
+    let xcrun = fake_xcrun();
+    let mut all_env = vec![("DYNO_XCRUN", xcrun.as_str())];
+    all_env.extend_from_slice(env);
+    let mut all_args = vec!["check", "tiny-build", "--driver", "serve", "--device"];
+    all_args.extend_from_slice(args);
+    let served = start(&all_env, &all_args);
+    let harness = served.harness.clone();
+    open_as_browser(&harness, "");
+    let outcome = served.finish();
+    let result = serde_json::from_str(&outcome.stdout).unwrap();
+    (outcome, result, harness)
+}
+
+#[test]
+fn a_device_check_opens_the_harness_page_in_the_phones_safari() {
+    let folder = tempfile::tempdir().unwrap();
+    let launched = folder.path().join("launched");
+    let (outcome, result, harness) =
+        device_check(&[("FAKE_XCRUN_LAUNCHED", launched.to_str().unwrap())], &[]);
+    assert_eq!(
+        std::fs::read_to_string(&launched).unwrap().trim(),
+        format!("http://{harness}/")
+    );
+    assert!(
+        outcome
+            .stderr
+            .contains("opened the page in Safari on Test iPhone"),
+        "{}",
+        outcome.stderr
+    );
+    // The person is still told where the page is, to open it by hand.
+    assert!(
+        outcome
+            .stderr
+            .contains(&format!("open http://{harness}/ in the browser")),
+        "{}",
+        outcome.stderr
+    );
+    let footprint = run_measure(&result, "device.phys_footprint");
+    assert_eq!(footprint["status"], "measured", "{footprint}");
+}
+
+#[test]
+fn no_open_leaves_safari_to_the_person() {
+    let folder = tempfile::tempdir().unwrap();
+    let launched = folder.path().join("launched");
+    let (outcome, result, _) = device_check(
+        &[("FAKE_XCRUN_LAUNCHED", launched.to_str().unwrap())],
+        &["--no-open"],
+    );
+    assert!(!launched.exists());
+    assert!(
+        !outcome.stderr.contains("Safari on Test iPhone"),
+        "{}",
+        outcome.stderr
+    );
+    let footprint = run_measure(&result, "device.phys_footprint");
+    assert_eq!(footprint["status"], "measured", "{footprint}");
+}
+
+#[test]
+fn a_launch_that_fails_says_to_open_the_page_by_hand_and_the_check_runs() {
+    let (outcome, result, _) = device_check(&[("FAKE_XCRUN_FAIL", "launch")], &[]);
+    assert!(
+        outcome.stderr.contains(
+            "dyno check: devicectl did not open Safari: devicectl launch failed for the test. \
+             Open the URL below on Test iPhone by hand."
+        ),
+        "{}",
+        outcome.stderr
+    );
+    let footprint = run_measure(&result, "device.phys_footprint");
+    assert_eq!(footprint["status"], "measured", "{footprint}");
+}
+
+#[test]
+fn the_mac_itself_has_no_lock_state_and_no_safari_to_open() {
+    let folder = tempfile::tempdir().unwrap();
+    let launched = folder.path().join("launched");
+    let (_, result, _) = device_check(
+        &[("FAKE_XCRUN_LAUNCHED", launched.to_str().unwrap())],
+        &["--device-id", "00000000-0000-0000-0000-00000000000A"],
+    );
+    assert!(!launched.exists());
+    let footprint = run_measure(&result, "device.phys_footprint");
+    assert_eq!(footprint["status"], "measured", "{footprint}");
+}
+
+#[test]
+fn a_phone_that_disconnects_leaves_the_device_measures_missing_with_no_wait() {
+    let started = Instant::now();
+    let (_, result, _) = device_check(&[("FAKE_XCRUN_FAIL", "disconnect")], &[]);
+    // xctrace does not stop when interrupted after it loses the phone, and dyno does not wait.
+    assert!(started.elapsed() < Duration::from_secs(60));
+    let footprint = run_measure(&result, "device.phys_footprint");
+    assert_eq!(footprint["status"], "missing", "{footprint}");
+    assert!(
+        footprint["reason"]
+            .as_str()
+            .unwrap()
+            .starts_with("the phone disconnected from xctrace during the run. Did it lock"),
+        "{footprint}"
+    );
+}
+
+#[test]
+fn a_recording_that_lost_the_phone_and_saved_by_itself_is_not_read() {
+    let (_, result, _) = device_check(&[("FAKE_XCRUN_FAIL", "disconnect-save")], &[]);
+    // Its trace ends early, so a game process missing from its end is not a kill.
+    let kills = run_measure(&result, "device.kills");
+    assert_eq!(kills["status"], "missing", "{kills}");
+    assert!(
+        kills["reason"]
+            .as_str()
+            .unwrap()
+            .starts_with("the phone disconnected from xctrace during the run"),
+        "{kills}"
+    );
+}
+
 #[test]
 fn a_trace_that_cannot_be_read_leaves_the_device_measures_missing() {
     let xcrun = fake_xcrun();
@@ -287,6 +412,14 @@ fn a_mac_without_xctrace_or_a_recording_that_does_not_start_stops_the_check() {
         stderr.contains("xctrace did not start recording: xctrace record failed"),
         "{stderr}"
     );
+}
+
+#[test]
+fn a_locked_phone_is_a_usage_error() {
+    let (code, stderr) = device_check_before_the_run(&[("FAKE_XCRUN_LOCKED", "1")]);
+    assert_eq!(code, Some(64), "{stderr}");
+    assert!(stderr.contains("Test iPhone is locked"), "{stderr}");
+    assert!(stderr.contains("Auto-Lock to Never"), "{stderr}");
 }
 
 #[test]

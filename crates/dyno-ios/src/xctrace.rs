@@ -19,12 +19,19 @@ pub const XCRUN_VARIABLE: &str = "DYNO_XCRUN";
 /// What xctrace prints once it records.
 const RECORDING_STARTED: &str = "Starting recording";
 
+/// What xctrace prints when it loses the device, such as when the phone locks. The recording
+/// ends, and an interrupt then leaves xctrace stuck.
+const DISCONNECTED: &str = "Device got disconnected";
+
 /// How long xctrace may take to start recording: a phone can take a while to get ready.
 const START_WAIT: Duration = Duration::from_secs(60);
 
 /// How long xctrace may take to save the trace once it is told to stop. On a Mac mini it took
 /// from 4 s to over a minute for the same short recording.
 const STOP_WAIT: Duration = Duration::from_secs(300);
+
+/// How long xctrace's last lines may take to arrive once it has exited.
+const LAST_LINES_WAIT: Duration = Duration::from_secs(2);
 
 /// How often a wait checks on xctrace.
 const POLL: Duration = Duration::from_millis(200);
@@ -44,6 +51,16 @@ pub enum DeviceError {
     Start(String),
     #[error("xctrace did not save the trace: {0}")]
     Stop(String),
+    #[error(
+        "{0} is locked. Unlock it, and set Settings > Display & Brightness > Auto-Lock to Never, so it stays unlocked for the run"
+    )]
+    Locked(String),
+    #[error(
+        "the phone disconnected from xctrace during the run. Did it lock, or is it on Wi-Fi only? Connect it with a cable that carries data, set Auto-Lock to Never, and keep it unlocked for the run"
+    )]
+    Disconnected,
+    #[error("devicectl did not open Safari: {0}")]
+    Open(String),
     #[error("cannot read the trace: {0}")]
     Read(String),
 }
@@ -61,9 +78,12 @@ pub struct Device {
 pub struct Recording {
     child: Child,
     trace: PathBuf,
+    /// What xctrace prints after it starts recording, a line at a time.
+    said: mpsc::Receiver<String>,
 }
 
-fn xcrun() -> Command {
+/// `xcrun`, or the program that `DYNO_XCRUN` names.
+pub(crate) fn xcrun() -> Command {
     let program = std::env::var_os(XCRUN_VARIABLE).unwrap_or_else(|| OsString::from("xcrun"));
     Command::new(program)
 }
@@ -198,6 +218,7 @@ impl Recording {
                     return Ok(Recording {
                         child,
                         trace: trace.to_owned(),
+                        said: received,
                     });
                 }
                 Ok(line) => said.push(line),
@@ -210,7 +231,8 @@ impl Recording {
         Err(DeviceError::Start(said.join(" ")))
     }
 
-    /// Stops the recording, as Ctrl-C does, waits for xctrace to save it, and reads it back.
+    /// Stops the recording, as Ctrl-C does, waits for xctrace to save it, and reads it back. A
+    /// recording that lost the device is ended at once, as it would not stop.
     pub fn stop(mut self) -> Result<Trace, DeviceError> {
         // xctrace saves the trace on an interrupt. std has no way to send one, so `kill` does.
         let interrupted = Command::new("kill")
@@ -219,19 +241,50 @@ impl Recording {
             .is_ok_and(|status| status.success());
         let until = Instant::now() + STOP_WAIT;
         loop {
+            if self.disconnected() {
+                return Err(self.end(DeviceError::Disconnected));
+            }
             match self.child.try_wait() {
                 Ok(Some(_)) => break,
                 Ok(None) if interrupted && Instant::now() < until => thread::sleep(POLL),
                 _ => {
-                    let _ = self.child.kill();
-                    let _ = self.child.wait();
-                    return Err(DeviceError::Stop(
+                    return Err(self.end(DeviceError::Stop(
                         "it did not stop when interrupted".to_owned(),
-                    ));
+                    )));
                 }
             }
         }
+        // xctrace that lost the device can save and exit by itself, before its lines are read.
+        if self.said_disconnected_at_exit() {
+            return Err(DeviceError::Disconnected);
+        }
         read_trace(&self.trace)
+    }
+
+    /// Whether xctrace said it lost the device, in the lines it printed since the last look.
+    fn disconnected(&self) -> bool {
+        self.said.try_iter().any(|line| line.contains(DISCONNECTED))
+    }
+
+    /// Whether the lines xctrace printed before it exited say it lost the device. They end
+    /// with its output, or after a short wait.
+    fn said_disconnected_at_exit(&self) -> bool {
+        let until = Instant::now() + LAST_LINES_WAIT;
+        while let Some(left) = until.checked_duration_since(Instant::now()) {
+            match self.said.recv_timeout(left) {
+                Ok(line) if line.contains(DISCONNECTED) => return true,
+                Ok(_) => {}
+                Err(_) => return false,
+            }
+        }
+        false
+    }
+
+    /// Kills xctrace, and gives back why.
+    fn end(&mut self, problem: DeviceError) -> DeviceError {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        problem
     }
 }
 

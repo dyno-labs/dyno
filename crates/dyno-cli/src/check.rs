@@ -53,6 +53,8 @@ pub struct CheckOptions {
     device_id: Option<String>,
     /// Where `--device` keeps its trace. None deletes it after the check.
     device_trace: Option<PathBuf>,
+    /// Whether `--device` opens the page in the phone's Safari.
+    device_open: bool,
     driver: DriverArg,
     /// Where `--driver serve` serves.
     serve: ServeOptions,
@@ -91,6 +93,7 @@ pub fn run(args: CheckArgs) -> Result<Status, CliError> {
             (Some(out), None) => Some(device::kept_trace(out)),
             _ => None,
         },
+        device_open: !args.no_open,
         driver: args.driver,
         serve: ServeOptions {
             host: args.serve_host,
@@ -164,6 +167,7 @@ impl CheckOptions {
             device: false,
             device_id: None,
             device_trace: None,
+            device_open: true,
             driver: DriverArg::Cdp,
             serve: ServeOptions {
                 host: None,
@@ -335,16 +339,19 @@ fn check_one(
     let mut run_findings = Vec::new();
     let mut driver = None;
     // The recording starts before the person is told to open the page, so it sees the whole run.
+    // Safari opens the page before the recording starts, as a launch ends a recording that is on.
+    // The page waits for the run to start.
     let device_run = match (&served, options.device) {
-        (Some(_), true) => Some(device::start(
+        (Some(served), true) => Some(device::start(
             options.device_id.as_deref(),
+            options.device_open.then(|| served.harness_url()),
             options.device_trace.as_deref(),
             DEVICE_TRACE_LIMIT,
         )?),
         _ => None,
     };
     if let Some(device_run) = &device_run {
-        output::print_summary(&[device_run.line()]);
+        output::print_summary(&device_run.lines());
     }
     if let Some(served) = &served {
         output::print_summary(&output::serve_lines(

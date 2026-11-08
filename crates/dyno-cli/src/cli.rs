@@ -134,6 +134,10 @@ pub struct CheckArgs {
     /// devices` gives them. Default: the only connected iPhone
     #[arg(long, value_name = "ID")]
     pub device_id: Option<String>,
+
+    /// [phase 2] With --device, do not open the page in the phone's Safari: open it by hand
+    #[arg(long)]
+    pub no_open: bool,
 }
 
 #[derive(Debug, Args)]

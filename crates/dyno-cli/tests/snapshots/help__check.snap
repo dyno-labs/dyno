@@ -68,6 +68,9 @@ Options:
       --device-id <ID>
           [phase 2] With --device, the device to record, by its UDID or name as `xcrun xctrace list devices` gives them. Default: the only connected iPhone
 
+      --no-open
+          [phase 2] With --device, do not open the page in the phone's Safari: open it by hand
+
   -h, --help
           Print help (see a summary with '-h')
 

@@ -5,10 +5,12 @@
 //! The trace ([`trace`]) gives each process's physical footprint, the `phys_footprint` that
 //! jetsam reads, about once a second. [`device_measures`] finds the game's WebContent process and
 //! reads its footprint when the frame went idle, and whether it left the trace before the run
-//! ended, as a process that iOS kills does.
+//! ended, as a process that iOS kills does. Before it records, [`devicectl`] checks that the
+//! phone is unlocked and opens the page in its Safari.
 //!
 //! `doctor` is still a stub: it runs no command and touches no device.
 
+pub mod devicectl;
 pub mod trace;
 pub mod xctrace;
 
@@ -141,27 +143,43 @@ pub fn device_measures(trace: &Trace, run: &RunWindow) -> Vec<Measure> {
             "the game's process has no sample after the frame went idle",
         )),
     };
-    let last_seen = game.iter().map(|(at, _)| *at).fold(f64::MIN, f64::max);
-    let killed = last_seen < run.ended_epoch_ms - KILL_GAP_MS;
-    let kills = Measure {
-        value: Some(MeasureValue::Integer(i64::from(killed))),
-        items: if killed {
-            vec![MeasureItem {
-                key: format!(
-                    "{WEB_CONTENT} ({game_pid}) left the trace {:.0} s before the run ended",
-                    (run.ended_epoch_ms - last_seen) / 1_000.0
-                ),
-                value: MeasureValue::Integer(1),
-            }]
-        } else {
-            Vec::new()
-        },
-        evidence,
-        uncertainty: Uncertainty::exact(),
-        ..required(Measure::blank(
+    // A trace that ended before the run did, as one that lost the phone, cannot tell a kill.
+    let trace_ended = trace
+        .samples
+        .iter()
+        .map(|sample| trace.started_epoch_ms + sample.ms)
+        .fold(f64::MIN, f64::max);
+    let kills = if trace_ended < run.ended_epoch_ms - KILL_GAP_MS {
+        required(Measure::missing(
             MeasureId::DeviceKills,
-            MeasureStatus::Measured,
+            &format!(
+                "the trace ended {:.0} s before the run did, so it cannot tell whether iOS killed the game",
+                (run.ended_epoch_ms - trace_ended) / 1_000.0
+            ),
         ))
+    } else {
+        let last_seen = game.iter().map(|(at, _)| *at).fold(f64::MIN, f64::max);
+        let killed = last_seen < run.ended_epoch_ms - KILL_GAP_MS;
+        Measure {
+            value: Some(MeasureValue::Integer(i64::from(killed))),
+            items: if killed {
+                vec![MeasureItem {
+                    key: format!(
+                        "{WEB_CONTENT} ({game_pid}) left the trace {:.0} s before the run ended",
+                        (run.ended_epoch_ms - last_seen) / 1_000.0
+                    ),
+                    value: MeasureValue::Integer(1),
+                }]
+            } else {
+                Vec::new()
+            },
+            evidence,
+            uncertainty: Uncertainty::exact(),
+            ..required(Measure::blank(
+                MeasureId::DeviceKills,
+                MeasureStatus::Measured,
+            ))
+        }
     };
     vec![footprint, kills]
 }
@@ -301,6 +319,32 @@ mod tests {
             kills.items[0]
                 .key
                 .contains("left the trace 7 s before the run ended")
+        );
+    }
+
+    #[test]
+    fn a_trace_that_ended_before_the_run_cannot_tell_a_kill() {
+        // The phone disconnected at 8 s, 5 s before the run ended. Idle at 5 s is still read.
+        let samples = [
+            (2_000, GAME, 900),
+            (6_000, GAME, 1_800),
+            (8_000, OTHER_TAB, 60),
+        ];
+        let window = RunWindow {
+            idle_epoch_ms: Some(START + 5_000.0),
+            ..run()
+        };
+        let [footprint, kills] = device_measures(&trace(&samples), &window)
+            .try_into()
+            .unwrap();
+        assert_eq!(value(&footprint), Some(1_800));
+        assert_eq!(kills.status, MeasureStatus::Missing);
+        assert!(
+            kills
+                .reason
+                .as_deref()
+                .unwrap()
+                .starts_with("the trace ended 5 s before the run did")
         );
     }
 

@@ -9,9 +9,13 @@ any phone run. dyno runs no command against a phone: a person runs the phone and
   games and the baseline is on this one phone, with one iOS version.
 - **More phones later.** Calibration across several known iPhone models is a future phase. It
   starts from this phone's fit.
-- **iOS and WebGPU.** The host profile assumes iOS 18 Safari, with WebGPU off. The profile follows
-  the phone: if the phone runs iOS 26, a new host profile version turns WebGPU on, after a check
-  that Chromium on Linux can run it.
+- **iOS and WebGPU.** The host profile follows the phone. The phone runs iOS 26, so `reels`
+  version 2 has WebGPU on. Version 1 assumed iOS 18 Safari, with WebGPU off. The browser run gives
+  the game a WebGPU adapter only when the profile has WebGPU: in headless Chromium on Linux it is
+  SwiftShader's. On a Mac, Chrome uses the Mac's GPU and gives WebGPU whatever the profile says.
+  The probe sees WebGL texture uploads only, so a game that draws with WebGPU has
+  `lab.textures.uploaded`, `lab.textures.resident` and `lab.inactive.allocated` unsupported, not
+  a false 0.
 
 The template names the reference phone in `[device] phone`. The report adds a note when the runs
 are on another phone, or when no iOS version is recorded.

@@ -1354,7 +1354,8 @@ mod tests {
 
     #[test]
     fn a_preference_list_falls_back_in_its_own_order() {
-        let config = only("app.init({preference: ['webgpu', 'canvas'], resolution: 1})");
+        let source = "app.init({preference: ['webgpu', 'canvas'], resolution: 1})";
+        let config = only_with(source, &profile_with_webgpu(false));
         assert_eq!(config.preference, Some(Backend::Webgpu));
         assert_eq!(config.modelled_as, Some(Backend::Canvas2d));
         assert!(!config.may_draw_on_the_gpu());
@@ -1563,8 +1564,9 @@ mod tests {
 
     #[test]
     fn a_site_that_cannot_start_next_to_one_that_can_is_not_covered() {
+        let profile = profile_with_webgpu(false);
         let source = "a.init({resolution: 1}); b.init({preference: ['webgpu'], resolution: 1})";
-        let measures = measures(&configs(source), false, &[]);
+        let measures = measures(&configs_with(source, &profile), false, &[]);
         let canvas = measure_of(&measures, MeasureId::StaticRenderCanvas);
         assert_eq!(canvas.status, MeasureStatus::Estimated);
         assert_eq!(

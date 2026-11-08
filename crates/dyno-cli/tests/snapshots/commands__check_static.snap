@@ -108,7 +108,7 @@ expression: json(&outcome)
       "device": false,
       "host_profile": {
         "name": "reels",
-        "version": 1
+        "version": 2
       },
       "launch_url": false,
       "scenario": "alone",
@@ -629,7 +629,7 @@ expression: json(&outcome)
       "tool": "0.1.0"
     }
   },
-  "result_hash": "94c346c658f81c0fd86a1073b620ce31614d99d1ca3705fa24f7ccc189a8895f",
+  "result_hash": "8dcd677612b35c5153c2a579e43bd007dcd229869026ee530ea2e52cfa1de80d",
   "run": {
     "driver": null,
     "duration_ms": "[duration_ms]",

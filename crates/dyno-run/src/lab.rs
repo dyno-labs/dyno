@@ -13,7 +13,7 @@ use dyno_schema::measure::{
     Evidence, Measure, MeasureItem, MeasureStatus, MeasureValue, Method, Uncertainty,
     UncertaintyKind,
 };
-use dyno_schema::probe::{AudioState, GameHookKind, MessageDirection, ProbeEvent};
+use dyno_schema::probe::{AudioState, ContextKind, GameHookKind, MessageDirection, ProbeEvent};
 use dyno_schema::rule::Finding;
 use dyno_schema::runner::{DriverMessage, RunMark, RunRequest};
 use dyno_schema::status::Verdict;
@@ -122,6 +122,19 @@ pub fn read(
 }
 
 impl Reading<'_> {
+    /// Whether the document made a WebGPU context.
+    fn draws_with_webgpu(&self) -> bool {
+        self.events.iter().any(|event| {
+            matches!(
+                event,
+                ProbeEvent::ContextCreated {
+                    kind: ContextKind::Webgpu,
+                    ..
+                }
+            )
+        })
+    }
+
     /// Probe events of the document that went idle, that arrived before the `idle` mark.
     fn events_by_idle(&self) -> impl Iterator<Item = &ProbeEvent> {
         self.by_idle[self.document_start..]
@@ -248,6 +261,9 @@ impl Reading<'_> {
     /// Every upload by idle, with one item per source image path, one per kind of upload with no
     /// source (`empty`, `canvas`), and one for the rest.
     fn textures_uploaded(&self) -> Measure {
+        if self.draws_with_webgpu() {
+            return unsupported(MeasureId::LabTexturesUploaded, DRAWS_WITH_WEBGPU);
+        }
         let mut by_source: Vec<(String, u64)> = Vec::new();
         for event in self.events_by_idle() {
             let ProbeEvent::TextureUploaded {
@@ -287,6 +303,9 @@ impl Reading<'_> {
     /// The last upload of each level of each texture by idle, without the deleted textures. An
     /// upload the probe did not number counts on its own.
     fn textures_resident(&self) -> Measure {
+        if self.draws_with_webgpu() {
+            return unsupported(MeasureId::LabTexturesResident, DRAWS_WITH_WEBGPU);
+        }
         let mut levels: Vec<(TextureLevel, u64)> = Vec::new();
         let mut unnumbered: u64 = 0;
         for event in self.events_by_idle() {
@@ -480,6 +499,9 @@ impl Reading<'_> {
         let Some(before) = self.before_activation() else {
             return unsupported(id, NOT_ACTIVATED);
         };
+        if self.draws_with_webgpu() {
+            return unsupported(id, DRAWS_WITH_WEBGPU);
+        }
         let mut audio = 0;
         let mut textures = 0;
         for event in before {
@@ -578,6 +600,10 @@ type TextureLevel = (u32, Option<u32>, Option<u32>);
 const NO_SOURCE: &str = "other";
 
 const NOT_ACTIVATED: &str = "the game frame did not see the active message";
+/// Why a game that draws with WebGPU has no texture measures: the probe sees WebGL uploads only,
+/// so a sum of them would read as a false, exact zero.
+const DRAWS_WITH_WEBGPU: &str =
+    "the game draws with WebGPU, whose textures the probe does not see yet";
 const NO_SELF_CHECK: &str = "the driver sent no self-check";
 
 /// Unsupported either way in Phase 1: without a playable hook there is no signal, and with one
@@ -971,6 +997,48 @@ mod tests {
         assert_eq!(ids, crate::LOAD_MEASURES);
         let rules: Vec<RuleId> = findings.iter().map(|finding| finding.rule).collect();
         assert_eq!(rules, crate::LAB_RULES);
+    }
+
+    #[test]
+    fn a_game_that_draws_with_webgpu_has_no_texture_measures_and_no_allocation_verdict() {
+        let mut messages = run();
+        let webgl = messages
+            .iter()
+            .position(|message| {
+                matches!(
+                    message,
+                    DriverMessage::Probe {
+                        event: ProbeEvent::ContextCreated { .. }
+                    }
+                )
+            })
+            .unwrap();
+        messages.insert(
+            webgl + 1,
+            probe(ProbeEvent::ContextCreated {
+                canvas: Some(1),
+                kind: ContextKind::Webgpu,
+                width: 402,
+                height: 874,
+                antialias: None,
+                device_pixel_ratio: 3.0,
+                t_ms: 131.0,
+            }),
+        );
+        let (measures, findings) = read(&messages, &request()).unwrap();
+        for id in [
+            MeasureId::LabTexturesUploaded,
+            MeasureId::LabTexturesResident,
+            MeasureId::LabInactiveAllocated,
+        ] {
+            let measure = measure(&measures, id);
+            assert_eq!(measure.status, MeasureStatus::Unsupported, "{id}");
+            assert_eq!(measure.reason.as_deref(), Some(DRAWS_WITH_WEBGPU), "{id}");
+        }
+        assert_eq!(
+            verdict(&findings, RuleId::DiagnosticAllocBeforeActive),
+            Verdict::Incomplete
+        );
     }
 
     #[test]

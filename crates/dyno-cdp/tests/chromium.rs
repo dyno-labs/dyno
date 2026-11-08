@@ -109,6 +109,34 @@ gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
 gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 48, 24, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
 "#;
 
+/// A game that asks for WebGPU and takes WebGL 2 when the browser gives no adapter, as Pixi 8
+/// does with `preference: 'webgpu'`. On WebGPU it presents 3 frames before `reels:ready`, so a
+/// device that is lost stops it first.
+const WEBGPU_GAME: &str = r#"<!doctype html>
+<canvas id="c"></canvas>
+<script>
+navigator.gpu.requestAdapter().then(async (adapter) => {
+  const canvas = document.getElementById("c");
+  if (adapter) {
+    const device = await adapter.requestDevice();
+    const context = canvas.getContext("webgpu");
+    context.configure({ device, format: navigator.gpu.getPreferredCanvasFormat() });
+    for (let frame = 0; frame < 3; frame++) {
+      const encoder = device.createCommandEncoder();
+      const view = context.getCurrentTexture().createView();
+      encoder.beginRenderPass({ colorAttachments: [{ view, loadOp: "clear", storeOp: "store" }] }).end();
+      device.queue.submit([encoder.finish()]);
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    }
+    await device.queue.onSubmittedWorkDone();
+  } else {
+    canvas.getContext("webgl2");
+  }
+  parent.postMessage({ type: "reels:ready" }, "*");
+});
+</script>
+"#;
+
 /// A 4 x 2 RGBA PNG.
 const PNG: &[u8] = &[
     0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
@@ -135,6 +163,7 @@ fn serve_game() -> String {
                 "/game.js" => ("text/javascript", GAME.as_bytes()),
                 "/data.json" => ("application/json", b"{\"lines\": 20}"),
                 "/redirect" => ("text/html", b"<script>location.replace(\"/\")</script>"),
+                "/webgpu" => ("text/html", WEBGPU_GAME.as_bytes()),
                 "/stuck" => (
                     "text/html",
                     b"<script>fetch('data.json'); while (true) {}</script>",
@@ -470,6 +499,44 @@ fn a_script_redirect_starts_a_new_document_and_the_run_follows_it() {
             .iter()
             .any(|event| matches!(event, ProbeEvent::TextureUploaded { .. }))
     );
+}
+
+/// The kind of each context the WebGPU game made, and whether it sent `reels:ready`, in a run
+/// with this profile's WebGPU.
+fn webgpu_game_with_webgpu(webgpu: bool) -> (Vec<ContextKind>, bool) {
+    let mut run = request(format!("{}webgpu", serve_game()));
+    run.host_profile.webgpu = webgpu;
+    let messages = dyno_cdp::run_cdp(&run).unwrap();
+    let events = probe_events(&messages);
+    let contexts = events
+        .iter()
+        .filter_map(|event| match event {
+            ProbeEvent::ContextCreated { kind, .. } => Some(*kind),
+            _ => None,
+        })
+        .collect();
+    let ready = events.iter().any(|event| matches!(
+        event,
+        ProbeEvent::HostMessage { direction: MessageDirection::ToHost, name, .. } if name == "reels:ready"
+    ));
+    (contexts, ready)
+}
+
+#[test]
+#[ignore = "needs Chromium"]
+fn a_profile_with_webgpu_gives_the_game_a_webgpu_canvas_that_presents() {
+    let (contexts, ready) = webgpu_game_with_webgpu(true);
+    assert_eq!(contexts, [ContextKind::Webgpu]);
+    assert!(ready, "the device was lost before the game was ready");
+}
+
+// On a Mac, Chrome's GPU gives WebGPU whatever the profile says, so only Linux can turn it off.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "needs Chromium"]
+fn a_profile_without_webgpu_gives_the_game_no_webgpu_adapter() {
+    let (contexts, _) = webgpu_game_with_webgpu(false);
+    assert_eq!(contexts, [ContextKind::Webgl2]);
 }
 
 #[test]

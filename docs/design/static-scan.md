@@ -99,19 +99,20 @@ invalid input gives `incomplete` (plan: a missing measure is never a pass).
 
 The numbers assume one device profile: a standard late-model iPhone, the
 iPhone 17, at DPR 3. `HostProfile::reels()` in `dyno-schema/src/profile.rs` is
-the one source (R6), at version 1. Code reads the fields; it never repeats the
+the one source (R6), at version 2. Code reads the fields; it never repeats the
 numbers. The profile holds no assumed cost (R7).
 
 | `[profile]` key in fixtures | `HostProfile` field                    | `reels()`    | Source                                                                              |
 | --------------------------- | -------------------------------------- | ------------ | ----------------------------------------------------------------------------------- |
 | `dpr_milli`                 | `device_scale_factor` (a whole number) | 3            | iPhone 17                                                                           |
 | `frame_css`                 | `viewport`                             | 402 x 874    | the iPhone 17 screen. Render scales of 1/2 and 2/3, as Stake Reels uses, come later |
-| `webgpu`                    | `webgpu`                               | false        | iOS 18 Safari has WebGPU off                                                        |
+| `webgpu`                    | `webgpu`                               | true         | iOS 26 Safari has WebGPU on. Version 1 had false, for iOS 18                        |
 | none                        | `pcm_rate_hz`, `pcm_low_rate_hz`       | 48000, 24000 | The measure ids name 48 kHz and 24 kHz                                              |
 
 Every `expected.toml` has these in `[profile]`. Tests turn the table into a
 `HostProfile` with `Fixture::profile()` (`reels()` with the table's values in
 place), so a change to the frame in `reels()` does not move fixture numbers. The PCM rates still come from `reels()`.
+The fixtures keep `webgpu = false`, so `pixi8-webgpu` tests the fallback to WebGL.
 
 ### Sound groups
 
@@ -1426,13 +1427,11 @@ ffprobe. Where they differ, this design is deliberate:
 2. **Antialias and GPU context cost** (R7). Settled: dyno reports only the
    colour buffer floor. The device run measures the rest, and then a
    `turn_off_antialias` fix can come back with a measured saving.
-3. **WebGPU.** The model treats `preference: 'webgpu'` as WebGL because the
-   host profile assumes iOS 18 Safari. The reference phone is now the iPhone
-   14 Pro Max, and its iOS version is recorded at the first run. Decided: the
-   profile follows the phone. On iOS
-   26 a new profile version turns WebGPU on, after a check that Chromium on
-   Linux can run it, and games that ask for WebGPU also get a WebGL run to
-   compare.
+3. **WebGPU.** Settled: the profile follows the phone. The reference phone,
+   the iPhone 14 Pro Max, runs iOS 26, so `reels` version 2 has WebGPU on, and
+   the model treats `preference: 'webgpu'` as WebGPU. Version 1 assumed iOS 18
+   Safari and treated it as WebGL. Still to build: games that ask for WebGPU
+   also get a WebGL run to compare.
 4. **Mipmaps** (R5). Pixi 8 games that turn on `autoGenerateMipmaps` per
    texture are under-counted.
 5. **Brotli.** The brotli sizes are items of `static.bytes.compressed`, so no

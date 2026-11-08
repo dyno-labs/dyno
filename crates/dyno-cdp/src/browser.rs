@@ -2,7 +2,8 @@
 //!
 //! Site isolation stays on, so the game frame is its own target. The device pixel ratio comes
 //! from `--force-device-scale-factor`: a cross-site frame takes its ratio from the browser's
-//! screen, never from the page's emulation (CDP feasibility test, check 4).
+//! screen, never from the page's emulation (CDP feasibility test, check 4). On Linux, WebGPU is on
+//! only when the profile has it; on a Mac, Chrome's GPU gives it whatever the profile says.
 
 use std::env;
 use std::path::{Path, PathBuf};
@@ -53,6 +54,23 @@ const FLAGS: &[&str] = &[
     "--mute-audio",
 ];
 
+/// On Linux, a headless run has no GPU, so WebGL, WebGPU and the compositor all use SwiftShader's
+/// Vulkan: on the GL compositor, a WebGPU canvas cannot present and its device is lost. On a Mac,
+/// Chrome uses the Mac's GPU, which these flags would take WebGPU from. There WebGPU is on
+/// whatever the profile says: no flag turns it off.
+#[cfg(target_os = "linux")]
+const SOFTWARE_GPU_FLAGS: &[&str] = &[
+    "--enable-features=Vulkan",
+    "--use-vulkan=swiftshader",
+    "--use-angle=swiftshader",
+];
+#[cfg(not(target_os = "linux"))]
+const SOFTWARE_GPU_FLAGS: &[&str] = &[];
+
+/// The flag that gives a page a WebGPU adapter, SwiftShader's. Chromium blocks WebGPU on a
+/// software GPU, so without the flag `requestAdapter` gives none, as in a browser with WebGPU off.
+const WEBGPU_ON: &str = "--enable-unsafe-webgpu";
+
 /// A running Chromium. Dropping it kills the process and deletes its profile; `close` also waits
 /// for the process to go, so the profile can be deleted for sure.
 pub struct Browser {
@@ -83,14 +101,8 @@ impl Browser {
                 "--user-data-dir={}",
                 profile_folder.path().display()
             ))
-            .arg(format!(
-                "--force-device-scale-factor={}",
-                profile.device_scale_factor
-            ))
-            .arg(format!(
-                "--window-size={},{}",
-                profile.viewport.width, profile.viewport.height
-            ))
+            .args(SOFTWARE_GPU_FLAGS)
+            .args(profile_flags(profile))
             .arg("about:blank")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -136,6 +148,24 @@ impl Browser {
             }
         }
     }
+}
+
+/// The flags that give the browser the profile's screen and its WebGPU.
+fn profile_flags(profile: &HostProfile) -> Vec<String> {
+    let mut flags = vec![
+        format!(
+            "--force-device-scale-factor={}",
+            profile.device_scale_factor
+        ),
+        format!(
+            "--window-size={},{}",
+            profile.viewport.width, profile.viewport.height
+        ),
+    ];
+    if profile.webgpu {
+        flags.push(WEBGPU_ON.to_owned());
+    }
+    flags
 }
 
 /// The DevTools WebSocket URL from Chromium's stderr. The rest of stderr is drained in the
@@ -223,6 +253,24 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(error, CdpError::Launch(_)), "{error}");
+    }
+
+    fn launches_with_webgpu(webgpu: bool) -> bool {
+        let profile = HostProfile {
+            webgpu,
+            ..HostProfile::reels()
+        };
+        profile_flags(&profile).iter().any(|flag| flag == WEBGPU_ON)
+    }
+
+    #[test]
+    fn a_profile_with_webgpu_on_launches_chromium_with_webgpu() {
+        assert!(launches_with_webgpu(true));
+    }
+
+    #[test]
+    fn a_profile_with_webgpu_off_launches_chromium_without_webgpu() {
+        assert!(!launches_with_webgpu(false));
     }
 
     #[test]

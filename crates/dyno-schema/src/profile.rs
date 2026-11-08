@@ -80,7 +80,7 @@ impl HostProfile {
     pub fn reels() -> HostProfile {
         HostProfile {
             name: REELS.to_owned(),
-            version: 1,
+            version: 2,
             ready_message: "reels:ready".to_owned(),
             active_message: "reels:active".to_owned(),
             ready_within_ms: 5_000,
@@ -91,9 +91,9 @@ impl HostProfile {
                 height: 874,
             },
             device_scale_factor: 3,
-            // iOS 18 Safari has WebGPU off. The reference iPhone's iOS version is recorded at its
-            // first run.
-            webgpu: false,
+            // The reference iPhone runs iOS 26, whose Safari has WebGPU on. Version 1 assumed
+            // iOS 18, with WebGPU off.
+            webgpu: true,
             pcm_rate_hz: 48_000,
             pcm_low_rate_hz: 24_000,
         }

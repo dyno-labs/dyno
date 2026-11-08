@@ -1,8 +1,8 @@
 //! The Rust CDP driver.
 //!
-//! It launches Chromium with site isolation on and `--force-device-scale-factor=3`, attaches to
-//! the cross-origin game frame, injects the probe before game code runs, and reads the frame's
-//! own requests. It speaks the runner protocol in process.
+//! It launches Chromium with site isolation on, `--force-device-scale-factor=3` and the host
+//! profile's WebGPU, attaches to the cross-origin game frame, injects the probe before game code
+//! runs, and reads the frame's own requests. It speaks the runner protocol in process.
 //!
 //! [`CdpDriver`] is the [`Driver`] that `dyno check <launch-url>` uses; [`run_cdp`] is the same
 //! run as a function.

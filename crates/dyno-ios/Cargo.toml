@@ -1,6 +1,6 @@
 [package]
 name = "dyno-ios"
-description = "The iPhone lab (Phase 2): doctor checks, phys_footprint from xctrace and kills from the syslog."
+description = "The iPhone lab: the device run, with phys_footprint and kills from an xctrace Activity Monitor trace, and doctor checks."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,6 +9,11 @@ publish.workspace = true
 
 [dependencies]
 dyno-schema.workspace = true
+quick-xml.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

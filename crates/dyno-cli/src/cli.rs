@@ -125,9 +125,15 @@ pub struct CheckArgs {
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..))]
     pub spins: Option<u32>,
 
-    /// [phase 2] Also run the game on the connected iPhone. Needs a launch URL
+    /// [phase 2] Also record the game's memory on the connected iPhone with xctrace, while its
+    /// Safari runs the check. Needs --driver serve and a Mac with Xcode
     #[arg(long)]
     pub device: bool,
+
+    /// [phase 2] With --device, the device to record, by its UDID or name as `xcrun xctrace list
+    /// devices` gives them. Default: the only connected iPhone
+    #[arg(long, value_name = "ID")]
+    pub device_id: Option<String>,
 }
 
 #[derive(Debug, Args)]

@@ -70,6 +70,19 @@ pub struct ServeDriver {
     harness_url: String,
     game_url: String,
     wait_for_browser: Duration,
+    last_run: Option<RunTimes>,
+}
+
+/// When a served run's steps happened, in ms since the Unix epoch on this machine's clock. A
+/// device run places them on its trace, which the same clock times.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RunTimes {
+    /// When dyno answered `hello`, so the page loaded the game.
+    pub navigated_epoch_ms: f64,
+    /// When the game frame went idle. None when it never did.
+    pub idle_epoch_ms: Option<f64>,
+    /// When the run ended, before the page dropped the game.
+    pub ended_epoch_ms: f64,
 }
 
 impl ServeDriver {
@@ -100,7 +113,13 @@ impl ServeDriver {
             harness,
             game,
             wait_for_browser: options.wait_for_browser,
+            last_run: None,
         })
+    }
+
+    /// The times of the last run that a browser opened. None before one.
+    pub fn last_run(&self) -> Option<RunTimes> {
+        self.last_run
     }
 
     /// The URL to open in the browser: the harness page.
@@ -134,9 +153,11 @@ impl Driver for ServeDriver {
             .enable_all()
             .build()
             .map_err(|error| driver_error(&ServeError::Runtime(error.to_string())))?;
-        runtime
+        let (messages, times) = runtime
             .block_on(run::run(self, request))
-            .map_err(|error| driver_error(&error))
+            .map_err(|error| driver_error(&error))?;
+        self.last_run = Some(times);
+        Ok(messages)
     }
 }
 

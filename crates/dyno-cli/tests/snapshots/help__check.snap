@@ -63,7 +63,10 @@ Options:
           [phase 2] Play N demo spins after load. Needs a launch URL
 
       --device
-          [phase 2] Also run the game on the connected iPhone. Needs a launch URL
+          [phase 2] Also record the game's memory on the connected iPhone with xctrace, while its Safari runs the check. Needs --driver serve and a Mac with Xcode
+
+      --device-id <ID>
+          [phase 2] With --device, the device to record, by its UDID or name as `xcrun xctrace list devices` gives them. Default: the only connected iPhone
 
   -h, --help
           Print help (see a summary with '-h')

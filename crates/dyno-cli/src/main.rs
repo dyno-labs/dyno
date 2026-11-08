@@ -11,6 +11,7 @@ mod banner;
 mod check;
 mod cli;
 mod compare;
+mod device;
 mod doctor;
 mod exit;
 mod mcp;

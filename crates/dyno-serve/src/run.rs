@@ -15,7 +15,7 @@
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use dyno_schema::probe::{MessageDirection, ProbeEvent};
 use dyno_schema::result::DriverInfo;
@@ -30,7 +30,7 @@ use tokio::time::Instant;
 use crate::files::{Build, DYNO_PATH, PROBE_PATH, file_response};
 use crate::harness::{EVENTS_PATH, HELLO_PATH, NEXT_PATH, page};
 use crate::http::{Response, read_request, write_response};
-use crate::{DRIVER_NAME, ServeDriver, ServeError, browser_name};
+use crate::{DRIVER_NAME, RunTimes, ServeDriver, ServeError, browser_name};
 
 /// How often the run checks whether the frame is idle.
 const TICK: Duration = Duration::from_millis(100);
@@ -150,6 +150,10 @@ struct Document {
 struct Run {
     /// When dyno answered `hello`: the start of the driver's clock.
     started: Instant,
+    /// The same moment on this machine's wall clock, in ms since the Unix epoch.
+    started_epoch_ms: f64,
+    /// When the frame went idle.
+    idle_at: Option<Instant>,
     messages: Vec<DriverMessage>,
     in_flight: u32,
     last_started: Instant,
@@ -180,7 +184,7 @@ impl Drop for Servers {
 pub(crate) async fn run(
     driver: &ServeDriver,
     request: &RunRequest,
-) -> Result<Vec<DriverMessage>, ServeError> {
+) -> Result<(Vec<DriverMessage>, RunTimes), ServeError> {
     let harness = tokio_listener(&driver.harness)?;
     let game = tokio_listener(&driver.game)?;
     let (seen_sender, mut seen) = mpsc::unbounded_channel();
@@ -199,8 +203,12 @@ pub(crate) async fn run(
     ]);
 
     let (user_agent, started) = wait_for_hello(&mut seen, driver.wait_for_browser).await?;
+    let since_hello = Instant::now().saturating_duration_since(started);
+    let started_epoch_ms = epoch_ms_now() - since_hello.as_secs_f64() * 1_000.0;
     let mut run = Run {
         started,
+        started_epoch_ms,
+        idle_at: None,
         messages: vec![DriverMessage::Hello {
             protocol_version: RUNNER_PROTOCOL_VERSION,
             driver: DriverInfo {
@@ -223,8 +231,16 @@ pub(crate) async fn run(
         let t_ms = run.t_ms(Instant::now());
         run.messages.push(DriverMessage::Error { message, t_ms });
     }
+    let ended_epoch_ms = run.started_epoch_ms + run.t_ms(Instant::now());
     end_page(&shared).await;
-    Ok(run.messages)
+    let times = RunTimes {
+        navigated_epoch_ms: run.started_epoch_ms,
+        idle_epoch_ms: run
+            .idle_at
+            .map(|idle| run.started_epoch_ms + run.t_ms(idle)),
+        ended_epoch_ms,
+    };
+    Ok((run.messages, times))
 }
 
 /// Load, idle, self-check, activate and watch. An error is the run's error message.
@@ -332,6 +348,9 @@ impl Run {
     }
 
     fn mark(&mut self, mark: RunMark, at: Instant) {
+        if mark == RunMark::Idle {
+            self.idle_at = Some(at);
+        }
         let t_ms = self.t_ms(at);
         self.messages.push(DriverMessage::Mark { mark, t_ms });
     }
@@ -437,6 +456,13 @@ impl Run {
             });
         }
     }
+}
+
+/// This machine's wall clock, in ms since the Unix epoch.
+fn epoch_ms_now() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0.0, |since| since.as_secs_f64() * 1_000.0)
 }
 
 fn tokio_listener(listener: &std::net::TcpListener) -> Result<TcpListener, ServeError> {

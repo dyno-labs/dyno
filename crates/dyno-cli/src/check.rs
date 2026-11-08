@@ -6,6 +6,7 @@
 //! too.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use dyno_cdp::CdpDriver;
 use dyno_run::Driver;
@@ -25,6 +26,7 @@ use dyno_score::status::{overall_status, run_coverage, worst};
 use dyno_serve::{DEFAULT_PORT, DEFAULT_WAIT_FOR_BROWSER, ServeDriver, ServeError, ServeOptions};
 
 use crate::cli::{CheckArgs, DriverArg};
+use crate::device;
 use crate::exit::CliError;
 use crate::output::{self, ResultPlace};
 use crate::run_info::{Clock, machine, tool_build};
@@ -47,6 +49,10 @@ pub struct CheckOptions {
     scenario: Scenario,
     spins: Option<u32>,
     device: bool,
+    /// The device `--device` records, when one is named.
+    device_id: Option<String>,
+    /// Where `--device` keeps its trace. None deletes it after the check.
+    device_trace: Option<PathBuf>,
     driver: DriverArg,
     /// Where `--driver serve` serves.
     serve: ServeOptions,
@@ -61,6 +67,11 @@ const IDLE_AFTER_MS: u32 = 10_000;
 /// A browser run stops after this long.
 const RUN_TIMEOUT_MS: u32 = 120_000;
 
+/// A device recording stops by itself after this long, if dyno does not stop it: the wait for a
+/// browser, the run, and a minute more.
+const DEVICE_TRACE_LIMIT: Duration =
+    Duration::from_secs(DEFAULT_WAIT_FOR_BROWSER.as_secs() + RUN_TIMEOUT_MS as u64 / 1_000 + 60);
+
 /// Runs `dyno check` and returns the status for the exit code.
 pub fn run(args: CheckArgs) -> Result<Status, CliError> {
     let serve_flags =
@@ -73,7 +84,13 @@ pub fn run(args: CheckArgs) -> Result<Status, CliError> {
     let options = CheckOptions {
         scenario: args.scenario.into(),
         spins: args.spins,
-        device: args.device,
+        device: args.device || args.device_id.is_some(),
+        device_id: args.device_id,
+        // A games file checks several games, so only one target keeps its trace.
+        device_trace: match (&args.out, &args.games) {
+            (Some(out), None) => Some(device::kept_trace(out)),
+            _ => None,
+        },
         driver: args.driver,
         serve: ServeOptions {
             host: args.serve_host,
@@ -145,6 +162,8 @@ impl CheckOptions {
             scenario: Scenario::Alone,
             spins: None,
             device: false,
+            device_id: None,
+            device_trace: None,
             driver: DriverArg::Cdp,
             serve: ServeOptions {
                 host: None,
@@ -177,14 +196,18 @@ fn check_run_flags(options: &CheckOptions, target: &CheckTarget) -> Result<(), C
         }
         return Ok(());
     }
+    if options.device {
+        return Err(CliError::usage(
+            "--device needs --driver serve: the phone's Safari opens the page that dyno serves",
+        ));
+    }
     let has_launch_url = target.launch_url.is_some();
     let asks_for_a_run = options.spins.is_some()
-        || options.device
         || options.scenario != Scenario::Alone
         || options.driver != DriverArg::Cdp;
     if asks_for_a_run && !has_launch_url {
         return Err(CliError::usage(
-            "--spins, --device, a --scenario other than alone and a --driver other than cdp need a launch URL",
+            "--spins, a --scenario other than alone and a --driver other than cdp need a launch URL",
         ));
     }
     Ok(())
@@ -285,7 +308,7 @@ fn check_one(
 ) -> Result<CheckResult, CliError> {
     let clock = Clock::start();
     // A served run's launch URL is dyno's own server. The result records the build, not that URL.
-    let served = match (&options.driver, &target.build) {
+    let mut served = match (&options.driver, &target.build) {
         (DriverArg::Serve, Some(build)) => Some(serve(build, &options.serve)?),
         _ => None,
     };
@@ -311,6 +334,24 @@ fn check_one(
     let mut run_measures = model_measures(has_launch_url);
     let mut run_findings = Vec::new();
     let mut driver = None;
+    // The recording starts before the person is told to open the page, so it sees the whole run.
+    let device_run = match (&served, options.device) {
+        (Some(_), true) => Some(device::start(
+            options.device_id.as_deref(),
+            options.device_trace.as_deref(),
+            DEVICE_TRACE_LIMIT,
+        )?),
+        _ => None,
+    };
+    if let Some(device_run) = &device_run {
+        output::print_summary(&[device_run.line()]);
+    }
+    if let Some(served) = &served {
+        output::print_summary(&output::serve_lines(
+            served.harness_url(),
+            options.serve.wait_for_browser,
+        ));
+    }
     if let Some(launch_url) = &launch_url {
         let request = RunRequest {
             protocol_version: RUNNER_PROTOCOL_VERSION,
@@ -321,17 +362,17 @@ fn check_one(
             idle_after_ms: IDLE_AFTER_MS,
             timeout_ms: RUN_TIMEOUT_MS,
         };
-        let mut browser_driver: Box<dyn Driver> = match served {
-            Some(driver) => Box::new(driver),
-            None => new_driver(&options.driver),
+        let lab = match served.as_mut() {
+            Some(served) => dyno_run::run_lab(served, &request),
+            None => dyno_run::run_lab(new_driver(&options.driver).as_mut(), &request),
         };
-        let lab = dyno_run::run_lab(browser_driver.as_mut(), &request);
         run_measures.extend(lab.measures);
         run_findings = lab.findings;
         driver = lab.driver;
     }
-    if options.device {
-        run_measures.extend(dyno_ios::device_measures());
+    if let Some(device_run) = device_run {
+        output::print_summary(&[device_run.saving_line()]);
+        run_measures.extend(device_run.finish(served.as_ref().and_then(ServeDriver::last_run)));
     }
 
     let inputs = Inputs {
@@ -395,18 +436,13 @@ fn new_driver(driver: &DriverArg) -> Box<dyn Driver> {
     }
 }
 
-/// Binds the served run's servers and tells the person which URL to open. A build that is not a
-/// folder is a usage error; a port in use is an I/O error.
+/// Binds the served run's servers. A build that is not a folder is a usage error; a port in use
+/// is an I/O error.
 fn serve(build: &Path, options: &ServeOptions) -> Result<ServeDriver, CliError> {
-    let driver = ServeDriver::bind(build, options).map_err(|error| match error {
+    ServeDriver::bind(build, options).map_err(|error| match error {
         ServeError::Build(_) => CliError::usage(error),
         _ => CliError::internal(error),
-    })?;
-    output::print_summary(&output::serve_lines(
-        driver.harness_url(),
-        options.wait_for_browser,
-    ));
-    Ok(driver)
+    })
 }
 
 #[cfg(test)]

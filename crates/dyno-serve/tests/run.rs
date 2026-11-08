@@ -91,7 +91,10 @@ fn a_browser_that_opens_the_harness_page_gives_a_full_run() {
         timeout_ms: 20_000,
     };
     let run_request = request.clone();
-    let run = thread::spawn(move || driver.run(&run_request));
+    let run = thread::spawn(move || {
+        let messages = driver.run(&run_request);
+        (messages, driver.last_run())
+    });
 
     // The browser opens the harness page, which says hello and then loads the game.
     let (status, page) = get(&harness, "/");
@@ -154,12 +157,19 @@ fn a_browser_that_opens_the_harness_page_gives_a_full_run() {
     );
     assert_eq!(next_command(&harness), r#"{"command":"done"}"#);
 
-    let messages = run.join().unwrap().unwrap();
+    let (messages, times) = run.join().unwrap();
+    let messages = messages.unwrap();
     let DriverMessage::Hello { driver, .. } = &messages[0] else {
         panic!("the first message is not hello: {:?}", messages[0]);
     };
     assert_eq!(driver.name, "serve");
     assert_eq!(driver.browser.as_deref(), Some("Safari 26.2 on iPhone"));
+
+    // The run's steps on this machine's clock, for a device run's trace.
+    let times = times.unwrap();
+    let idle = times.idle_epoch_ms.unwrap();
+    assert!(idle - times.navigated_epoch_ms >= 300.0, "{times:?}");
+    assert!(times.ended_epoch_ms > idle, "{times:?}");
     assert!(matches!(messages.last(), Some(DriverMessage::Done { .. })));
 
     let marks: Vec<RunMark> = messages

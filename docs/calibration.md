@@ -75,12 +75,9 @@ negative k).
 
 ## Not built yet
 
-- The `dyno-ios` parser for xctrace output. It waits for a trace recorded on the reference phone.
-  The phone value is `memory-physical-footprint` in the `activity-monitor-process-live` table of
-  the Activity Monitor template, for the Safari WebContent process that runs the game.
-- The device run in `dyno check`. Until it is built, `dyno check <build> --driver serve` runs the
-  game in Safari on the phone and gives the lab measures there, and a trace recorded at the same
-  time gives the phone value.
+- A check of the device run on the reference phone. `dyno check <build> --driver serve --device`
+  reads `device.phys_footprint` from an Activity Monitor trace (docs/cli.md). It was tried with a
+  Mac recording itself; the first phone trace checks that a phone's export reads the same way.
 
 - Model versioning: the fitted k and b as a versioned data file in `dyno-score`, and
   `model.footprint` from it. It waits for the first fit.

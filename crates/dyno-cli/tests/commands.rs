@@ -386,10 +386,31 @@ fn a_build_only_check_keeps_the_machine_out_of_its_deterministic_part() {
 }
 
 #[test]
-fn a_check_with_spins_and_a_device_is_incomplete_not_invalid() {
-    let outcome = dyno(&["check", LAUNCH_URL, "--spins", "10", "--device"]);
+fn a_check_with_spins_is_incomplete_not_invalid() {
+    let outcome = dyno(&["check", LAUNCH_URL, "--spins", "10"]);
     assert_exit(&outcome, INCOMPLETE);
     assert_eq!(json(&outcome)["deterministic"]["run_coverage"], "missing");
+}
+
+#[test]
+fn a_device_run_without_the_serve_driver_is_a_usage_error() {
+    for args in [
+        &["check", LAUNCH_URL, "--device"][..],
+        &[
+            "check",
+            "tiny-build",
+            "--device-id",
+            "00008120-000000000000001E",
+        ],
+    ] {
+        let outcome = dyno(args);
+        assert_exit(&outcome, USAGE);
+        assert!(
+            outcome.stderr.contains("--device needs --driver serve"),
+            "{}",
+            outcome.stderr
+        );
+    }
 }
 
 #[test]

@@ -30,7 +30,8 @@ The check summary gives the status and why, the decoded memory and the build siz
 | `--serve-query <QUERY>`             | 1     | With `--driver serve`: the query string the game loads with, such as a demo session's `sessionID` and `rgs_url`. No result records it.                                                                                                                                  |
 | `--scenario <alone\|aged\|overlap>` | 2     | The harness scenario. Default `alone`. Any other scenario needs a launch URL.                                                                                                                                                                                           |
 | `--spins <N>`                       | 2     | Play N demo spins after load, with N at least 1. Needs a launch URL.                                                                                                                                                                                                    |
-| `--device`                          | 2     | Also run the game on the connected iPhone. Needs a launch URL.                                                                                                                                                                                                          |
+| `--device`                          | 2     | Also record the game's memory on the connected iPhone with xctrace, while its Safari runs the check. Needs `--driver serve` and a Mac with Xcode.                                                                                                                       |
+| `--device-id <ID>`                  | 2     | With `--device`: the device to record, by its UDID or name as `xcrun xctrace list devices` gives them. Default: the only connected iPhone.                                                                                                                              |
 
 A flag that needs a launch URL is checked before any work starts. With `--games`, such a flag needs a `launch_url` on every selected game.
 
@@ -45,6 +46,13 @@ With `--driver serve`, dyno serves the build folder and a harness page, and wait
 - A browser slows the timers of a page it does not show. Keep the page on screen, and keep the device awake, for the whole run.
 
 The build must be a folder: unzip a .zip first. While the run waits and runs, anyone on the network can load the build from the two ports.
+
+With `--device` too, dyno records an Activity Monitor trace of every process on the connected phone with `xcrun xctrace` while the phone's Safari runs the served check. Run it on the Mac the phone is plugged into: the phone must be unlocked, trust the Mac, and have Developer Mode on. dyno starts the recording before it prints the URL, and stops it when the run ends. Saving the trace can take a minute. The trace gives two measures:
+
+- `device.phys_footprint`: the physical footprint (`phys_footprint`, which iOS reads to kill a process) of the game's WebContent process, at the first sample after the frame went idle, with its peak during the run as an item. The game's process is the WebContent process with the largest footprint during the run.
+- `device.kills`: 1 when the game's process left the trace more than 3 s before the run ended, as a process that iOS kills does. 0 otherwise.
+
+With `--out`, the trace is kept beside the result, as `<name>.trace`, for Instruments. Without it, the trace is deleted. `DYNO_XCRUN` names another program to run instead of `xcrun`, such as a fake in tests.
 
 A games file starts with `schema_version = 0`, then lists one `[[game]]` table per game. Each has an `id` and a `build`, a `launch_url` or both. A `release` label is optional. Builds are relative to the games file. Shards split the games in id order: game k, counting from 0, falls in shard (k mod N) + 1. The output is a catalogue result. Its status is the worst status of its games. A selection with no games is `incomplete`, because it checked nothing.
 

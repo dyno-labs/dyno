@@ -17,7 +17,7 @@ use dyno_static::model::{Engine, Inventory, TextureCost, TextureSummary};
 use dyno_static::textures::{
     self, ASTC, BASIS_FORMAT, BASIS_VERSION, BC_ON_IPHONE, BMP, DAMAGED_HEADER, DDS,
     DecodedTexture, Encoding, GpuFormat, HEIC, HEIF, ICO, KTX1, MipSource, NotCovered, Note,
-    OTHER_IMAGE_FORMAT, PVR, SVG, TRUNCATED, TextureFile, TextureFormat,
+    OTHER_IMAGE_FORMAT, PVR, SVG_NO_SIZE, TRUNCATED, TextureFile, TextureFormat,
 };
 use toml::{Table, Value};
 
@@ -179,7 +179,7 @@ fn the_family_gives_one_estimated_measure() {
 fn the_measure_is_one_copy_with_a_range_up_to_two() {
     let measure = &textures::scan(&fixture("images").inventory(), Engine::Unknown).measures[0];
     // The images fixture's lo_bytes.
-    let one_copy = 43_069_392;
+    let one_copy = 43_085_776;
     assert_eq!(measure.value, Some(MeasureValue::Integer(one_copy)));
     assert_eq!(measure.uncertainty.kind, UncertaintyKind::Range);
     assert_eq!(measure.uncertainty.low, Some(one_copy));
@@ -455,12 +455,154 @@ fn other_image_formats_are_unsupported() {
     }
 }
 
+// ---- SVG ----
+
 #[test]
-fn an_svg_is_unsupported_whatever_the_case_of_its_extension() {
-    let bytes = b"<svg xmlns=\"http://www.w3.org/2000/svg\"/>".to_vec();
+fn an_svg_counts_at_the_size_its_root_element_gives() {
+    let decoded = read_one("icon.svg", svg_file(r#"width="80" height="40""#)).expect("estimated");
+    assert_eq!(decoded.format, TextureFormat::Svg);
+    assert_eq!((decoded.width, decoded.height), (80, 40));
+    assert_eq!(decoded.levels, 1);
+    assert_eq!(decoded.mips, MipSource::NoMips);
+    assert_eq!(decoded.gpu_format, GpuFormat::Rgba8);
+    assert_eq!(decoded.gpu_bytes, 80 * 40 * 4);
+    // 20 x 10 blocks of 16 bytes.
+    assert_eq!(decoded.astc_bytes, 20 * 10 * 16);
+    assert_eq!(decoded.note, Some(Note::SvgOwnSize));
+}
+
+#[test]
+fn an_svg_size_in_another_absolute_unit_converts_to_px() {
+    let decoded =
+        read_one("icon.svg", svg_file(r#"width="1in" height="36pt""#)).expect("estimated");
+    assert_eq!((decoded.width, decoded.height), (96, 48));
+}
+
+#[test]
+fn pixi_7_makes_mips_for_an_svg_whose_sides_are_powers_of_two() {
+    let inventory = inventory_of(vec![(
+        "icon.svg",
+        FileKind::Image,
+        svg_file(r#"width="64" height="64""#),
+    )]);
+    let report = textures::read(&inventory, Engine::Pixi7);
+    let decoded = report.files[0].outcome.as_ref().expect("estimated");
+    assert_eq!(decoded.mips, MipSource::Pixi7Pow2);
+    assert_eq!(decoded.levels, 7);
+}
+
+#[test]
+fn an_svg_with_only_a_view_box_has_no_size_whatever_the_case_of_its_extension() {
+    let bytes = svg_file(r#"viewBox="0 0 256 256""#);
     assert_eq!(
         read_one("icon.SVG", bytes),
-        Err(NotCovered::Unsupported(SVG))
+        Err(NotCovered::Unsupported(SVG_NO_SIZE))
+    );
+}
+
+#[test]
+fn an_svg_with_one_side_that_is_not_absolute_has_no_size() {
+    for size in [
+        r#"width="100""#,
+        r#"width="100" height="100%""#,
+        r#"width="10em" height="100""#,
+        r#"width="auto" height="auto""#,
+    ] {
+        assert_eq!(
+            read_one("icon.svg", svg_file(size)),
+            Err(NotCovered::Unsupported(SVG_NO_SIZE)),
+            "{size}"
+        );
+    }
+}
+
+#[test]
+fn an_svg_root_may_follow_a_declaration_a_comment_and_a_doctype() {
+    let bytes = concat!(
+        "\u{feff}<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n",
+        "<!-- exported -->\n",
+        "<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" ",
+        "\"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd\">\n",
+        "<svg:svg xmlns:svg=\"http://www.w3.org/2000/svg\" width=\"&#x33;2\" height=\"16\">",
+        "</svg:svg>",
+    );
+    let decoded = read_one("icon.svg", bytes.into()).expect("estimated");
+    assert_eq!((decoded.width, decoded.height), (32, 16));
+}
+
+#[test]
+fn an_svg_root_may_use_an_entity_its_doctype_declares_in_another_attribute() {
+    // Illustrator writes its namespaces this way.
+    let bytes = concat!(
+        "<!DOCTYPE svg [<!ENTITY ns_extend \"http://ns.adobe.com/Extensibility/1.0/\">]>",
+        "<svg xmlns:x=\"&ns_extend;\" xmlns=\"http://www.w3.org/2000/svg\" width=\"80\" ",
+        "height=\"40\"></svg>",
+    );
+    let decoded = read_one("icon.svg", bytes.into()).expect("estimated");
+    assert_eq!((decoded.width, decoded.height), (80, 40));
+}
+
+#[test]
+fn a_file_named_svg_with_no_svg_root_is_invalid() {
+    let cases: [&[u8]; 5] = [
+        b"",
+        b"not an image",
+        b"<html><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"8\"/></html>",
+        // A root `svg` outside the SVG namespace is not an SVG to the browser.
+        b"<svg width=\"8\" height=\"8\"/>",
+        b"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"8\"",
+    ];
+    for bytes in cases {
+        assert_eq!(
+            read_one("icon.svg", bytes.to_vec()),
+            Err(NotCovered::Invalid(DAMAGED_HEADER)),
+            "{}",
+            String::from_utf8_lossy(bytes)
+        );
+    }
+}
+
+#[test]
+fn an_svg_root_with_a_damaged_attribute_is_invalid() {
+    let bytes = svg_file("width=80 height=40");
+    assert_eq!(
+        read_one("icon.svg", bytes),
+        Err(NotCovered::Invalid(DAMAGED_HEADER))
+    );
+}
+
+#[test]
+fn an_svg_with_a_size_is_in_the_total_and_a_gap_in_the_measure() {
+    let inventory = inventory_of(vec![(
+        "icon.svg",
+        FileKind::Image,
+        svg_file(r#"width="80" height="40""#),
+    )]);
+    let scan = textures::scan(&inventory, Engine::Unknown);
+    assert_eq!(scan.summary.low_bytes, 80 * 40 * 4);
+    assert!(scan.summary.not_covered.is_empty());
+    assert_eq!(
+        scan.measures[0].scope.not_covered,
+        [
+            "icon.svg: counted at its own size, 80 x 40, not the size the game draws it at \
+             (svg_own_size)"
+        ]
+    );
+}
+
+#[test]
+fn an_svg_with_no_size_is_left_out_of_the_total() {
+    let inventory = inventory_of(vec![(
+        "icon.svg",
+        FileKind::Image,
+        svg_file(r#"viewBox="0 0 8 8""#),
+    )]);
+    let scan = textures::scan(&inventory, Engine::Unknown);
+    assert_eq!(scan.summary.low_bytes, 0);
+    assert_eq!(path_strings(&scan.summary.not_covered), ["icon.svg"]);
+    assert_eq!(
+        scan.measures[0].scope.not_covered,
+        ["icon.svg: unsupported (svg_no_size)"]
     );
 }
 
@@ -1167,6 +1309,15 @@ fn avif_fixture_with_brands(major: &[u8; 4], compatible: &[u8; 16]) -> Vec<u8> {
 }
 
 /// A file from the `images` fixture's `build/assets` folder.
+/// An SVG whose root element has the SVG namespace, the given attributes and one shape.
+fn svg_file(attributes: &str) -> Vec<u8> {
+    format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" {attributes}><circle cx=\"4\" cy=\"4\" \
+         r=\"4\"/></svg>"
+    )
+    .into_bytes()
+}
+
 fn images_fixture_file(relative: &str) -> Vec<u8> {
     let path = fixture("images").build.join("assets").join(relative);
     fs::read(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))

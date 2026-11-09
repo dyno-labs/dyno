@@ -170,7 +170,8 @@ brotli_bytes = 121
 [textures]
 engine_for_mips = "unknown"
 # gpu_bytes: raster = sum over levels of w * h * 4; Basis (ETC1S, UASTC) = ASTC 4x4 = sum of ceil(w/4) * ceil(h/4) * 16;
-# raw KTX2 = sum of level uncompressed lengths. Mips: Pixi v7 power of two images, Spine pages with a MipMap filter, KTX2 and Basis levels.
+# raw KTX2 = sum of level uncompressed lengths. SVG = w * h * 4 at the root element's width and height.
+# Mips: Pixi v7 power of two images, Spine pages with a MipMap filter, KTX2 and Basis levels.
 
 [[textures.file]]
 path = "assets/avif/photo-640x360.avif"
@@ -379,8 +380,16 @@ astc_bytes = 174800
 
 [[textures.file]]
 path = "assets/svg/icon.svg"
-status = "unsupported"
-reason = "svg"
+status = "estimated"
+format = "svg"
+width = 64
+height = 64
+levels = 1
+mips = "none"
+gpu_format = "rgba8"
+gpu_bytes = 16384
+astc_bytes = 4096
+note = "svg_own_size"
 
 [[textures.file]]
 path = "assets/webp/alpha-300x300.webp"
@@ -420,8 +429,8 @@ astc_bytes = 131072
 
 [textures.total]
 status = "estimated"
-lo_bytes = 43069392
-hi_bytes = 86138784
+lo_bytes = 43085776
+hi_bytes = 86171552
 top5 = [
   "assets/png/flat-2048x2048.png",
   "assets/png/bg-2080x1560.png",
@@ -429,7 +438,7 @@ top5 = [
   "assets/jpg/progressive-1024x768.jpg",
   "assets/ktx2/etc1s-mips-1024x1024.ktx2",
 ]
-not_covered = ["assets/svg/icon.svg"]
+not_covered = []
 
 [bundle]
 scanned = []
@@ -474,8 +483,8 @@ reason = "no render config found"
 saved_bytes = 0
 
 [rules."textures.over_budget"]
-outcome = "incomplete"
-value_bytes = 43069392
+outcome = "pass"
+value_bytes = 43085776
 saved_bytes = 27822336
 items = [
   "assets/png/flat-2048x2048.png",

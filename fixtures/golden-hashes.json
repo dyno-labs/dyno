@@ -29,7 +29,7 @@
       "input": "fixtures/images/build",
       "status": "incomplete",
       "exit_code": 2,
-      "result_hash": "3f8e0baa546946cf4549b6d2a5685fc1a5782b1d16fc161561da098c94ae4dc0"
+      "result_hash": "3a50536d26106e0c40fb43ab8df2ae32842066f1de4faca3c074555f20853366"
     },
     "over-budget": {
       "input": "fixtures/over-budget/build",

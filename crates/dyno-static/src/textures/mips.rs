@@ -40,7 +40,8 @@ impl MipSource {
     }
 }
 
-/// The mips the engine makes for a raster image (PNG, JPEG, WebP, AVIF or GIF).
+/// The mips the engine makes for a raster image (PNG, JPEG, WebP, AVIF or GIF), or an SVG drawn at
+/// its own size.
 ///
 /// A Spine page with a MipMap filter wins, because its runtime asks for mips in any engine.
 pub fn raster_mips(engine: Engine, width: u32, height: u32, spine_mip_page: bool) -> MipSource {

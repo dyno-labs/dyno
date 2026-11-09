@@ -1,9 +1,9 @@
 //! Textures: what every image and texture file holds on the GPU, from its header.
 //!
-//! A raster image costs width x height x 4 per level. A Basis texture costs its ASTC 4x4 size, and
-//! a raw KTX2 its stored size. Mip levels come from the engine, a Spine atlas or the file (design
-//! section 7). The value is one copy, and the range goes up to two until a device run shows how
-//! many copies the browser keeps.
+//! A raster image costs width x height x 4 per level, and an SVG the same at its own size. A Basis
+//! texture costs its ASTC 4x4 size, and a raw KTX2 its stored size. Mip levels come from the
+//! engine, a Spine atlas or the file (design section 7). The value is one copy, and the range goes
+//! up to two until a device run shows how many copies the browser keeps.
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -26,6 +26,7 @@ mod ktx2;
 mod mips;
 mod raster;
 mod spine;
+mod svg;
 
 pub use self::mips::MipSource;
 pub use self::spine::MissingPage;
@@ -70,7 +71,7 @@ pub struct DecodedTexture {
 /// Why a file is not in the total. Each holds a reason word that the fixtures use.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NotCovered {
-    /// A format we know but do not model, such as SVG or KTX1.
+    /// A format we know but do not model, such as KTX1, or an SVG with no size of its own.
     Unsupported(&'static str),
     /// The header is damaged, or it promises bytes past the end of the file.
     Invalid(&'static str),
@@ -84,6 +85,7 @@ pub enum TextureFormat {
     Webp,
     Avif,
     Gif,
+    Svg,
     Ktx2,
     Basis,
 }
@@ -115,12 +117,15 @@ pub enum Note {
     FirstFrameOnly,
     /// A KTX2 file with no levels asks the runtime to make them, and only level 0 counts.
     RuntimeMips,
+    /// An SVG counts at its own size, which need not be the size the game draws it at.
+    SvgOwnSize,
 }
 
 /// Which reader a file goes to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ReaderKind {
     Raster,
+    Svg,
     Ktx2,
     Basis,
     /// A format we know but do not model, with the reason word.
@@ -133,8 +138,8 @@ enum ReaderKind {
 pub const DAMAGED_HEADER: &str = "header";
 /// The file ends before the header or data it describes.
 pub const TRUNCATED: &str = "truncated";
-/// SVG's raster size depends on how the game draws it.
-pub const SVG: &str = "svg";
+/// An SVG whose root element gives no absolute width and height, so the game sets its size.
+pub const SVG_NO_SIZE: &str = "svg_no_size";
 /// A KTX2 texture in a BC format, which an iPhone cannot sample.
 pub const BC_ON_IPHONE: &str = "bc_on_iphone";
 /// A Basis texture format other than ETC1S and UASTC LDR 4x4, such as HDR or XUASTC.
@@ -186,13 +191,14 @@ const MAGIC_READERS: &[(&[u8], ReaderKind)] = &[
 
 /// Lowercase extensions that pick a reader when no magic matched. Any other file goes to the
 /// raster reader. KTX2 and Basis are not here: their readers rely on the caller having checked
-/// the magic, and the raster reader calls a file without it damaged.
+/// the magic, and the raster reader calls a file without it damaged. SVG has no magic: it is
+/// text.
 const EXTENSION_READERS: &[(&str, ReaderKind)] = &[
     ("ktx", ReaderKind::Unsupported(KTX1)),
     ("astc", ReaderKind::Unsupported(ASTC)),
     ("dds", ReaderKind::Unsupported(DDS)),
     ("pvr", ReaderKind::Unsupported(PVR)),
-    ("svg", ReaderKind::Unsupported(SVG)),
+    ("svg", ReaderKind::Svg),
 ];
 
 impl NotCovered {
@@ -204,7 +210,7 @@ impl NotCovered {
         }
     }
 
-    /// The reason word, such as "svg" or "truncated".
+    /// The reason word, such as "svg_no_size" or "truncated".
     pub fn reason(self) -> &'static str {
         match self {
             NotCovered::Unsupported(reason) | NotCovered::Invalid(reason) => reason,
@@ -221,6 +227,7 @@ impl TextureFormat {
             TextureFormat::Webp => "webp",
             TextureFormat::Avif => "avif",
             TextureFormat::Gif => "gif",
+            TextureFormat::Svg => "svg",
             TextureFormat::Ktx2 => "ktx2",
             TextureFormat::Basis => "basis",
         }
@@ -255,6 +262,7 @@ impl Note {
         match self {
             Note::FirstFrameOnly => "first frame only",
             Note::RuntimeMips => "runtime_mips",
+            Note::SvgOwnSize => "svg_own_size",
         }
     }
 }
@@ -287,7 +295,8 @@ impl TextureReport {
     }
 
     /// One plain-English line per gap in the total: each file that is not covered, each file
-    /// whose runtime mips are not counted, and each Spine page that is not in the build.
+    /// whose runtime mips are not counted, each SVG counted at its own size, and each Spine page
+    /// that is not in the build.
     fn gaps(&self) -> Vec<String> {
         let file_gaps = self.files.iter().filter_map(|file| {
             let path = &file.path;
@@ -297,14 +306,21 @@ impl TextureReport {
                     let reason = not_covered.reason();
                     Some(format!("{path}: {status} ({reason})"))
                 }
-                Ok(decoded) if decoded.note == Some(Note::RuntimeMips) => {
-                    let note = Note::RuntimeMips.as_str();
-                    Some(format!(
-                        "{path}: mips made at run time are not counted ({note})"
-                    ))
-                }
-                // A GIF's note is not a gap: the GPU holds one frame at a time.
-                Ok(_) => None,
+                Ok(decoded) => match decoded.note {
+                    Some(note @ Note::RuntimeMips) => Some(format!(
+                        "{path}: mips made at run time are not counted ({})",
+                        note.as_str()
+                    )),
+                    Some(note @ Note::SvgOwnSize) => Some(format!(
+                        "{path}: counted at its own size, {} x {}, not the size the game draws \
+                         it at ({})",
+                        decoded.width,
+                        decoded.height,
+                        note.as_str()
+                    )),
+                    // A GIF's note is not a gap: the GPU holds one frame at a time.
+                    Some(Note::FirstFrameOnly) | None => None,
+                },
             }
         });
         let page_gaps = self
@@ -362,6 +378,10 @@ fn read_file(
         ReaderKind::Raster => {
             raster::read(bytes).map(|header| raster_texture(header, engine, spine_mip_page))
         }
+        // The browser draws an SVG to pixels, so it costs what a raster image of its size does.
+        ReaderKind::Svg => {
+            svg::read(bytes).map(|header| raster_texture(header, engine, spine_mip_page))
+        }
         ReaderKind::Ktx2 => ktx2::read(bytes),
         ReaderKind::Basis => basis::read(bytes),
         ReaderKind::Unsupported(reason) => Err(NotCovered::Unsupported(reason)),
@@ -402,7 +422,7 @@ fn lowercase_extension(path: &RelPath) -> String {
         .unwrap_or_default()
 }
 
-/// A raster image is RGBA8, with the levels its mip source gives.
+/// A raster image, or an SVG at its own size, is RGBA8, with the levels its mip source gives.
 fn raster_texture(header: RasterHeader, engine: Engine, spine_mip_page: bool) -> DecodedTexture {
     let RasterHeader {
         format,

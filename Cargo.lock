@@ -539,6 +539,7 @@ dependencies = [
  "oxc_parser",
  "oxc_semantic",
  "oxc_span",
+ "quick-xml",
  "serde_json",
  "sha2",
  "symphonia",

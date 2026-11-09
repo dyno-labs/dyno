@@ -71,7 +71,7 @@ A measure's status is `MeasureStatus` in `dyno-schema`. Every static value is
 | Status        | Meaning in the static scan                                                                                                                                                                                     |
 | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `estimated`   | The header was read and the formula applied. Byte counts and hashes are `estimated` too, with uncertainty kind `exact` (R2).                                                                                   |
-| `unsupported` | The file is a format we know but do not model (for example SVG, FLAC, KTX1). The reason says which.                                                                                                            |
+| `unsupported` | The file is a format we know but do not model (for example FLAC, KTX1, or an SVG with no size of its own). The reason says which.                                                                              |
 | `missing`     | An input the measure needs is not in the build (for example a sprite map whose audio file is absent, or no render config found). A measure that is not built yet is `missing` with the reason "not built yet". |
 | `invalid`     | The file claims to be a format but the header is damaged, or the header promises bytes past the end of the file.                                                                                               |
 
@@ -657,6 +657,7 @@ Per file, `gpu_bytes` is the sum over the levels the GPU will hold:
 | Source                           | Bytes per level                                                | Levels            |
 | -------------------------------- | -------------------------------------------------------------- | ----------------- |
 | PNG, JPEG, WebP, AVIF, GIF       | `w * h * 4` (the browser decodes to RGBA8; Pixi uploads RGBA8) | see 7.3           |
+| SVG with a width and height      | `w * h * 4` at its own size (see 7.6)                          | see 7.3           |
 | KTX2 with Basis (ETC1S or UASTC) | ASTC 4x4: `ceil(w/4) * ceil(h/4) * 16`                         | the file's levels |
 | `.basis` (ETC1S or UASTC)        | ASTC 4x4, as above                                             | the file's levels |
 | KTX2, raw (no Basis)             | `uncompressedByteLength` from the level index                  | the file's levels |
@@ -684,7 +685,7 @@ apart.
 | KTX2           | 80-byte header, level index, DFD | `ktx2` 0.5.0: `Reader::new` (it checks every section and level against the file length), `header()`, `levels()`, `basic_dfd()` | Do not trust `imagesize` for KTX2: it reports a size for a truncated file; `Reader::new` returns `UnexpectedEnd`     |
 | `.basis`       | own reader                       | none needed                                                                                                                    | see 7.4                                                                                                              |
 | Spine `.atlas` | own text reader                  | none needed                                                                                                                    | see 7.5                                                                                                              |
-| SVG            | none                             |                                                                                                                                | `unsupported` (its raster size depends on how the game draws it)                                                     |
+| SVG            | root element's width and height  | `quick-xml` 0.42.0 (`NsReader`)                                                                                                | see 7.6                                                                                                              |
 
 KTX2 details:
 
@@ -716,6 +717,9 @@ this design adds the exact chain only where we know mips exist (R5):
 
 A full chain for `w x h` has `floor(log2(max(w, h))) + 1` levels; level `i` is
 `max(1, w >> i) x max(1, h >> i)`.
+
+An SVG at its own size follows the same rules. Pixi 7 draws it to a canvas, and the canvas texture
+gets the same default.
 
 Fixture `pixi7-aa`: `atlas-1024x1024.png` is 5,592,404 bytes with mips;
 `panel-1000x600.png` is 2,400,000 without. Fixture `images`: Spine page
@@ -762,7 +766,48 @@ lines (`size`, `format`, `filter`, `repeat`, `pma`), then regions. Both Spine
 its `filter` min value. A page image missing from the build adds note
 `spine_page_missing`. The `.atlas` file itself is bucket data.
 
-### 7.6 Output
+### 7.6 SVG
+
+An SVG holds shapes, not pixels. The browser draws it to pixels at the size it is asked for, and
+the GPU holds those pixels as RGBA8. So what it costs depends on the size it is drawn at, which the
+game picks.
+
+What the file does give is its own size: the `width` and `height` on its root element. Pixi's SVG
+loaders draw it at that size when the game passes no size or resolution:
+
+| Engine | Loader                   | Canvas                                                                                                   |
+| ------ | ------------------------ | -------------------------------------------------------------------------------------------------------- |
+| Pixi 7 | `loadSVG`, `SVGResource` | `round(w * scale) x round(h * scale)`. `scale` is 1 unless the game sets it                              |
+| Pixi 8 | `loadSvg`                | `ceil(w * resolution) x ceil(h * resolution)`. `resolution` is 1 unless the game or a `@2x` name sets it |
+
+`w` and `h` here are the size the browser gives the image, which is the root's size. So dyno counts
+an SVG as a raster image of its own size: `w * h * 4`, with mips as in 7.3. This is the footing of
+the rest of section 7: each file counts once, at the engine's defaults.
+
+The file cannot say whether the game keeps those defaults. A game can pass a size or a resolution,
+draw the SVG into its own canvas, or show it in an `<img>`, which the browser draws at the screen's
+pixel ratio. Then the game holds a different amount, more or less. dyno does not guess it: the
+device run measures it. So each SVG it counts is also a gap in the measure, note `svg_own_size`:
+"counted at its own size, 80 x 40, not the size the game draws it at". A budget then reads the
+total as a floor. The rule `textures.over_budget` counts the file like any other.
+
+Reading the own size:
+
+- The root element must be `svg` in the SVG namespace. An XML declaration, comments and a doctype
+  may come before it. A file with no such root is `invalid`, reason `header`, because the browser
+  cannot draw it. So is a root attribute that breaks XML syntax, such as a value with no quotes.
+  dyno reads only the `width` and `height` values, so an entity in another attribute, such as one
+  the doctype declares, does not matter.
+- `width` and `height` must both be absolute lengths: a plain decimal number with no unit or with
+  `px`, `in`, `cm`, `mm`, `Q`, `pt` or `pc`, in any case. dyno converts them at the CSS ratios
+  (1in = 96px = 2.54cm = 72pt = 6pc, and 1Q = 1/40 cm), in integers. A part of a pixel rounds down,
+  so the size is never more than the browser draws.
+- Anything else gives no own size: a missing `width` or `height` (which is `auto`), a percentage, a
+  unit that depends on the font or the viewport, a sign or an exponent, and a side under 1 px. A
+  `viewBox` alone gives the shape but not the size, so the size comes from the page or the game.
+  Such a file is `unsupported`, reason `svg_no_size`, and stays out of the total.
+
+### 7.7 Output
 
 Per file, as the `[[textures.file]]` rows list it: `path, status, reason?,
 format, encoding?, width, height, levels, mips (none, pixi7_pow2,
@@ -1453,6 +1498,9 @@ ffprobe. Where they differ, this design is deliberate:
     true silence of each sound ([section 5.4](#54-decoding)). The
     `audio.silence_share` rule still reads the sprite maps.
 12. **Images that are not textures.** `<img>` and CSS images count as textures.
+13. **SVG size.** An SVG counts at its own size ([section 7.6](#76-svg)). A game that draws it
+    larger or at a higher resolution holds more. The bundle could show the size, as Pixi asset
+    data with a `width`, `height` or `resolution`, but the scan does not read asset data yet.
 
 ## 13. Not covered
 
@@ -1465,7 +1513,7 @@ fixtures:
   sound that cancels; the unit tests in `audio/listen.rs` make one.
 - Textures: KTX1, DDS, PVR, raw `.astc` files (the 16-byte header is easy; add
   when a game needs it), Basis HDR and XUASTC, cube maps and arrays (formula
-  given, no fixture), SVG.
+  given, no fixture), and an SVG with no absolute width and height on its root (see 7.6).
 - Engines: Pixi 5 and 6, Phaser, Cocos, three.js. Spine runtime version is not
   detected.
 - Zip input: entries compressed with anything but store or deflate (for

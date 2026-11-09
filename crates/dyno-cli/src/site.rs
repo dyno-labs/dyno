@@ -1,4 +1,4 @@
-//! The dyno site: who a token belongs to, and result uploads.
+//! The dyno site: who a token belongs to, result uploads, and games.
 //!
 //! Every request goes to `{base}/api/...` with the token as a bearer. The base is `DYNO_API_URL`,
 //! or else the site itself. An answer that is not a success has an `error` text, which dyno shows
@@ -48,10 +48,30 @@ struct Me {
     email: String,
 }
 
-/// An answer to `POST /api/results`.
+/// An answer to `POST /api/results`. A site from before games gives only the id.
 #[derive(Deserialize)]
-struct Uploaded {
-    id: String,
+pub struct Uploaded {
+    pub id: String,
+    /// The game the site linked the run to. Null when it linked none.
+    #[serde(default)]
+    pub game: Option<Game>,
+    /// The link to print: the game's report when the site linked the run, else the run's page.
+    #[serde(default)]
+    pub url: Option<String>,
+}
+
+/// A game on the site, as `POST /api/games` and `GET /api/games/:id` give it. The answers hold
+/// more fields, which dyno does not need.
+#[derive(Clone, Debug, Deserialize)]
+pub struct Game {
+    pub id: String,
+    pub name: String,
+}
+
+/// An answer that holds one game.
+#[derive(Deserialize)]
+struct GameAnswer {
+    game: Game,
 }
 
 /// The body of an answer that is not a success.
@@ -62,6 +82,9 @@ struct ErrorBody {
 
 /// HTTP 401: the token is not valid.
 pub const UNAUTHORIZED: u16 = 401;
+
+/// HTTP 404: no such page, or no such game.
+pub const NOT_FOUND: u16 = 404;
 
 impl Site {
     /// The site that `DYNO_API_URL` names, or else the dyno site. A value that is not an http or
@@ -75,8 +98,7 @@ impl Site {
         let base = base
             .filter(|base| !base.is_empty())
             .unwrap_or_else(|| DEFAULT_BASE_URL.to_owned());
-        let lower = base.to_ascii_lowercase();
-        if !lower.starts_with("https://") && !lower.starts_with("http://") {
+        if !is_http_url(&base) {
             return Err(CliError::usage(format!(
                 "{BASE_URL_VAR} {base:?} must be an http or https URL"
             )));
@@ -116,8 +138,8 @@ impl Site {
         Ok(me.email)
     }
 
-    /// Uploads one result, as its JSON bytes, and gives its id on the site.
-    pub fn upload(&self, token: &str, json: &[u8]) -> Result<String, SiteError> {
+    /// Uploads one result, as its JSON bytes, and gives the site's answer.
+    pub fn upload(&self, token: &str, json: &[u8]) -> Result<Uploaded, SiteError> {
         let response = self
             .agent
             .post(self.api("results"))
@@ -125,8 +147,43 @@ impl Site {
             .content_type("application/json")
             .send(json)
             .map_err(|error| self.unreachable(error))?;
-        let uploaded: Uploaded = self.success(response)?;
-        Ok(uploaded.id)
+        self.success(response)
+    }
+
+    /// The link to print for an uploaded result: the site's own `url` when it gives one, and the
+    /// result's page otherwise. A `url` that starts with `/` is on this site.
+    pub fn uploaded_page(&self, uploaded: &Uploaded) -> String {
+        match uploaded.url.as_deref().map(str::trim) {
+            Some(url) if url.starts_with('/') => format!("{}{url}", self.base),
+            Some(url) if is_http_url(url) => url.to_owned(),
+            _ => self.check_page(&uploaded.id),
+        }
+    }
+
+    /// The org's game with this name, made if it has none.
+    pub fn create_game(&self, token: &str, name: &str) -> Result<Game, SiteError> {
+        let body = serde_json::json!({ "name": name }).to_string();
+        let response = self
+            .agent
+            .post(self.api("games"))
+            .header("Authorization", bearer(token))
+            .content_type("application/json")
+            .send(body.as_bytes())
+            .map_err(|error| self.unreachable(error))?;
+        let answer: GameAnswer = self.success(response)?;
+        Ok(answer.game)
+    }
+
+    /// The game with this id, which must be a UUID.
+    pub fn game(&self, token: &str, id: &str) -> Result<Game, SiteError> {
+        let response = self
+            .agent
+            .get(self.api(&format!("games/{id}")))
+            .header("Authorization", bearer(token))
+            .call()
+            .map_err(|error| self.unreachable(error))?;
+        let answer: GameAnswer = self.success(response)?;
+        Ok(answer.game)
     }
 
     fn api(&self, path: &str) -> String {
@@ -167,6 +224,12 @@ fn bearer(token: &str) -> String {
     format!("Bearer {token}")
 }
 
+/// Whether the text starts with `http://` or `https://`, in any case.
+fn is_http_url(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.starts_with("https://") || lower.starts_with("http://")
+}
+
 impl SiteError {
     /// The error as a command's error: a bad token is a usage error, and anything else an I/O
     /// error.
@@ -204,6 +267,35 @@ mod tests {
             assert_eq!(site.account_page(), "https://dynoapp.io/#/account");
             assert_eq!(site.check_page("abc"), "https://dynoapp.io/#/checks/abc");
             assert_eq!(site.api("me"), "https://dynoapp.io/api/me");
+        }
+    }
+
+    fn uploaded(url: Option<&str>) -> Uploaded {
+        Uploaded {
+            id: "abc".to_owned(),
+            game: None,
+            url: url.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn the_site_s_url_is_the_page_of_an_upload_and_the_check_page_is_the_fallback() {
+        let site = Site::new(Some("http://localhost:8000".to_owned())).unwrap();
+        let cases = [
+            (
+                Some("https://dynoapp.io/#/games/g1"),
+                "https://dynoapp.io/#/games/g1",
+            ),
+            (Some("/#/runs/r1"), "http://localhost:8000/#/runs/r1"),
+            (None, "http://localhost:8000/#/checks/abc"),
+            (Some(""), "http://localhost:8000/#/checks/abc"),
+            (
+                Some("javascript:alert(1)"),
+                "http://localhost:8000/#/checks/abc",
+            ),
+        ];
+        for (url, page) in cases {
+            assert_eq!(site.uploaded_page(&uploaded(url)), page, "{url:?}");
         }
     }
 

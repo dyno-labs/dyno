@@ -49,3 +49,8 @@ fn logout_help() {
 fn upload_help() {
     insta::assert_snapshot!("upload", help(&["upload", "--help"]));
 }
+
+#[test]
+fn link_help() {
+    insta::assert_snapshot!("link", help(&["link", "--help"]));
+}

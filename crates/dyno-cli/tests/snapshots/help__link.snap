@@ -1,0 +1,23 @@
+---
+source: crates/dyno-cli/tests/help.rs
+expression: "help(&[\"link\", \"--help\"])"
+---
+[phase 3] Link a build folder to its game on the dyno site, in dyno.toml
+
+Usage: dyno link [OPTIONS] <--name <NAME>|--game-id <UUID>> <BUILD>
+
+Arguments:
+  <BUILD>  [phase 3] The build folder or .zip that dyno check is given
+
+Options:
+      --name <NAME>     [phase 3] The game's name on the dyno site. dyno makes the game when the site has none of that name
+      --game-id <UUID>  [phase 3] The game's id on the dyno site, a UUID
+      --config <FILE>   [phase 3] The dyno.toml to write, in a folder above the build [default: dyno.toml]
+  -h, --help            Print help
+
+Exit codes:
+  0   linked: dyno.toml names the build's game
+  64  usage error: not signed in, a build or dyno.toml that cannot be read, a build that is not
+      below dyno.toml's folder or has a nearer dyno.toml, or a game or token the site does not
+      know
+  70  the site cannot be reached, or dyno.toml cannot be written

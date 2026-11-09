@@ -1,6 +1,6 @@
 # The dyno command line
 
-dyno has seven commands. `check`, `compare` and `doctor` each write one JSON result to stdout, or to the file `--out` names. Each one also writes a short summary for people to stderr. `mcp` gives `check` and `compare` to an MCP client instead. `login`, `logout` and `upload` sign in to the dyno site and upload results to it, and write only to stderr. The summary has no stable format, so no tool may parse it. There is no other output format.
+dyno has eight commands. `check`, `compare` and `doctor` each write one JSON result to stdout, or to the file `--out` names. Each one also writes a short summary for people to stderr. `mcp` gives `check` and `compare` to an MCP client instead. `login`, `logout`, `upload` and `link` sign in to the dyno site, upload results to it and link builds to its games, and write only to stderr. The summary has no stable format, so no tool may parse it. There is no other output format.
 
 The check summary gives the status and why, the decoded memory and the build size, and each rule that warns or fails with its 3 largest fixes. Sizes are in MB with one decimal. A floor shows as "at least", and a range shows its two ends. The last lines tell you where the full result is, and give its `result_hash`.
 
@@ -90,7 +90,7 @@ name = "Moon Lander" # the --game label when none is given
 build = "studio/games/moon_lander/dist"
 ```
 
-`name` is optional. `packages/schema/json/dyno-toml.schema.json` gives the file's shape. With `--games`, dyno looks up each game's build the same way, and the games file's `id` stays the label.
+`name` is optional. [`dyno link`](#dyno-link-build-phase-3) writes the file for you. `packages/schema/json/dyno-toml.schema.json` gives its shape. With `--games`, dyno looks up each game's build the same way, and the games file's `id` stays the label.
 
 #### The empty build
 
@@ -163,7 +163,19 @@ Removes the saved token, and says whether there was one. It does not unset `DYNO
 
 ### `dyno upload <RESULT>...` (Phase 3)
 
-Uploads each result file from `dyno check` to the dyno site, as its bytes are, and prints the link to each one's page. dyno reads every file before it uploads any, so a file that cannot be read or is not JSON is a usage error (64) and uploads nothing. A file the site does not take, such as one over 4 MiB, gives the site's reason, and the upload goes on to the next file. Then dyno exits with 70.
+Uploads each result file from `dyno check` to the dyno site, as its bytes are, and prints a link for each one: its game's report when the site linked it to a game, and its own page otherwise. dyno reads every file before it uploads any, so a file that cannot be read or is not JSON is a usage error (64) and uploads nothing. A file the site does not take, such as one over 4 MiB, gives the site's reason, and the upload goes on to the next file. Then dyno exits with 70.
+
+### `dyno link <BUILD>` (Phase 3)
+
+Links a build folder or .zip to its game on the dyno site, so that every later `dyno check` of it names the game (see [Link a build to its game](#link-a-build-to-its-game)). dyno finds the game on the site, or makes it, then writes the build's entry in `dyno.toml`. An entry for the same build gets the new id and name. A build with no entry gets one at the end of the file, and a missing file is made. The file keeps its comments and its other entries. Needs `dyno login` or `DYNO_TOKEN`.
+
+| Flag               | Phase | What it does                                                                                                                                                                                                                 |
+| ------------------ | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--name <NAME>`    | 3     | The game's name. The site gives the org's game of that name, or makes one. Not with `--game-id`.                                                                                                                             |
+| `--game-id <UUID>` | 3     | The game's id on the site. The site gives its name. Not with `--name`.                                                                                                                                                       |
+| `--config <FILE>`  | 3     | The `dyno.toml` to write. Default: `dyno.toml` in this folder. It must be named `dyno.toml` and be in a folder above the build, with no other `dyno.toml` nearer the build, because `dyno check` reads only the nearest one. |
+
+dyno reads the build and the file before it asks the site. So a build that is not a folder or a .zip or cannot be read, or a file that does not parse, cannot take the entry, or is not the nearest `dyno.toml` above the build, is a usage error (64) that makes no game. So is a game id the site does not know, or a token it does not take. A site that cannot be reached, or a file that cannot be written, is an I/O error (70).
 
 ## Upload results to the dyno site
 
@@ -173,7 +185,7 @@ The dyno site at <https://dynoapp.io> keeps your results, such as the device run
 2. Run `dyno login` and paste the token, or set `DYNO_TOKEN` to it, as in CI.
 3. Run `dyno upload result.json`, or add `--upload` to a check: `dyno check dist --driver serve --device --out result.json --upload`.
 
-Each upload prints the link to the result's page. `check --upload` stops before the check when you are not signed in. A failed upload prints the reason, and makes a check that passed exit with 70. A check that did not pass keeps its own exit code.
+Each upload prints a link: to the game's report, with the game's name, when the site linked the result to a game (see [`dyno link`](#dyno-link-build-phase-3)), and to the result's own page otherwise. `check --upload` stops before the check when you are not signed in. A failed upload prints the reason, and makes a check that passed exit with 70. A check that did not pass keeps its own exit code.
 
 dyno saves the token in `credentials.json` in its config folder: `DYNO_CONFIG_DIR`, or else `dyno` in `XDG_CONFIG_HOME`, or else `~/.config/dyno`. Only you can read the file. `DYNO_TOKEN` wins over the saved token. `DYNO_API_URL` names another site, such as one on your own machine.
 

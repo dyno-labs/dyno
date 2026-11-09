@@ -17,6 +17,7 @@ mod credentials;
 mod device;
 mod doctor;
 mod exit;
+mod link;
 mod mcp;
 mod output;
 mod run_info;
@@ -50,6 +51,7 @@ fn main() -> ExitCode {
         Command::Login(args) => account::login(args).map(|()| ExitCode::SUCCESS),
         Command::Logout => account::logout().map(|()| ExitCode::SUCCESS),
         Command::Upload(args) => upload::run(args).map(|()| ExitCode::SUCCESS),
+        Command::Link(args) => link::run(args).map(|()| ExitCode::SUCCESS),
     };
     match outcome {
         Ok(code) => code,

@@ -1,5 +1,5 @@
-//! `dyno login`, `dyno logout`, `dyno upload` and `dyno check --upload`, against a fake dyno site
-//! on this machine.
+//! `dyno login`, `dyno logout`, `dyno upload`, `dyno check --upload` and `dyno link`, against a
+//! fake dyno site on this machine.
 
 mod common;
 
@@ -23,6 +23,8 @@ const TOKEN: &str = "dyno_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const OTHER_TOKEN: &str = "dyno_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
 const EMAIL: &str = "tester@example.com";
 const ID: &str = "0b9e2c4e-5f1a-4d7e-9c3b-2a6f8e1d4c70";
+/// The id of the one game the fake site has.
+const GAME_ID: &str = "6f1c2a8e-0000-4000-8000-000000000000";
 
 /// What the fake site got.
 #[derive(Clone, Debug)]
@@ -55,7 +57,48 @@ fn good_site(request: &Request) -> (u16, String) {
     match (request.method.as_str(), request.path.as_str()) {
         ("GET", "/api/me") => (200, format!(r#"{{"email":"{EMAIL}"}}"#)),
         ("POST", "/api/results") => (201, format!(r#"{{"id":"{ID}"}}"#)),
+        ("POST", "/api/games") => {
+            let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+            (201, game_answer(body["name"].as_str().unwrap()))
+        }
+        ("GET", path) if path == format!("/api/games/{GAME_ID}") => {
+            (200, game_answer("Moon Lander"))
+        }
+        ("GET", path) if path.starts_with("/api/games/") => {
+            (404, r#"{"error":"no such game"}"#.to_owned())
+        }
         _ => (404, r#"{"error":"no such page"}"#.to_owned()),
+    }
+}
+
+/// The site's answer with its one game, by this name, and the fields dyno does not read.
+fn game_answer(name: &str) -> String {
+    serde_json::json!({
+        "game": {
+            "id": GAME_ID,
+            "name": name,
+            "current_build_id": null,
+            "created_at": "2026-11-09T12:00:00Z",
+            "builds": [],
+            "runs": []
+        }
+    })
+    .to_string()
+}
+
+/// The site once it links runs to games: an upload's answer names the game and the link to print.
+fn linking_site(request: &Request) -> (u16, String) {
+    match (request.method.as_str(), request.path.as_str()) {
+        ("POST", "/api/results") => (
+            201,
+            serde_json::json!({
+                "id": ID,
+                "game": { "id": GAME_ID, "name": "Moon Lander", "current_build_id": null, "created_at": "2026-11-09T12:00:00Z" },
+                "url": format!("/#/games/{GAME_ID}")
+            })
+            .to_string(),
+        ),
+        _ => good_site(request),
     }
 }
 
@@ -161,13 +204,24 @@ impl Setup {
 
     /// Runs `dyno` with `env` added and `stdin` as its input.
     fn dyno_with(&self, env: &[(&str, &str)], stdin: Option<&str>, args: &[&str]) -> Outcome {
+        self.dyno_in(&data_dir(), env, stdin, args)
+    }
+
+    /// Runs `dyno` in `dir`, with `env` added and `stdin` as its input.
+    fn dyno_in(
+        &self,
+        dir: &Path,
+        env: &[(&str, &str)],
+        stdin: Option<&str>,
+        args: &[&str],
+    ) -> Outcome {
         let config = self.config.path().join("dyno");
         let mut all_env = vec![
             ("DYNO_CONFIG_DIR", config.to_str().unwrap()),
             ("DYNO_API_URL", self.site_url.as_str()),
         ];
         all_env.extend(env);
-        run(&all_env, stdin, args)
+        run_in(dir, &all_env, stdin, args)
     }
 
     fn sign_in(&self) {
@@ -177,10 +231,15 @@ impl Setup {
 
 /// Runs `dyno` in `tests/data` with only `env` of dyno's own variables set.
 fn run(env: &[(&str, &str)], stdin: Option<&str>, args: &[&str]) -> Outcome {
+    run_in(&data_dir(), env, stdin, args)
+}
+
+/// Runs `dyno` in `dir` with only `env` of dyno's own variables set.
+fn run_in(dir: &Path, env: &[(&str, &str)], stdin: Option<&str>, args: &[&str]) -> Outcome {
     let mut command = Command::new(env!("CARGO_BIN_EXE_dyno"));
     command
         .args(args)
-        .current_dir(data_dir())
+        .current_dir(dir)
         .env("DYNO_CHROMIUM", NO_CHROMIUM)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -661,4 +720,273 @@ fn a_failed_upload_of_a_check_that_passed_is_an_io_error() {
     );
     assert_stderr_has(&outcome, "dyno: 1 of 1 results did not upload");
     assert!(!outcome.stdout.is_empty());
+}
+
+#[test]
+fn upload_prints_the_link_the_site_gives_and_the_game_it_linked() {
+    let site = FakeSite::start(linking_site);
+    let setup = Setup::new(&site);
+    setup.sign_in();
+    let folder = tempfile::tempdir().unwrap();
+    let file = folder.path().join("result.json");
+    fs::write(&file, "{}").unwrap();
+    let file = file.display().to_string();
+    let outcome = setup.dyno(&["upload", &file]);
+    assert_exit(&outcome, PASS);
+    assert_stderr_has(
+        &outcome,
+        &format!(
+            "dyno upload: {file}: {}/#/games/{GAME_ID} (Moon Lander)",
+            site.url
+        ),
+    );
+    let outcome = setup.dyno(&["check", "tiny-build", "--upload"]);
+    assert_stderr_has(
+        &outcome,
+        &format!(
+            "dyno check: uploaded to {}/#/games/{GAME_ID} (Moon Lander)",
+            site.url
+        ),
+    );
+}
+
+/// A repository with tiny-build at `games/tiny/dist`.
+fn repository() -> tempfile::TempDir {
+    let root = tempfile::tempdir().unwrap();
+    common::copy_dir(
+        &data_dir().join("tiny-build"),
+        &root.path().join("games/tiny/dist"),
+    );
+    root
+}
+
+#[test]
+fn link_with_a_name_makes_the_game_and_a_later_check_names_it() {
+    let site = FakeSite::start(good_site);
+    let setup = Setup::new(&site);
+    setup.sign_in();
+    let root = repository();
+    let outcome = setup.dyno_in(
+        root.path(),
+        &[],
+        None,
+        &["link", "games/tiny/dist", "--name", " Tiny "],
+    );
+    assert_exit(&outcome, PASS);
+    assert_stderr_has(
+        &outcome,
+        &format!("dyno link: games/tiny/dist is Tiny ({GAME_ID}), in dyno.toml."),
+    );
+    let request = site.requests().pop().unwrap();
+    assert_eq!(
+        (request.method.as_str(), request.path.as_str()),
+        ("POST", "/api/games")
+    );
+    assert_eq!(request.body, br#"{"name":"Tiny"}"#);
+    assert_eq!(
+        request.header("authorization"),
+        Some(format!("Bearer {TOKEN}").as_str())
+    );
+    assert_eq!(
+        fs::read_to_string(root.path().join("dyno.toml")).unwrap(),
+        format!(
+            "schema_version = 0\n\n[[game]]\nid = \"{GAME_ID}\"\nname = \"Tiny\"\nbuild = \"games/tiny/dist\"\n"
+        )
+    );
+    let check = setup.dyno_in(root.path(), &[], None, &["check", "games/tiny/dist"]);
+    let result: serde_json::Value = serde_json::from_str(&check.stdout).unwrap();
+    assert_eq!(result["run"]["release"]["game_id"], GAME_ID);
+    assert_eq!(result["run"]["release"]["game"], "Tiny");
+}
+
+#[test]
+fn link_with_a_game_id_takes_the_name_from_the_site_and_keeps_the_file() {
+    let site = FakeSite::start(good_site);
+    let setup = Setup::new(&site);
+    setup.sign_in();
+    let root = repository();
+    let config = root.path().join("dyno.toml");
+    let before = "# Our games.\nschema_version = 0\n";
+    fs::write(&config, before).unwrap();
+    let build = root.path().join("games/tiny/dist");
+    let outcome = setup.dyno(&[
+        "link",
+        build.to_str().unwrap(),
+        "--game-id",
+        &GAME_ID.to_ascii_uppercase(),
+        "--config",
+        config.to_str().unwrap(),
+    ]);
+    assert_exit(&outcome, PASS);
+    let request = site.requests().pop().unwrap();
+    assert_eq!(
+        (request.method.as_str(), request.path.as_str()),
+        ("GET", format!("/api/games/{GAME_ID}").as_str())
+    );
+    let after = fs::read_to_string(&config).unwrap();
+    assert!(after.starts_with(before), "{after}");
+    assert!(after.contains("name = \"Moon Lander\""), "{after}");
+}
+
+#[test]
+fn link_to_a_game_the_site_does_not_know_is_a_usage_error_and_writes_nothing() {
+    let site = FakeSite::start(good_site);
+    let setup = Setup::new(&site);
+    setup.sign_in();
+    let root = repository();
+    let outcome = setup.dyno_in(
+        root.path(),
+        &[],
+        None,
+        &[
+            "link",
+            "games/tiny/dist",
+            "--game-id",
+            "1b4e28ba-2fa1-41d2-883f-0016d3cca427",
+        ],
+    );
+    assert_exit(&outcome, USAGE);
+    assert_stderr_has(&outcome, "no such game");
+    assert!(!root.path().join("dyno.toml").exists());
+}
+
+#[test]
+fn link_asks_the_site_nothing_when_it_cannot_write_a_good_entry() {
+    let site = FakeSite::start(good_site);
+    let setup = Setup::new(&site);
+    setup.sign_in();
+    let root = repository();
+    fs::write(root.path().join("dyno.toml"), "schema_version = 9\n").unwrap();
+    fs::write(root.path().join("games/README.md"), "# Games\n").unwrap();
+    fs::create_dir(root.path().join("games/tiny/dyno.toml")).unwrap();
+    let cases: [&[&str]; 8] = [
+        // The file is not named dyno.toml, so dyno check would never read it.
+        &[
+            "link",
+            "games/tiny/dist",
+            "--name",
+            "Tiny",
+            "--config",
+            "links.toml",
+        ],
+        // The build is not a folder or a .zip.
+        &["link", "games/README.md", "--name", "Tiny"],
+        // The file's folder is not there.
+        &[
+            "link",
+            "games/tiny/dist",
+            "--name",
+            "Tiny",
+            "--config",
+            "missing/dyno.toml",
+        ],
+        // The file is a folder.
+        &[
+            "link",
+            "games/tiny/dist",
+            "--name",
+            "Tiny",
+            "--config",
+            "games/tiny/dyno.toml",
+        ],
+        // The file does not parse.
+        &["link", "games/tiny/dist", "--name", "Tiny"],
+        // The build is not there.
+        &["link", "games/missing", "--name", "Tiny"],
+        // The file is inside the build, where dyno check does not look.
+        &[
+            "link",
+            "games/tiny/dist",
+            "--name",
+            "Tiny",
+            "--config",
+            "games/tiny/dist/dyno.toml",
+        ],
+        // The name is empty.
+        &[
+            "link",
+            "games/tiny/dist",
+            "--name",
+            " ",
+            "--config",
+            "games/dyno.toml",
+        ],
+    ];
+    let before = site.requests().len();
+    for args in cases {
+        let outcome = setup.dyno_in(root.path(), &[], None, args);
+        assert_exit(&outcome, USAGE);
+    }
+    assert_eq!(site.requests().len(), before);
+}
+
+#[test]
+fn link_asks_the_site_nothing_when_the_file_s_games_cannot_take_an_entry() {
+    let site = FakeSite::start(good_site);
+    let setup = Setup::new(&site);
+    setup.sign_in();
+    let root = repository();
+    fs::write(
+        root.path().join("dyno.toml"),
+        "schema_version = 0\ngame = []\n",
+    )
+    .unwrap();
+    let before = site.requests().len();
+    let outcome = setup.dyno_in(
+        root.path(),
+        &[],
+        None,
+        &["link", "games/tiny/dist", "--name", "Tiny"],
+    );
+    assert_exit(&outcome, USAGE);
+    assert_stderr_has(&outcome, "[[game]] tables");
+    assert_eq!(site.requests().len(), before);
+}
+
+#[test]
+fn link_takes_a_name_or_a_game_id_and_needs_a_token() {
+    let site = FakeSite::start(good_site);
+    let setup = Setup::new(&site);
+    let root = repository();
+    let cases: [&[&str]; 3] = [
+        &["link", "games/tiny/dist"],
+        &[
+            "link",
+            "games/tiny/dist",
+            "--name",
+            "Tiny",
+            "--game-id",
+            GAME_ID,
+        ],
+        &["link", "games/tiny/dist", "--game-id", "tiny"],
+    ];
+    for args in cases {
+        assert_exit(&setup.dyno_in(root.path(), &[], None, args), USAGE);
+    }
+    let outcome = setup.dyno_in(
+        root.path(),
+        &[],
+        None,
+        &["link", "games/tiny/dist", "--name", "Tiny"],
+    );
+    assert_exit(&outcome, USAGE);
+    assert_stderr_has(&outcome, "sign in first");
+    assert!(site.requests().is_empty());
+}
+
+#[test]
+fn link_to_a_site_that_cannot_be_reached_is_an_io_error() {
+    let setup = Setup {
+        config: tempfile::tempdir().unwrap(),
+        site_url: closed_site(),
+    };
+    let root = repository();
+    let outcome = setup.dyno_in(
+        root.path(),
+        &[("DYNO_TOKEN", TOKEN)],
+        None,
+        &["link", "games/tiny/dist", "--name", "Tiny"],
+    );
+    assert_exit(&outcome, INTERNAL);
+    assert!(!root.path().join("dyno.toml").exists());
 }

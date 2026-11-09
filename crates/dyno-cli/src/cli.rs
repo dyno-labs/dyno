@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use clap::builder::{PossibleValuesParser, TypedValueParser};
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use dyno_schema::catalogue::Shard;
 use dyno_schema::profile::{DEFAULT_HOST_PROFILE, HostProfile, Scenario};
 
@@ -17,7 +17,7 @@ use dyno_schema::profile::{DEFAULT_HOST_PROFILE, HostProfile, Scenario};
     long_about = "Predicts how much memory an HTML5 game in an iframe will use on an iPhone, from its \
 build.\n\ncheck, compare and doctor each write one canonical JSON result to stdout, or to --out. \
 A short summary for people goes to stderr. It has no stable format, so do not parse it. login, \
-logout and upload write only that summary.",
+logout, upload and link write only that summary.",
     after_help = EXIT_CODES,
     arg_required_else_help = true
 )]
@@ -49,6 +49,9 @@ pub enum Command {
     /// [phase 3] Upload result files from `dyno check` to the dyno site, and print each one's link
     #[command(after_help = UPLOAD_EXIT_CODES)]
     Upload(UploadArgs),
+    /// [phase 3] Link a build folder to its game on the dyno site, in dyno.toml
+    #[command(after_help = LINK_EXIT_CODES)]
+    Link(LinkArgs),
 }
 
 #[derive(Debug, Args)]
@@ -197,6 +200,27 @@ pub struct UploadArgs {
 }
 
 #[derive(Debug, Args)]
+#[command(group(ArgGroup::new("game_to_link").required(true).args(["name", "game_id"])))]
+pub struct LinkArgs {
+    /// [phase 3] The build folder or .zip that dyno check is given
+    #[arg(value_name = "BUILD")]
+    pub build: PathBuf,
+
+    /// [phase 3] The game's name on the dyno site. dyno makes the game when the site has none of
+    /// that name
+    #[arg(long, value_name = "NAME")]
+    pub name: Option<String>,
+
+    /// [phase 3] The game's id on the dyno site, a UUID
+    #[arg(long, value_name = "UUID", value_parser = parse_game_id)]
+    pub game_id: Option<String>,
+
+    /// [phase 3] The dyno.toml to write, in a folder above the build [default: dyno.toml]
+    #[arg(long, value_name = "FILE")]
+    pub config: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
 pub struct CompareArgs {
     /// [phase 1] The base result file from `dyno check`, such as the last release
     #[arg(value_name = "BASE")]
@@ -310,6 +334,15 @@ Exit codes:
 fn parse_game_id(text: &str) -> Result<String, String> {
     dyno_schema::link::game_id(text)
 }
+
+/// The exit codes of `dyno link`.
+const LINK_EXIT_CODES: &str = "\
+Exit codes:
+  0   linked: dyno.toml names the build's game
+  64  usage error: not signed in, a build or dyno.toml that cannot be read, a build that is not
+      below dyno.toml's folder or has a nearer dyno.toml, or a game or token the site does not
+      know
+  70  the site cannot be reached, or dyno.toml cannot be written";
 
 /// Parses `--host-profile`. Help lists the known names, and the value is the profile itself.
 fn host_profile_parser() -> impl TypedValueParser<Value = HostProfile> {

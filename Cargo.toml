@@ -109,6 +109,10 @@ rmcp = { version = "3.9.0", default-features = false, features = [
 # `dyno login` and `dyno upload`: a small blocking HTTP client, with rustls for TLS.
 ureq = { version = "3.5.1", default-features = false, features = ["rustls"] }
 
+# `dyno link` edits dyno.toml and keeps its comments. From the same project as toml, whose parts
+# are already in the tree.
+toml_edit = "0.25.19"
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 

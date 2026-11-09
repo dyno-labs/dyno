@@ -1,5 +1,5 @@
 //! `dyno upload` and `dyno check --upload`: send result files to the dyno site, each to a page of
-//! its own.
+//! its own, or to its game's report when the site links it to a game.
 //!
 //! The site gets each result's bytes as they are, so its `result_hash` still matches.
 
@@ -58,19 +58,34 @@ impl Uploader {
         Ok(Uploader { site, token })
     }
 
-    /// Uploads one result and gives the link to its page.
+    /// Uploads one result and gives the link to print: the game's report when the site linked the
+    /// run to a game, and the run's own page otherwise, with the game's name.
     pub fn upload(&self, json: &[u8]) -> Result<String, SiteError> {
-        match self.site.upload(&self.token, json) {
-            Ok(id) => Ok(self.site.check_page(&id)),
-            Err(SiteError::Refused {
-                status: UNAUTHORIZED,
-                message,
-            }) => Err(SiteError::Refused {
-                status: UNAUTHORIZED,
-                message: format!("{message} (run dyno login again)"),
-            }),
-            Err(error) => Err(error),
-        }
+        let uploaded = self.site.upload(&self.token, json).map_err(sign_in_again)?;
+        let page = self.site.uploaded_page(&uploaded);
+        Ok(match &uploaded.game {
+            Some(game) => format!("{page} ({})", game.name),
+            None => page,
+        })
+    }
+
+    /// The site, and the token that talks to it, for `dyno link`.
+    pub fn site_and_token(&self) -> (&Site, &str) {
+        (&self.site, &self.token)
+    }
+}
+
+/// A token the site does not take says to sign in again.
+pub fn sign_in_again(error: SiteError) -> SiteError {
+    match error {
+        SiteError::Refused {
+            status: UNAUTHORIZED,
+            message,
+        } => SiteError::Refused {
+            status: UNAUTHORIZED,
+            message: format!("{message} (run dyno login again)"),
+        },
+        error => error,
     }
 }
 

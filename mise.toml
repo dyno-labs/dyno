@@ -22,7 +22,7 @@ node = "26.13.0"
 # TOML, CSS and HTML: each with its defaults (.oxfmtrc.json and .oxlintrc.json only leave files
 # out).
 "npm:oxfmt" = "0.76.0"
-"npm:oxlint" = "1.91.0"
+"npm:oxlint" = "1.92.0"
 # The shell scripts' linter and formatter. actionlint also runs shellcheck on each `run:` script.
 shellcheck = "0.11.0"
 shfmt = "3.14.1"

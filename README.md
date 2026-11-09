@@ -7,7 +7,7 @@
 
 A Rust command-line tool for casino games that run in iframes. Its first job is to say how much memory a game will use on an iPhone, before a player loads it.
 
-**Status:** early, and the result shape may still change before 1.0. `dyno check ./dist` scans a build and gives the static measures, rules and fixes. `dyno check <launch-url>` runs the game in Chromium and gives the lab measures. `dyno compare` diffs two results. `dyno mcp` lets an AI coding tool run the same checks. The phone calibration, and so the memory model, comes next.
+**Status:** early, and the result shape may still change before 1.0. `dyno check ./dist` scans a build and gives the static measures, rules and fixes. `dyno check <launch-url>` runs the game in Chromium and gives the lab measures, and `dyno check ./dist --browser` serves the build to Chromium for the same run. `dyno compare` diffs two results. `dyno mcp` lets an AI coding tool run the same checks. The phone calibration, and so the memory model, comes next.
 
 ## Build
 

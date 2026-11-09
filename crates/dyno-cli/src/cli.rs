@@ -123,6 +123,12 @@ pub struct CheckArgs {
     )]
     pub game_id: Option<String>,
 
+    /// [phase 1] Serve the build folder on 127.0.0.1 and load it in dyno's own Chromium, so the
+    /// browser loads the files that the scan read. Needs a build folder, no launch URL and the
+    /// cdp driver
+    #[arg(long)]
+    pub browser: bool,
+
     /// [phase 1] The browser driver: cdp, the built-in Chromium driver; exec:PROGRAM, a program
     /// that speaks the runner protocol on stdin and stdout; or serve, which serves the build and
     /// waits for a browser on the network to open it, such as Safari on an iPhone. exec needs a

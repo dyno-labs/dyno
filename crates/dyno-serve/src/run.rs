@@ -27,9 +27,9 @@ use tokio::sync::{Notify, mpsc};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
-use crate::files::{Build, DYNO_PATH, PROBE_PATH, file_response};
+use crate::files::{Build, DYNO_PATH, PROBE_PATH, Pages, build_response};
 use crate::harness::{EVENTS_PATH, HELLO_PATH, NEXT_PATH, page};
-use crate::http::{Response, read_request, write_response};
+use crate::http::{Response, accept, read_request, write_response};
 use crate::{DRIVER_NAME, RunTimes, ServeDriver, ServeError, browser_name};
 
 /// How often the run checks whether the frame is idle.
@@ -484,17 +484,6 @@ fn tokio_listener(listener: &std::net::TcpListener) -> Result<TcpListener, Serve
     TcpListener::from_std(listener.try_clone().map_err(bind_error)?).map_err(bind_error)
 }
 
-/// Serves each connection on its own task.
-async fn accept<F, Fut>(listener: TcpListener, shared: Arc<Shared>, serve: F)
-where
-    F: Fn(Arc<Shared>, TcpStream) -> Fut,
-    Fut: Future<Output = ()> + Send + 'static,
-{
-    while let Ok((socket, _)) = listener.accept().await {
-        tokio::spawn(serve(Arc::clone(&shared), socket));
-    }
-}
-
 async fn serve_harness(shared: Arc<Shared>, mut socket: TcpStream) {
     let Some(request) = read_request(&mut socket).await else {
         return;
@@ -570,9 +559,9 @@ async fn serve_game(shared: Arc<Shared>, mut socket: TcpStream) {
         return;
     };
     let head_only = request.method == "HEAD";
-    let readable = head_only || request.method == "GET";
     if request.path.starts_with(DYNO_PATH) {
         // dyno's own files are not game requests.
+        let readable = head_only || request.method == "GET";
         let response = if readable && request.path == PROBE_PATH {
             Response::new(
                 "200 OK",
@@ -588,17 +577,7 @@ async fn serve_game(shared: Arc<Shared>, mut socket: TcpStream) {
     let _ = shared
         .seen
         .send(Seen::RequestStarted { at: Instant::now() });
-    let response = if !readable {
-        Response::error("405 Method Not Allowed")
-    } else {
-        match shared.build.file(&request.path) {
-            Some(path) => match std::fs::read(&path) {
-                Ok(contents) => file_response(&path, contents, request.range.as_deref()),
-                Err(_) => Response::error("404 Not Found"),
-            },
-            None => Response::error("404 Not Found"),
-        }
-    };
+    let response = build_response(&shared.build, &request, Pages::WithProbe);
     let bytes = write_response(&mut socket, &response, head_only).await;
     let mime_type = response
         .content_type

@@ -11,6 +11,9 @@
 //! What a served run cannot see: requests to other hosts, such as a CDN or the game's server,
 //! and the JS heap, which Safari does not expose. The phone's memory comes from the device tools
 //! instead (`dyno-ios`).
+//!
+//! [`BuildServer`] is the game server alone, with each page as it is, for the CDP driver's
+//! Chromium (`dyno check <build> --browser`).
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, TcpListener, UdpSocket};
 use std::path::Path;
@@ -28,6 +31,9 @@ use dyno_schema::scrub::scrub;
 
 use crate::files::Build;
 
+pub use crate::build_server::BuildServer;
+
+mod build_server;
 pub mod files;
 mod harness;
 mod http;

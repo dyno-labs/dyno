@@ -1,9 +1,9 @@
 //! `dyno check`: one target, or every game in a games file.
 //!
 //! A check runs the static scan and its rules if it has a build, then the budgets, then a browser
-//! run if it has a launch URL. The status and exit code come from the deterministic part
-//! alone. [`check_target`] gives one result and writes nothing, so the MCP `check` tool calls it
-//! too.
+//! run if it has a launch URL, or a build that `--browser` or `--driver serve` serves. The status
+//! and exit code come from the deterministic part alone. [`check_target`] gives one result and
+//! writes nothing, so the MCP `check` tool calls it too.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -30,7 +30,9 @@ use dyno_score::SCORING_VERSION;
 use dyno_score::budget::budget_verdicts;
 use dyno_score::model::{MODEL_VERSION, model_measures, provisional_tier};
 use dyno_score::status::{overall_status, run_coverage, worst};
-use dyno_serve::{DEFAULT_PORT, DEFAULT_WAIT_FOR_BROWSER, ServeDriver, ServeError, ServeOptions};
+use dyno_serve::{
+    BuildServer, DEFAULT_PORT, DEFAULT_WAIT_FOR_BROWSER, ServeDriver, ServeError, ServeOptions,
+};
 use uuid::Uuid;
 
 use crate::baseline::EmptyBuild;
@@ -70,6 +72,8 @@ pub struct CheckOptions {
     /// Whether `--device` opens the page in the phone's Safari.
     device_open: bool,
     driver: DriverArg,
+    /// Whether `--browser` serves the build on 127.0.0.1 to the CDP driver's Chromium.
+    browser: bool,
     /// Where `--driver serve` serves.
     serve: ServeOptions,
     /// The query string the served game loads with. It can hold a session, so no result
@@ -90,6 +94,11 @@ const DEVICE_TRACE_LIMIT: Duration =
 
 /// Runs `dyno check` and returns the status for the exit code.
 pub fn run(args: CheckArgs) -> Result<Status, CliError> {
+    if args.browser && args.driver != DriverArg::Cdp {
+        return Err(CliError::usage(
+            "--browser loads the build in dyno's own Chromium, so it takes no --driver but cdp",
+        ));
+    }
     let serve_flags =
         args.serve_host.is_some() || args.serve_port.is_some() || args.serve_query.is_some();
     if serve_flags && args.driver != DriverArg::Serve {
@@ -116,6 +125,7 @@ pub fn run(args: CheckArgs) -> Result<Status, CliError> {
         },
         device_open: !args.no_open,
         driver: args.driver,
+        browser: args.browser,
         serve: ServeOptions {
             host: args.serve_host,
             port: args.serve_port.unwrap_or(DEFAULT_PORT),
@@ -272,6 +282,7 @@ impl CheckOptions {
             device_trace: None,
             device_open: true,
             driver: DriverArg::Cdp,
+            browser: false,
             serve: ServeOptions {
                 host: None,
                 port: DEFAULT_PORT,
@@ -291,7 +302,7 @@ pub fn load_budget(path: Option<&Path>) -> Result<Option<Budget>, CliError> {
 }
 
 /// An error when a flag asks for a browser or device run and there is no launch URL, or when
-/// `--driver serve` has no build folder to serve or a launch URL it would not use.
+/// `--driver serve` or `--browser` has no build folder to serve or a launch URL it would not use.
 ///
 /// Every check calls it before any work starts, so a bad flag never leaves half a catalogue.
 fn check_run_flags(options: &CheckOptions, target: &CheckTarget) -> Result<(), CliError> {
@@ -307,6 +318,25 @@ fn check_run_flags(options: &CheckOptions, target: &CheckTarget) -> Result<(), C
         return Err(CliError::usage(
             "--device needs --driver serve: the phone's Safari opens the page that dyno serves",
         ));
+    }
+    if options.browser {
+        let Some(build) = target
+            .build
+            .as_deref()
+            .filter(|_| target.launch_url.is_none())
+        else {
+            return Err(CliError::usage(
+                "--browser serves the build to Chromium, so give a build folder and no launch URL",
+            ));
+        };
+        if !build.is_dir() {
+            return Err(CliError::usage(format!(
+                "--browser serves a build folder, and {} is not one: unzip a .zip first",
+                build.display()
+            )));
+        }
+        // The served build is the run's launch URL, so the flags that need one are met.
+        return Ok(());
     }
     let has_launch_url = target.launch_url.is_some();
     let asks_for_a_run = options.spins.is_some()
@@ -426,9 +456,21 @@ fn check_one(
         (DriverArg::Serve, Some(build), None) => Some(serve(build, &options.serve)?),
         _ => None,
     };
-    let launch_url = match &served {
-        Some(driver) => Some(served_launch_url(driver, options.serve_query.as_deref())?),
-        None => target.launch_url.clone(),
+    // `--browser` serves the build on 127.0.0.1 to the CDP driver's Chromium until the check ends.
+    let build_server = match (&target.build, options.browser) {
+        (Some(build), true) => Some(BuildServer::start(build).map_err(serve_error)?),
+        _ => None,
+    };
+    let launch_url = match (&served, &build_server) {
+        (Some(driver), _) => Some(served_launch_url(driver, options.serve_query.as_deref())?),
+        (None, Some(server)) => Some(LaunchUrl::parse(server.url()).map_err(CliError::internal)?),
+        (None, None) => target.launch_url.clone(),
+    };
+    // The result records the URL that `--browser` loaded, which has no query string. A served
+    // run's URL can hold a session from `--serve-query`, so it is not recorded.
+    let recorded_launch_url = match &build_server {
+        Some(_) => launch_url.as_ref().map(LaunchUrl::recorded),
+        None => target.launch_url.as_ref().map(LaunchUrl::recorded),
     };
     let has_launch_url = launch_url.is_some() || device_runs.is_some();
 
@@ -484,7 +526,10 @@ fn check_one(
     };
     let run = RunInfo {
         run_id: Some(run_id),
-        build_link: Some(build_link(target, &options.driver)),
+        build_link: Some(build_link(
+            target,
+            options.driver == DriverArg::Serve || options.browser,
+        )),
         environment: browser.environment,
         started_at: clock.started_at(),
         duration_ms: clock.elapsed_ms(),
@@ -497,7 +542,7 @@ fn check_one(
                 .as_ref()
                 .filter(|_| !target.baseline)
                 .map(|build| build.display().to_string()),
-            launch_url: target.launch_url.as_ref().map(LaunchUrl::recorded),
+            launch_url: recorded_launch_url,
         },
         release,
         driver: browser.driver,
@@ -693,12 +738,12 @@ fn run_request(launch_url: &LaunchUrl, options: &CheckOptions) -> RunRequest {
 }
 
 /// How the run's evidence ties to the build: no build; a static scan only; a build that dyno
-/// served to the browser; or a build and a separate launch URL that dyno did not check against
-/// each other.
-fn build_link(target: &CheckTarget, driver: &DriverArg) -> BuildLink {
+/// served to the browser, with `--driver serve` or `--browser`; or a build and a separate launch
+/// URL that dyno did not check against each other.
+fn build_link(target: &CheckTarget, served: bool) -> BuildLink {
     match (&target.build, &target.launch_url) {
         (None, _) => BuildLink::None,
-        (Some(_), _) if *driver == DriverArg::Serve => BuildLink::Served,
+        (Some(_), _) if served => BuildLink::Served,
         (Some(_), Some(_)) => BuildLink::Asserted,
         (Some(_), None) => BuildLink::Scanned,
     }
@@ -712,13 +757,17 @@ fn new_driver(driver: &DriverArg) -> Box<dyn Driver> {
     }
 }
 
-/// Binds the served run's servers. A build that is not a folder is a usage error; a port in use
-/// is an I/O error.
+/// Binds the served run's servers.
 fn serve(build: &Path, options: &ServeOptions) -> Result<ServeDriver, CliError> {
-    ServeDriver::bind(build, options).map_err(|error| match error {
+    ServeDriver::bind(build, options).map_err(serve_error)
+}
+
+/// A build that is not a folder is a usage error; a port in use is an I/O error.
+fn serve_error(error: ServeError) -> CliError {
+    match error {
         ServeError::Build(_) => CliError::usage(error),
         _ => CliError::internal(error),
-    })
+    }
 }
 
 #[cfg(test)]
@@ -785,15 +834,10 @@ mod tests {
         let url_only = targets(&["https://example.com/game"]).unwrap();
         let build_only = targets(&["dist"]).unwrap();
         let both = targets(&["dist", "https://example.com/game"]).unwrap();
-        assert_eq!(build_link(&url_only, &DriverArg::Cdp), BuildLink::None);
-        assert_eq!(build_link(&build_only, &DriverArg::Cdp), BuildLink::Scanned);
-        assert_eq!(build_link(&both, &DriverArg::Cdp), BuildLink::Asserted);
-        let exec = DriverArg::Exec(PathBuf::from("driver"));
-        assert_eq!(build_link(&both, &exec), BuildLink::Asserted);
-        assert_eq!(
-            build_link(&build_only, &DriverArg::Serve),
-            BuildLink::Served
-        );
+        assert_eq!(build_link(&url_only, false), BuildLink::None);
+        assert_eq!(build_link(&build_only, false), BuildLink::Scanned);
+        assert_eq!(build_link(&both, false), BuildLink::Asserted);
+        assert_eq!(build_link(&build_only, true), BuildLink::Served);
     }
 
     #[test]

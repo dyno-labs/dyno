@@ -205,7 +205,7 @@ pub enum BuildLink {
     None,
     /// A static scan of the build, and no browser run.
     Scanned,
-    /// The browser loaded the build that dyno served (`--driver serve`).
+    /// The browser loaded the build that dyno served (`--driver serve` or `--browser`).
     Served,
     /// A build and a separate launch URL. dyno did not check that the URL serves that build.
     Asserted,

@@ -41,6 +41,9 @@ Options:
       --game-id <UUID>
           [phase 3] The game's id on the dyno site, a UUID. Default: the entry for the build in the nearest dyno.toml above it. Outside the result hash
 
+      --browser
+          [phase 1] Serve the build folder on 127.0.0.1 and load it in dyno's own Chromium, so the browser loads the files that the scan read. Needs a build folder, no launch URL and the cdp driver
+
       --driver <DRIVER>
           [phase 1] The browser driver: cdp, the built-in Chromium driver; exec:PROGRAM, a program that speaks the runner protocol on stdin and stdout; or serve, which serves the build and waits for a browser on the network to open it, such as Safari on an iPhone. exec needs a launch URL, and serve needs a build folder and no launch URL
           

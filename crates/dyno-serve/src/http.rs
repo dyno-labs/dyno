@@ -1,8 +1,10 @@
 //! A small HTTP/1.1 server side: one request per connection, and the connection closes after the
 //! response.
 
+use std::sync::Arc;
+
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
+use tokio::net::{TcpListener, TcpStream};
 
 /// The most of a request head the server reads.
 const MAX_HEAD_BYTES: usize = 16 * 1024;
@@ -45,6 +47,17 @@ pub enum RangeAsk {
     Part(u64, u64),
     /// A range that starts past the end.
     Unsatisfiable,
+}
+
+/// Serves each connection on its own task, with what the server shares between them.
+pub async fn accept<S, F, Fut>(listener: TcpListener, shared: Arc<S>, serve: F)
+where
+    F: Fn(Arc<S>, TcpStream) -> Fut,
+    Fut: Future<Output = ()> + Send + 'static,
+{
+    while let Ok((socket, _)) = listener.accept().await {
+        tokio::spawn(serve(Arc::clone(&shared), socket));
+    }
 }
 
 /// Reads one request. None when the client hung up, or sent too much or something that is not
@@ -182,8 +195,6 @@ pub fn range_ask(header: Option<&str>, length: u64) -> RangeAsk {
 
 #[cfg(test)]
 mod tests {
-    use tokio::net::TcpListener;
-
     use super::*;
 
     /// What `read_request` makes of a client that sends these bytes, then stops sending.

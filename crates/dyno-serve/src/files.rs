@@ -1,12 +1,12 @@
 //! The build's files, as the game server serves them: a URL path to a file inside the build
-//! folder, its content type, and each HTML page with the probe's script tag added.
+//! folder, its content type, and each HTML page with the probe's script tag added, or as it is.
 
 use std::path::{Component, Path, PathBuf};
 
 use percent_encoding::percent_decode_str;
 
 use crate::ServeError;
-use crate::http::{RangeAsk, Response, range_ask};
+use crate::http::{RangeAsk, Request, Response, range_ask};
 
 /// The path the game server serves the probe at. A request under it is dyno's, not the game's.
 pub const DYNO_PATH: &str = "/__dyno/";
@@ -21,6 +21,16 @@ const PROBE_TAG: &[u8] = br#"<script src="/__dyno/probe.js" data-dyno-relay></sc
 
 /// The page a folder serves.
 const INDEX: &str = "index.html";
+
+/// What the game server does to each HTML page of the build.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pages {
+    /// Adds the probe's script tag, for a browser with no driver to add the probe.
+    WithProbe,
+    /// Sends each page as it is, for a browser whose driver adds the probe itself, so the page
+    /// loads only the game's own files.
+    AsTheyAre,
+}
 
 /// A build folder to serve.
 #[derive(Clone, Debug)]
@@ -70,11 +80,31 @@ impl Build {
     }
 }
 
-/// The response for a file: the whole file, or the part a `Range` header asks for. An HTML page
-/// gets the probe's tag and is always sent whole.
-pub fn file_response(path: &Path, contents: Vec<u8>, range: Option<&str>) -> Response {
+/// The response to a request for a build file: the file, part of it, or an error. Only GET and
+/// HEAD read a file.
+pub(crate) fn build_response(build: &Build, request: &Request, pages: Pages) -> Response {
+    if request.method != "GET" && request.method != "HEAD" {
+        return Response::error("405 Method Not Allowed");
+    }
+    let Some(path) = build.file(&request.path) else {
+        return Response::error("404 Not Found");
+    };
+    match std::fs::read(&path) {
+        Ok(contents) => file_response(&path, contents, request.range.as_deref(), pages),
+        Err(_) => Response::error("404 Not Found"),
+    }
+}
+
+/// The response for a file: the whole file, or the part a `Range` header asks for. With the
+/// probe, an HTML page gets the probe's tag and is always sent whole.
+pub fn file_response(
+    path: &Path,
+    contents: Vec<u8>,
+    range: Option<&str>,
+    pages: Pages,
+) -> Response {
     let content_type = content_type(path);
-    if is_html(path) {
+    if pages == Pages::WithProbe && is_html(path) {
         return Response::new("200 OK", content_type, with_probe(&contents));
     }
     let length = contents.len() as u64;
@@ -269,6 +299,7 @@ mod tests {
             Path::new("a.mp3"),
             b"0123456789".to_vec(),
             Some("bytes=2-4"),
+            Pages::WithProbe,
         );
         assert_eq!(response.status, "206 Partial Content");
         assert_eq!(response.body, b"234");
@@ -281,7 +312,12 @@ mod tests {
 
     #[test]
     fn a_range_past_the_end_of_a_file_is_refused_with_its_length() {
-        let response = file_response(Path::new("a.mp3"), b"0123".to_vec(), Some("bytes=10-"));
+        let response = file_response(
+            Path::new("a.mp3"),
+            b"0123".to_vec(),
+            Some("bytes=10-"),
+            Pages::WithProbe,
+        );
         assert_eq!(response.status, "416 Range Not Satisfiable");
         assert!(
             response
@@ -296,9 +332,30 @@ mod tests {
             Path::new("index.html"),
             b"<head>".to_vec(),
             Some("bytes=0-1"),
+            Pages::WithProbe,
         );
         assert_eq!(response.status, "200 OK");
         assert!(text(&response.body).contains("data-dyno-relay"));
+    }
+
+    #[test]
+    fn an_html_page_as_it_is_has_no_probe_and_is_a_file_like_any_other() {
+        let whole = file_response(
+            Path::new("index.html"),
+            b"<head></head>".to_vec(),
+            None,
+            Pages::AsTheyAre,
+        );
+        assert_eq!(whole.body, b"<head></head>");
+        assert_eq!(whole.content_type, "text/html; charset=utf-8");
+        let part = file_response(
+            Path::new("index.html"),
+            b"<head></head>".to_vec(),
+            Some("bytes=0-5"),
+            Pages::AsTheyAre,
+        );
+        assert_eq!(part.status, "206 Partial Content");
+        assert_eq!(part.body, b"<head>");
     }
 
     #[test]

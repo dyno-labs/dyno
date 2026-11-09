@@ -253,7 +253,7 @@
           "const": "scanned"
         },
         {
-          "description": "The browser loaded the build that dyno served (`--driver serve`).",
+          "description": "The browser loaded the build that dyno served (`--driver serve` or `--browser`).",
           "type": "string",
           "const": "served"
         },

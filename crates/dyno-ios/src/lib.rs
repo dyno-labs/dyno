@@ -84,7 +84,8 @@ pub struct RunWindow {
 /// The game's process is the WebContent process with the largest footprint during the run.
 /// `device.phys_footprint` is its first footprint at or after the frame went idle, with its peak
 /// during the run as an item. `device.kills` is 1 when the process left the trace while the run
-/// was still on, as a process that iOS kills does.
+/// was still on, as a process that iOS kills does. The evidence names the model and iOS version,
+/// never the phone's own name, which is often its owner's.
 pub fn device_measures(trace: &Trace, run: &RunWindow) -> Vec<Measure> {
     let in_run: Vec<(f64, u32, u64)> = trace
         .samples
@@ -102,10 +103,9 @@ pub fn device_measures(trace: &Trace, run: &RunWindow) -> Vec<Measure> {
         })
         .collect();
     let Some(&(_, game_pid, peak)) = in_run.iter().max_by_key(|(_, _, bytes)| *bytes) else {
-        return missing_device_measures(&format!(
-            "the trace of {} has no Safari WebContent process during the run",
-            trace.device.name
-        ));
+        return missing_device_measures(
+            "the trace of the phone has no Safari WebContent process during the run",
+        );
     };
     let game: Vec<(f64, u64)> = in_run
         .iter()
@@ -115,8 +115,8 @@ pub fn device_measures(trace: &Trace, run: &RunWindow) -> Vec<Measure> {
     let evidence = vec![Evidence {
         method: Method::Xctrace,
         detail: format!(
-            "an Activity Monitor trace of {}: {}, iOS {}, process {WEB_CONTENT} ({game_pid})",
-            trace.device.name, trace.device.model, trace.device.os_version
+            "an Activity Monitor trace of the phone: {}, iOS {}, process {WEB_CONTENT} ({game_pid})",
+            trace.device.model, trace.device.os_version
         ),
     }];
     let at_idle = run.idle_epoch_ms.and_then(|idle| {
@@ -299,7 +299,7 @@ mod tests {
         assert_eq!(footprint.items[0].value, MeasureValue::Integer(400));
         assert_eq!(
             footprint.evidence[0].detail,
-            "an Activity Monitor trace of Dev’s iPhone: iPhone 14 Pro Max, iOS 26.6.2, process \
+            "an Activity Monitor trace of the phone: iPhone 14 Pro Max, iOS 26.6.2, process \
              com.apple.WebKit.WebContent (412)"
         );
         assert!(footprint.required);

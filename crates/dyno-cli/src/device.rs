@@ -114,9 +114,20 @@ impl DeviceRun {
                     ended_epoch_ms: run.ended_epoch_ms,
                 },
             ),
-            Err(error) => dyno_ios::missing_device_measures(&error.to_string()),
+            Err(error) => {
+                dyno_ios::missing_device_measures(&without_name(&error.to_string(), &self.name))
+            }
         }
     }
+}
+
+/// The text with the phone's own name, which is often its owner's, taken out: a reason goes into
+/// the result, which can be uploaded.
+fn without_name(text: &str, name: &str) -> String {
+    if name.is_empty() {
+        return text.to_owned();
+    }
+    text.replace(name, "the phone")
 }
 
 /// Where a check that writes its result to `out` keeps its trace: beside it, as `<name>.trace`.
@@ -127,6 +138,18 @@ pub fn kept_trace(out: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_reason_never_holds_the_phone_s_own_name() {
+        assert_eq!(
+            without_name(
+                "xctrace did not save the trace: Dev’s iPhone went away",
+                "Dev’s iPhone"
+            ),
+            "xctrace did not save the trace: the phone went away"
+        );
+        assert_eq!(without_name("no name here", ""), "no name here");
+    }
 
     #[test]
     fn the_trace_is_kept_beside_the_result() {

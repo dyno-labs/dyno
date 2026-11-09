@@ -159,6 +159,11 @@ impl Driver for ServeDriver {
         self.last_run = Some(times);
         Ok(messages)
     }
+
+    /// Safari gives the page no heap reading, and the harness page has no other way to read it.
+    fn reads_heap(&self) -> bool {
+        false
+    }
 }
 
 fn driver_error(error: &ServeError) -> DriverError {

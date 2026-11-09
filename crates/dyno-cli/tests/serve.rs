@@ -224,7 +224,7 @@ fn a_device_check_records_the_phone_and_reads_its_footprint_at_idle() {
     assert_eq!(footprint["value"], 209_715_200);
     assert_eq!(
         footprint["evidence"][0]["detail"],
-        "an Activity Monitor trace of Test iPhone: iPhone 14 Pro Max, iOS 26.6.2, process \
+        "an Activity Monitor trace of the phone: iPhone 14 Pro Max, iOS 26.6.2, process \
          com.apple.WebKit.WebContent (412)"
     );
     let kills = run_measure(&result, "device.kills");

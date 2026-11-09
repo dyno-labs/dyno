@@ -11,7 +11,7 @@
 use std::fmt;
 
 use dyno_schema::ids::{MeasureId, RuleId};
-use dyno_schema::measure::{Measure, NOT_BUILT_YET, missing_measures};
+use dyno_schema::measure::{Measure, MeasureStatus, NOT_BUILT_YET, missing_measures};
 use dyno_schema::result::DriverInfo;
 use dyno_schema::rule::{Finding, incomplete_findings};
 use dyno_schema::runner::{DriverMessage, RunRequest};
@@ -28,6 +28,12 @@ pub trait Driver {
 
     /// Runs the request and returns every message, in order. The last one is `done` or `error`.
     fn run(&mut self, request: &RunRequest) -> Result<Vec<DriverMessage>, DriverError>;
+
+    /// Whether the driver can send a `heap` reading. A browser that gives none, such as Safari,
+    /// has `lab.js_heap` unsupported rather than missing, so the run is not incomplete for it.
+    fn reads_heap(&self) -> bool {
+        true
+    }
 }
 
 /// Why a driver run failed: a fixed code, and a detail that has been through [`scrub`].
@@ -158,11 +164,31 @@ pub fn run_lab(driver: &mut dyn Driver, request: &RunRequest) -> LabRun {
         let error = DriverError::new(DriverErrorCode::Protocol, NEVER_IDLE);
         return failed_run(driver.name(), request, &error);
     };
+    if !driver.reads_heap() {
+        heap_unsupported(&mut measures);
+    }
     measures.extend(play_measures(request, NOT_BUILT_YET));
     LabRun {
         driver: hello_driver(&messages),
         measures,
         findings,
+    }
+}
+
+/// Why a driver that cannot read the heap has no `lab.js_heap`.
+const NO_HEAP: &str = "the browser gives the page no heap reading";
+
+/// `lab.js_heap` unsupported, when it is missing because the driver cannot read the heap.
+fn heap_unsupported(measures: &mut [Measure]) {
+    for measure in measures
+        .iter_mut()
+        .filter(|measure| measure.id == MeasureId::LabJsHeap)
+        .filter(|measure| measure.status == MeasureStatus::Missing)
+    {
+        *measure = Measure {
+            reason: Some(NO_HEAP.to_owned()),
+            ..Measure::blank(MeasureId::LabJsHeap, MeasureStatus::Unsupported)
+        };
     }
 }
 
@@ -233,9 +259,9 @@ fn failure_reason(driver_name: &str, error: &DriverError) -> String {
 mod tests {
     use std::collections::BTreeSet;
 
-    use dyno_schema::measure::{MeasureStatus, Source};
+    use dyno_schema::measure::Source;
     use dyno_schema::profile::{HostProfile, Scenario};
-    use dyno_schema::runner::RUNNER_PROTOCOL_VERSION;
+    use dyno_schema::runner::{RUNNER_PROTOCOL_VERSION, RunMark};
 
     use super::*;
 
@@ -253,6 +279,7 @@ mod tests {
     struct TestDriver {
         name: String,
         outcome: Result<Vec<DriverMessage>, DriverError>,
+        reads_heap: bool,
     }
 
     impl Driver for TestDriver {
@@ -263,6 +290,10 @@ mod tests {
         fn run(&mut self, _request: &RunRequest) -> Result<Vec<DriverMessage>, DriverError> {
             self.outcome.clone()
         }
+
+        fn reads_heap(&self) -> bool {
+            self.reads_heap
+        }
     }
 
     /// A driver named "failing" that returns an error.
@@ -270,6 +301,7 @@ mod tests {
         TestDriver {
             name: "failing".to_owned(),
             outcome: Err(DriverError::new(code, detail)),
+            reads_heap: true,
         }
     }
 
@@ -278,6 +310,7 @@ mod tests {
         TestDriver {
             name: "failing".to_owned(),
             outcome: Ok(messages),
+            reads_heap: true,
         }
     }
 
@@ -326,6 +359,7 @@ mod tests {
         TestDriver {
             name: "stub".to_owned(),
             outcome: Err(DriverError::not_built()),
+            reads_heap: true,
         }
     }
 
@@ -379,6 +413,39 @@ mod tests {
         };
         assert_eq!(required(None), vec![false; PLAY_MEASURES.len()]);
         assert_eq!(required(Some(SPINS)), vec![true; PLAY_MEASURES.len()]);
+    }
+
+    /// A run that went idle and sent nothing else, so no heap reading.
+    fn went_idle() -> Vec<DriverMessage> {
+        vec![
+            DriverMessage::Mark {
+                mark: RunMark::Idle,
+                t_ms: 0.0,
+            },
+            DriverMessage::Done { t_ms: 0.0 },
+        ]
+    }
+
+    fn js_heap(run: LabRun) -> Measure {
+        run.measures
+            .into_iter()
+            .find(|measure| measure.id == MeasureId::LabJsHeap)
+            .unwrap()
+    }
+
+    #[test]
+    fn a_driver_that_cannot_read_the_heap_has_it_unsupported_not_missing() {
+        let mut safari = TestDriver {
+            reads_heap: false,
+            ..sends(went_idle())
+        };
+        let heap = js_heap(run_lab(&mut safari, &request(None)));
+        assert_eq!(heap.status, MeasureStatus::Unsupported);
+        assert_eq!(heap.reason.as_deref(), Some(NO_HEAP));
+        assert!(heap.required);
+
+        let heap = js_heap(run_lab(&mut sends(went_idle()), &request(None)));
+        assert_eq!(heap.status, MeasureStatus::Missing);
     }
 
     #[test]

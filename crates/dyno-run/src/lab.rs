@@ -803,7 +803,7 @@ fn measured_value(id: MeasureId, value: MeasureValue, method: Method) -> Measure
         value: Some(value),
         evidence: vec![Evidence {
             method,
-            detail: "one Chromium run in the harness page".to_owned(),
+            detail: "one run in the harness page".to_owned(),
         }],
         uncertainty: Uncertainty::exact(),
         ..Measure::blank(id, MeasureStatus::Measured)

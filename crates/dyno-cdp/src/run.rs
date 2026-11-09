@@ -280,7 +280,7 @@ impl Run {
                 }
             }
         }
-        self.at_idle().await?;
+        self.at_idle(deadline).await?;
         let active = &request.host_profile.active_message;
         self.page
             .call(
@@ -477,32 +477,37 @@ impl Run {
         Ok(())
     }
 
-    /// The heap and the self-checks, read once the frame is idle.
-    async fn at_idle(&mut self) -> Result<(), CdpError> {
+    /// The heap and the self-checks, read once the frame is idle. The game's own thread answers
+    /// these calls, so each waits until the run's deadline.
+    async fn at_idle(&mut self, deadline: Instant) -> Result<(), CdpError> {
         self.mark(RunMark::Idle);
         let game = self
             .game
             .as_ref()
             .ok_or_else(|| CdpError::Gone("the game frame".to_owned()))?;
         let session = game.session.clone();
-        let heap = session.call("Runtime.getHeapUsage", json!({})).await?;
+        let heap = session
+            .call_until("Runtime.getHeapUsage", json!({}), deadline)
+            .await?;
         let used_bytes = heap["usedSize"].as_f64().map_or(0, |bytes| bytes as u64);
         let t_ms = self.t_ms();
         self.messages.push(DriverMessage::Heap { used_bytes, t_ms });
         let world = session
-            .call(
+            .call_until(
                 "Page.createIsolatedWorld",
                 json!({ "frameId": game.target_id, "worldName": CHECK_WORLD }),
+                deadline,
             )
             .await?;
         let checked = session
-            .call(
+            .call_until(
                 "Runtime.evaluate",
                 json!({
                     "expression": SELF_CHECKS,
                     "contextId": world["executionContextId"],
                     "returnByValue": true,
                 }),
+                deadline,
             )
             .await?;
         let checks: Checks = serde_json::from_value(checked["result"]["value"].clone())

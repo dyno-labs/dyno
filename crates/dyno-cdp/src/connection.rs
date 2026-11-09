@@ -16,6 +16,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, oneshot};
+use tokio::time::Instant;
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::CdpError;
@@ -108,6 +109,18 @@ impl Connection {
         method: &str,
         params: Value,
     ) -> Result<Value, CdpError> {
+        self.call_waiting(session_id, method, params, self.call_timeout)
+            .await
+    }
+
+    /// Sends one call and waits for its reply, up to `wait`.
+    async fn call_waiting(
+        &self,
+        session_id: Option<&str>,
+        method: &str,
+        params: Value,
+        wait: Duration,
+    ) -> Result<Value, CdpError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (reply, answer) = oneshot::channel();
         self.pending_calls().insert(
@@ -130,7 +143,7 @@ impl Connection {
             self.pending_calls().remove(&id);
             return Err(CdpError::call(method, "the connection is closed"));
         }
-        match tokio::time::timeout(self.call_timeout, answer).await {
+        match tokio::time::timeout(wait, answer).await {
             Ok(Ok(reply)) => reply,
             Ok(Err(_)) => Err(CdpError::call(method, "the reply was dropped")),
             Err(_) => {
@@ -231,6 +244,24 @@ impl Session {
             .call(self.id.as_deref(), method, params)
             .await
     }
+
+    /// Sends a call that the target answers from its own main thread, such as script in a game
+    /// frame, and waits for its reply until `deadline`, and never less than the call timeout. A
+    /// game still decoding or drawing after its network went idle answers late, most of all on a
+    /// small machine that draws in software, so the run's deadline bounds the wait instead.
+    pub async fn call_until(
+        &self,
+        method: &str,
+        params: Value,
+        deadline: Instant,
+    ) -> Result<Value, CdpError> {
+        let wait = deadline
+            .saturating_duration_since(Instant::now())
+            .max(self.connection.call_timeout);
+        self.connection
+            .call_waiting(self.id.as_deref(), method, params, wait)
+            .await
+    }
 }
 
 #[cfg(test)]
@@ -245,6 +276,8 @@ mod tests {
     /// What the fake browser does with one call.
     enum Answer {
         Send(Vec<Value>),
+        /// The same messages, after a pause.
+        Later(Duration, Vec<Value>),
         Close,
     }
 
@@ -261,7 +294,14 @@ mod tests {
             let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
             while let Some(Ok(Message::Text(text))) = socket.next().await {
                 let call: Value = serde_json::from_str(&text).unwrap();
-                match answer(&call) {
+                let answer = match answer(&call) {
+                    Answer::Later(pause, messages) => {
+                        tokio::time::sleep(pause).await;
+                        Answer::Send(messages)
+                    }
+                    answer => answer,
+                };
+                match answer {
                     Answer::Send(messages) => {
                         for message in messages {
                             let text = match message {
@@ -275,6 +315,7 @@ mod tests {
                         let _ = socket.close(None).await;
                         return;
                     }
+                    Answer::Later(..) => unreachable!("a pause becomes a send above"),
                 }
             }
         });
@@ -357,6 +398,32 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(detail(error).1, "no reply in time");
+    }
+
+    #[tokio::test]
+    async fn a_call_until_a_deadline_takes_a_reply_that_comes_after_the_call_timeout() {
+        let (connection, _events) = connect(Duration::from_millis(50), |call| {
+            Answer::Later(Duration::from_millis(300), vec![reply(call, json!("late"))])
+        })
+        .await;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let result = Session::browser(&connection)
+            .call_until("Runtime.evaluate", json!({}), deadline)
+            .await;
+        assert_eq!(result.unwrap(), "late");
+    }
+
+    #[tokio::test]
+    async fn a_call_until_a_deadline_with_no_reply_fails_at_the_deadline() {
+        let (connection, _events) =
+            connect(Duration::from_millis(50), |_| Answer::Send(Vec::new())).await;
+        let deadline = Instant::now() + Duration::from_millis(400);
+        let error = Session::browser(&connection)
+            .call_until("Runtime.evaluate", json!({}), deadline)
+            .await
+            .unwrap_err();
+        assert_eq!(detail(error).1, "no reply in time");
+        assert!(Instant::now() >= deadline);
     }
 
     #[tokio::test]

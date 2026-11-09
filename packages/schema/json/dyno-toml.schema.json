@@ -4,6 +4,17 @@
   "description": "A link file: one `[[game]]` table per build folder.",
   "type": "object",
   "properties": {
+    "build": {
+      "description": "How CI makes the build folders. dyno does not run it.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BuildCommand"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "game": {
       "description": "One `[[game]]` table per build folder.",
       "type": "array",
@@ -24,6 +35,20 @@
     "schema_version"
   ],
   "$defs": {
+    "BuildCommand": {
+      "description": "How CI makes the build folders, such as the workflow that the dyno site's setup pull request\nwrites. dyno does not run it.",
+      "type": "object",
+      "properties": {
+        "command": {
+          "description": "The shell command that makes every build folder from a fresh checkout, run in this file's\nfolder.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "command"
+      ]
+    },
     "LinkedGame": {
       "description": "One build folder and the game it belongs to.",
       "type": "object",

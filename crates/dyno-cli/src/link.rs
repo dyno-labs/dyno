@@ -286,7 +286,7 @@ mod tests {
     fn a_new_entry_goes_at_the_end_and_keeps_the_comments() {
         let (_root, place) = repository();
         let before = format!(
-            "# The games of this repository.\nschema_version = 0\n\n[[game]]\n# The puzzle.\nid = \"{TILE_POP}\" # on the site\nbuild = \"games/tile_pop/dist\"\n"
+            "# The games of this repository.\nschema_version = 0\n\n[build]\ncommand = \"pnpm build\"\n\n[[game]]\n# The puzzle.\nid = \"{TILE_POP}\" # on the site\nbuild = \"games/tile_pop/dist\"\n"
         );
         let text = with_entry(
             link_document(Some(&before)).unwrap(),
@@ -299,7 +299,9 @@ mod tests {
             text.ends_with("build = \"games/moon_lander/dist\"\n"),
             "{text}"
         );
-        assert_eq!(LinkFile::parse(&text).unwrap().games.len(), 2);
+        let links = LinkFile::parse(&text).unwrap();
+        assert_eq!(links.games.len(), 2);
+        assert_eq!(links.build.unwrap().command, "pnpm build");
     }
 
     #[test]

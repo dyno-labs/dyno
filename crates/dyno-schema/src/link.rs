@@ -3,7 +3,9 @@
 //! dyno looks for it in the build's parent folders, nearest first, and reads the first one it
 //! finds. Its entry for the build gives the game's id, and the game's name as the `--game` label
 //! when none is given. A file with no entry for the build gives no game. One file can name many
-//! build folders, as a games file does, so one repository can hold many games.
+//! build folders, as a games file does, so one repository can hold many games. An optional
+//! `[build]` table holds the command that CI runs to make the builds. dyno checks its shape and
+//! does nothing else with it.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -22,9 +24,22 @@ pub const LINK_FILE_NAME: &str = "dyno.toml";
 pub struct LinkFile {
     /// The file format version. Must equal the schema version this dyno reads.
     pub schema_version: u32,
+    /// How CI makes the build folders. dyno does not run it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build: Option<BuildCommand>,
     /// One `[[game]]` table per build folder.
     #[serde(rename = "game", default)]
     pub games: Vec<LinkedGame>,
+}
+
+/// How CI makes the build folders, such as the workflow that the dyno site's setup pull request
+/// writes. dyno does not run it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BuildCommand {
+    /// The shell command that makes every build folder from a fresh checkout, run in this file's
+    /// folder.
+    pub command: String,
 }
 
 /// One build folder and the game it belongs to.
@@ -76,6 +91,13 @@ impl LinkFile {
     /// Checks the file, and writes each game id in its canonical form.
     fn validate(&mut self) -> Result<(), String> {
         config::check_schema_version(self.schema_version)?;
+        if self
+            .build
+            .as_ref()
+            .is_some_and(|build| build.command.trim().is_empty())
+        {
+            return Err("the build command is empty".to_owned());
+        }
         let mut builds = BTreeSet::new();
         for game in &mut self.games {
             if game.build.trim().is_empty() {
@@ -299,11 +321,35 @@ mod tests {
                 "schema_version = 0\n[[game]]\nid = \"6f1c2a8e-0000-4000-8000-000000000000\"\nbuild = \"a\"\nbiuld = \"b\"\n",
                 "unknown field `biuld`",
             ),
+            (
+                "schema_version = 0\n[build]\ncommand = \" \"\n",
+                "build command is empty",
+            ),
+            (
+                "schema_version = 0\n[build]\ncommand = \"make\"\nshell = \"bash\"\n",
+                "unknown field `shell`",
+            ),
         ];
         for (text, problem) in cases {
             let error = LinkFile::parse(text).unwrap_err().to_string();
             assert!(error.contains(problem), "{text}: {error}");
         }
+    }
+
+    #[test]
+    fn the_build_command_is_read_and_changes_no_entry() {
+        let root = repository(&two_games().replacen(
+            "schema_version = 0",
+            "schema_version = 0\n[build]\ncommand = \"pnpm install && pnpm build\"",
+            1,
+        ));
+        let links = LinkFile::load(&root.path().join(LINK_FILE_NAME)).unwrap();
+        assert_eq!(
+            links.build.map(|build| build.command).as_deref(),
+            Some("pnpm install && pnpm build")
+        );
+        let build = root.path().join("games/moon_lander/dist");
+        assert_eq!(find_link(&build).unwrap().unwrap().game.id, MOON_LANDER);
     }
 
     #[test]

@@ -95,6 +95,22 @@ build = "studio/games/moon_lander/dist"
 
 `name` is optional. [`dyno link`](#dyno-link-build-phase-3) writes the file for you. `packages/schema/json/dyno-toml.schema.json` gives its shape. With `--games`, dyno looks up each game's build the same way, and the games file's `id` stays the label.
 
+A `[build]` table can say how CI makes the build folders. Its `command` is one shell command that makes every build from a fresh checkout, run in the file's folder. The workflow that the dyno site's setup pull request writes runs it before it checks each game. dyno checks that the command is not empty, and does nothing else with it. Put the table before the first `[[game]]`:
+
+```toml
+schema_version = 0
+
+[build]
+command = "pnpm install --frozen-lockfile && pnpm build"
+
+[[game]]
+id = "6f1c2a8e-0000-4000-8000-000000000000"
+name = "Moon Lander"
+build = "studio/games/moon_lander/dist"
+```
+
+A dyno from before the table refuses a file that has one.
+
 #### The empty build
 
 `--baseline` checks the empty build inside dyno instead of a target: one file, `index.html`, that holds `<!doctype html><title>baseline</title>` and a newline. Its build id never changes: `7114691fda7748ccc7c091ffeae74100f190d0557000f8739823a040446c5c4e`. A device run of it, `dyno check --baseline --driver serve --device`, gives the phone's footprint with no game, which a game's footprint can be measured over. dyno writes the build to a folder of its own, so `run.target.build` is null. The empty build belongs to no game, so `--baseline` takes no game label and reads no `dyno.toml`.

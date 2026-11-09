@@ -10,6 +10,7 @@
 
 use std::fmt;
 
+use dyno_schema::environment::{Environment, EnvironmentBrowser};
 use dyno_schema::ids::{MeasureId, RuleId};
 use dyno_schema::measure::{Measure, MeasureStatus, NOT_BUILT_YET, missing_measures};
 use dyno_schema::result::DriverInfo;
@@ -33,6 +34,19 @@ pub trait Driver {
     /// has `lab.js_heap` unsupported rather than missing, so the run is not incomplete for it.
     fn reads_heap(&self) -> bool {
         true
+    }
+
+    /// What ran the last run, given the driver that its `hello` named. By default, the browser
+    /// that the `hello` names and no OS or device, which is all that an outside program says.
+    fn environment(&self, hello: &DriverInfo) -> Environment {
+        Environment {
+            browser: hello
+                .browser
+                .as_deref()
+                .and_then(EnvironmentBrowser::from_label),
+            os: None,
+            device: None,
+        }
     }
 }
 
@@ -60,6 +74,9 @@ pub enum DriverErrorCode {
 pub struct LabRun {
     /// The driver that ran, as its `hello` names it. None when the run failed.
     pub driver: Option<DriverInfo>,
+    /// What ran: the browser, the OS and the device, as far as the driver knows. None when the
+    /// run failed before the driver's `hello`.
+    pub environment: Option<Environment>,
     /// Every lab and play measure.
     pub measures: Vec<Measure>,
     /// One finding per lab rule.
@@ -155,21 +172,25 @@ impl fmt::Display for DriverErrorCode {
 pub fn run_lab(driver: &mut dyn Driver, request: &RunRequest) -> LabRun {
     let messages = match driver.run(request) {
         Ok(messages) => messages,
-        Err(error) => return failed_run(driver.name(), request, &error),
+        Err(error) => return failed_run(driver.name(), request, &error, None),
     };
+    // A run that fails after its `hello`, as one whose page iOS killed, still says what ran.
+    let hello = hello_driver(&messages);
+    let environment = hello.as_ref().map(|hello| driver.environment(hello));
     if let Some(error) = final_error(&messages) {
-        return failed_run(driver.name(), request, &error);
+        return failed_run(driver.name(), request, &error, environment);
     }
     let Some((mut measures, findings)) = lab::read(&messages, request) else {
         let error = DriverError::new(DriverErrorCode::Protocol, NEVER_IDLE);
-        return failed_run(driver.name(), request, &error);
+        return failed_run(driver.name(), request, &error, environment);
     };
     if !driver.reads_heap() {
         heap_unsupported(&mut measures);
     }
     measures.extend(play_measures(request, NOT_BUILT_YET));
     LabRun {
-        driver: hello_driver(&messages),
+        driver: hello,
+        environment,
         measures,
         findings,
     }
@@ -195,7 +216,12 @@ fn heap_unsupported(measures: &mut [Measure]) {
 /// Why a run that ended without an `idle` mark has no measures.
 const NEVER_IDLE: &str = "the run ended before the game frame went idle";
 
-fn failed_run(driver_name: &str, request: &RunRequest, error: &DriverError) -> LabRun {
+fn failed_run(
+    driver_name: &str,
+    request: &RunRequest,
+    error: &DriverError,
+    environment: Option<Environment>,
+) -> LabRun {
     let reason = match error.code() {
         DriverErrorCode::NotBuilt => NOT_BUILT_YET.to_owned(),
         _ => failure_reason(driver_name, error),
@@ -204,6 +230,7 @@ fn failed_run(driver_name: &str, request: &RunRequest, error: &DriverError) -> L
     measures.extend(play_measures(request, &reason));
     LabRun {
         driver: None,
+        environment,
         measures,
         findings: incomplete_findings(LAB_RULES, &reason),
     }
@@ -446,6 +473,71 @@ mod tests {
 
         let heap = js_heap(run_lab(&mut sends(went_idle()), &request(None)));
         assert_eq!(heap.status, MeasureStatus::Missing);
+    }
+
+    fn hello(browser: Option<&str>) -> DriverMessage {
+        DriverMessage::Hello {
+            protocol_version: RUNNER_PROTOCOL_VERSION,
+            driver: DriverInfo {
+                name: "playwright".to_owned(),
+                version: "1.0.0".to_owned(),
+                browser: browser.map(str::to_owned),
+            },
+        }
+    }
+
+    #[test]
+    fn by_default_the_environment_is_the_browser_the_hello_names() {
+        let mut messages = vec![hello(Some("Chromium 140.0.7339.0"))];
+        messages.extend(went_idle());
+        let run = run_lab(&mut sends(messages), &request(None));
+        let environment = run.environment.unwrap();
+        let browser = environment.browser.unwrap();
+        assert_eq!(browser.name, "Chromium");
+        assert_eq!(browser.version.as_deref(), Some("140.0.7339.0"));
+        assert_eq!(browser.headless, None);
+        assert_eq!(environment.os, None);
+        assert_eq!(environment.device, None);
+    }
+
+    #[test]
+    fn a_hello_with_no_browser_gives_an_environment_with_nothing_known() {
+        let mut messages = vec![hello(None)];
+        messages.extend(went_idle());
+        let run = run_lab(&mut sends(messages), &request(None));
+        assert_eq!(
+            run.environment,
+            Some(Environment {
+                browser: None,
+                os: None,
+                device: None,
+            })
+        );
+    }
+
+    #[test]
+    fn a_run_that_fails_after_its_hello_still_says_what_ran() {
+        let mut crashed = sends(vec![hello(Some("Chromium 140")), error_message("crashed")]);
+        let run = run_lab(&mut crashed, &request(None));
+        assert_eq!(run.driver, None);
+        let browser = run.environment.unwrap().browser.unwrap();
+        assert_eq!(browser.version.as_deref(), Some("140"));
+
+        let mut never_idle = sends(vec![
+            hello(Some("Chromium 140")),
+            DriverMessage::Done { t_ms: 1.0 },
+        ]);
+        assert!(
+            run_lab(&mut never_idle, &request(None))
+                .environment
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn a_run_that_fails_before_its_hello_has_no_environment() {
+        let mut driver = returns_error(DriverErrorCode::Run, "no browser");
+        assert_eq!(run_lab(&mut driver, &request(None)).environment, None);
     }
 
     #[test]

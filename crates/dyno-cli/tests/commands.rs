@@ -5,7 +5,9 @@ mod common;
 use std::fs;
 use std::path::Path;
 
-use common::{Outcome, data_dir, dyno, dyno_in, fixture_build, json, without_run_details};
+use common::{
+    Outcome, copy_dir, data_dir, dyno, dyno_in, fixture_build, json, without_run_details,
+};
 use dyno_schema::canonical::{sha256_of_canonical_json, to_canonical_json};
 use dyno_schema::catalogue::CatalogueResult;
 use dyno_schema::compare::CompareResult;
@@ -67,20 +69,6 @@ fn write_file(dir: &Path, name: &str, content: &str) -> String {
     let path = dir.join(name);
     fs::write(&path, content).unwrap();
     path.display().to_string()
-}
-
-/// Copies the folder `from` to `to`, with everything in it.
-fn copy_dir(from: &Path, to: &Path) {
-    fs::create_dir_all(to).unwrap();
-    for entry in fs::read_dir(from).unwrap() {
-        let entry = entry.unwrap();
-        let target = to.join(entry.file_name());
-        if entry.file_type().unwrap().is_dir() {
-            copy_dir(&entry.path(), &target);
-        } else {
-            fs::copy(entry.path(), target).unwrap();
-        }
-    }
 }
 
 /// The ids of the games in a catalogue result.

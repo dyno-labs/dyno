@@ -34,6 +34,8 @@ thiserror = "2.0.21"
 toml = "1.2.1"
 ts-rs = "12.0.1"
 url = "2.5.8"
+# Run ids and game ids. Already in the tree through rmcp.
+uuid = { version = "1.29.1", default-features = false, features = ["std"] }
 
 # Test only.
 insta = { version = "1.49.0", features = ["json", "redactions"] }

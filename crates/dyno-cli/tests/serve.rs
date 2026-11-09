@@ -96,6 +96,10 @@ impl Served {
     }
 }
 
+/// The user agent of Safari 26.2 on an iPhone, which freezes the iOS version at 18.6.
+const IPHONE_SAFARI: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) \
+    AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.2 Mobile/15E148 Safari/604.1";
+
 /// Plays the browser that opens the harness page, through to the end of the run. `query` is
 /// the query string the game loads with, which the page must name.
 fn open_as_browser(harness: &str, query: &str) {
@@ -111,7 +115,7 @@ fn open_as_browser(harness: &str, query: &str) {
         harness,
         "POST",
         "/__dyno/hello",
-        r#"{"user_agent":"curl/8.0"}"#,
+        &format!(r#"{{"user_agent":"{IPHONE_SAFARI}"}}"#),
     );
     exchange(game, "GET", &format!("/{query}"), "");
     exchange(
@@ -180,6 +184,29 @@ fn a_served_check_runs_in_the_browser_that_opens_it_and_records_no_query() {
     assert_eq!(result["deterministic"]["inputs"]["launch_url"], true);
     let frame_dpr = run_measure(&result, "lab.self_check.frame_dpr");
     assert_eq!(frame_dpr["status"], "measured", "{frame_dpr}");
+    assert_eq!(result["run"]["build_link"], "served");
+}
+
+#[test]
+fn a_served_check_takes_its_environment_from_the_user_agent() {
+    let served = start(&[], &["check", "tiny-build", "--driver", "serve"]);
+    open_as_browser(&served.harness.clone(), "");
+    let result: serde_json::Value = serde_json::from_str(&served.finish().stdout).unwrap();
+    // The user agent names no model, and its iOS version is frozen, so neither is read.
+    assert_eq!(
+        result["run"]["environment"],
+        serde_json::json!({
+            "browser": { "name": "Safari", "version": "26.2", "engine": "webkit", "headless": false },
+            "os": { "name": "ios", "version": null },
+            "device": {
+                "key": null,
+                "name": "iPhone",
+                "vendor": "Apple",
+                "kind": "phone",
+                "memory_bytes": null
+            }
+        })
+    );
 }
 
 /// The fake xcrun, for the device runs.
@@ -227,9 +254,71 @@ fn a_device_check_records_the_phone_and_reads_its_footprint_at_idle() {
         "an Activity Monitor trace of the phone: iPhone 14 Pro Max, iOS 26.6.2, process \
          com.apple.WebKit.WebContent (412)"
     );
+    let peak = run_measure(&result, "device.phys_footprint_peak");
+    assert_eq!(peak["status"], "measured", "{peak}");
+    assert_eq!(peak["required"], true, "{peak}");
+    assert_eq!(peak["value"], 209_715_200);
+    // Readers from before the peak measure find it as an item.
+    assert_eq!(footprint["items"][0]["key"], "peak during the run");
     let kills = run_measure(&result, "device.kills");
     assert_eq!(kills["value"], 0, "{kills}");
     assert!(folder.path().join("result.trace").is_dir());
+}
+
+#[test]
+fn a_device_check_takes_the_model_ios_version_and_memory_from_the_trace() {
+    let (outcome, result, _) = device_check(&[], &[]);
+    let environment = &result["run"]["environment"];
+    // The browser still comes from the user agent.
+    assert_eq!(environment["browser"]["name"], "Safari");
+    assert_eq!(
+        environment["os"],
+        serde_json::json!({ "name": "ios", "version": "26.6.2" })
+    );
+    assert_eq!(
+        environment["device"],
+        serde_json::json!({
+            "key": "iphone-14-pro-max",
+            "name": "iPhone 14 Pro Max",
+            "vendor": "Apple",
+            "kind": "phone",
+            "memory_bytes": 6_442_450_944_u64
+        })
+    );
+    // The phone's own name never reaches the result.
+    assert!(
+        !outcome.stdout.contains("Test iPhone"),
+        "{}",
+        outcome.stdout
+    );
+}
+
+#[test]
+fn a_device_check_whose_trace_cannot_be_read_keeps_the_user_agent_environment() {
+    let (_, result, _) = device_check(&[("FAKE_XCRUN_FAIL", "export")], &[]);
+    let environment = &result["run"]["environment"];
+    assert_eq!(environment["os"]["version"], serde_json::Value::Null);
+    assert_eq!(environment["device"]["key"], serde_json::Value::Null);
+    let peak = run_measure(&result, "device.phys_footprint_peak");
+    assert_eq!(peak["status"], "missing", "{peak}");
+}
+
+#[test]
+fn a_baseline_device_check_serves_the_empty_build() {
+    let xcrun = fake_xcrun();
+    let served = start(
+        &[("DYNO_XCRUN", &xcrun)],
+        &["check", "--baseline", "--driver", "serve", "--device"],
+    );
+    open_as_browser(&served.harness.clone(), "");
+    let result: serde_json::Value = serde_json::from_str(&served.finish().stdout).unwrap();
+    assert_eq!(
+        result["deterministic"]["build"]["build_id"],
+        "7114691fda7748ccc7c091ffeae74100f190d0557000f8739823a040446c5c4e"
+    );
+    assert_eq!(result["run"]["build_link"], "served");
+    let footprint = run_measure(&result, "device.phys_footprint");
+    assert_eq!(footprint["status"], "measured", "{footprint}");
 }
 
 /// A device check with the fake xcrun's environment and these extra flags, run to the end with

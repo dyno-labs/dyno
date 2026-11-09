@@ -179,12 +179,17 @@ impl Drop for Servers {
     }
 }
 
+/// What one served run gave: every message, when its steps happened, and the user agent of the
+/// browser that opened the page.
+pub(crate) struct Served {
+    pub messages: Vec<DriverMessage>,
+    pub times: RunTimes,
+    pub user_agent: String,
+}
+
 /// Runs the request and returns every message. An error before `hello` is returned as an error;
 /// after it, the run ends with an `error` message.
-pub(crate) async fn run(
-    driver: &ServeDriver,
-    request: &RunRequest,
-) -> Result<(Vec<DriverMessage>, RunTimes), ServeError> {
+pub(crate) async fn run(driver: &ServeDriver, request: &RunRequest) -> Result<Served, ServeError> {
     let harness = tokio_listener(&driver.harness)?;
     let game = tokio_listener(&driver.game)?;
     let (seen_sender, mut seen) = mpsc::unbounded_channel();
@@ -240,7 +245,11 @@ pub(crate) async fn run(
             .map(|idle| run.started_epoch_ms + run.t_ms(idle)),
         ended_epoch_ms,
     };
-    Ok((run.messages, times))
+    Ok(Served {
+        messages: run.messages,
+        times,
+        user_agent,
+    })
 }
 
 /// Load, idle, self-check, activate and watch. An error is the run's error message.

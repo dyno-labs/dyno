@@ -8,6 +8,8 @@
 //! run as a function.
 
 use dyno_run::{Driver, DriverError, DriverErrorCode};
+use dyno_schema::environment::{Environment, EnvironmentBrowser, EnvironmentOs, OsName};
+use dyno_schema::result::DriverInfo;
 use dyno_schema::runner::{DriverMessage, RunRequest};
 
 pub mod browser;
@@ -87,6 +89,27 @@ impl Driver for CdpDriver {
     fn run(&mut self, request: &RunRequest) -> Result<Vec<DriverMessage>, DriverError> {
         run_cdp(request)
     }
+
+    /// The Chromium that `Browser.getVersion` named, which this driver always runs headless, on
+    /// this machine's OS. The OS version is not read.
+    fn environment(&self, hello: &DriverInfo) -> Environment {
+        let browser = hello
+            .browser
+            .as_deref()
+            .and_then(EnvironmentBrowser::from_label)
+            .map(|browser| EnvironmentBrowser {
+                headless: Some(true),
+                ..browser
+            });
+        Environment {
+            browser,
+            os: OsName::of_this_machine().map(|name| EnvironmentOs {
+                name,
+                version: None,
+            }),
+            device: None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -109,6 +132,28 @@ mod tests {
         let mut encoder = GzEncoder::new(Vec::new(), Compression::best());
         encoder.write_all(script.as_bytes()).unwrap();
         encoder.finish().unwrap().len()
+    }
+
+    #[test]
+    fn the_environment_is_headless_chromium_on_this_machine() {
+        let hello = DriverInfo {
+            name: DRIVER_NAME.to_owned(),
+            version: "0.1.0".to_owned(),
+            browser: Some("Chromium 152.0.7977.82".to_owned()),
+        };
+        let environment = CdpDriver.environment(&hello);
+        let browser = environment.browser.unwrap();
+        assert_eq!(browser.name, "Chromium");
+        assert_eq!(browser.version.as_deref(), Some("152.0.7977.82"));
+        assert_eq!(
+            browser.engine,
+            Some(dyno_schema::environment::BrowserEngine::Blink)
+        );
+        assert_eq!(browser.headless, Some(true));
+        let os = environment.os.unwrap();
+        assert_eq!(Some(os.name), OsName::of_this_machine());
+        assert_eq!(os.version, None);
+        assert_eq!(environment.device, None);
     }
 
     #[test]

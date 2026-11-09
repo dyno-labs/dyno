@@ -453,6 +453,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "ureq",
+ "uuid",
 ]
 
 [[package]]
@@ -490,6 +491,7 @@ dependencies = [
  "toml",
  "ts-rs",
  "url",
+ "uuid",
 ]
 
 [[package]]

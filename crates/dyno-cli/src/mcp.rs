@@ -197,6 +197,7 @@ fn run_check(params: CheckParams) -> Result<ToolAnswer, CliError> {
     let release = Release {
         game: params.game,
         version: params.release,
+        game_id: None,
     };
     let result = check_target(&target, release, &options)?;
     let place = match &params.out {

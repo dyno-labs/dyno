@@ -31,11 +31,13 @@ expression: json(&outcome)
   "run": {
     "base_release": {
       "game": null,
+      "game_id": null,
       "version": null
     },
     "duration_ms": "[duration_ms]",
     "head_release": {
       "game": null,
+      "game_id": null,
       "version": "v2"
     },
     "machine": "[machine]",

@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LinkFile",
+  "description": "A link file: one `[[game]]` table per build folder.",
+  "type": "object",
+  "properties": {
+    "game": {
+      "description": "One `[[game]]` table per build folder.",
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/LinkedGame"
+      }
+    },
+    "schema_version": {
+      "description": "The file format version. Must equal the schema version this dyno reads.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "schema_version"
+  ],
+  "$defs": {
+    "LinkedGame": {
+      "description": "One build folder and the game it belongs to.",
+      "type": "object",
+      "properties": {
+        "build": {
+          "description": "The build folder or .zip, relative to this file. Unique in the file.",
+          "type": "string"
+        },
+        "id": {
+          "description": "The game's id on the dyno site, a UUID.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The game's name: the `--game` label when none is given.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "build"
+      ]
+    }
+  }
+}

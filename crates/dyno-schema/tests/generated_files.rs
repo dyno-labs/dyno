@@ -99,8 +99,8 @@ fn check_tree(dir: &Path, generated: &BTreeMap<String, String>) {
 }
 
 #[test]
-fn json_schemas_are_current() {
-    let generated: BTreeMap<String, String> = generate::json_schemas()
+fn json_schemas_and_catalogues_are_current() {
+    let generated: BTreeMap<String, String> = generate::json_files()
         .into_iter()
         .map(|(name, content)| (name.to_owned(), content))
         .collect();

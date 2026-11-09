@@ -17,7 +17,14 @@ use std::path::Path;
 use std::time::Duration;
 
 use dyno_run::{Driver, DriverError, DriverErrorCode};
+use dyno_schema::devices::APPLE;
+use dyno_schema::environment::{
+    BrowserEngine, DeviceKind, Environment, EnvironmentBrowser, EnvironmentDevice, EnvironmentOs,
+    OsName,
+};
+use dyno_schema::result::DriverInfo;
 use dyno_schema::runner::{DriverMessage, RunRequest};
+use dyno_schema::scrub::scrub;
 
 use crate::files::Build;
 
@@ -71,6 +78,8 @@ pub struct ServeDriver {
     game_url: String,
     wait_for_browser: Duration,
     last_run: Option<RunTimes>,
+    /// The user agent of the browser that opened the page in the last run.
+    last_user_agent: Option<String>,
 }
 
 /// When a served run's steps happened, in ms since the Unix epoch on this machine's clock. A
@@ -114,6 +123,7 @@ impl ServeDriver {
             game,
             wait_for_browser: options.wait_for_browser,
             last_run: None,
+            last_user_agent: None,
         })
     }
 
@@ -153,16 +163,22 @@ impl Driver for ServeDriver {
             .enable_all()
             .build()
             .map_err(|error| driver_error(&ServeError::Runtime(error.to_string())))?;
-        let (messages, times) = runtime
+        let served = runtime
             .block_on(run::run(self, request))
             .map_err(|error| driver_error(&error))?;
-        self.last_run = Some(times);
-        Ok(messages)
+        self.last_run = Some(served.times);
+        self.last_user_agent = Some(served.user_agent);
+        Ok(served.messages)
     }
 
     /// Safari gives the page no heap reading, and the harness page has no other way to read it.
     fn reads_heap(&self) -> bool {
         false
+    }
+
+    /// What the user agent of the browser that opened the page says.
+    fn environment(&self, _hello: &DriverInfo) -> Environment {
+        user_agent_environment(self.last_user_agent.as_deref().unwrap_or_default())
     }
 }
 
@@ -215,24 +231,8 @@ pub fn local_network_address() -> IpAddr {
 /// The browser and the kind of device, from a user agent, such as "Safari 26.2 on iPhone". None
 /// for a browser it does not know. The iOS Simulator says iPhone too.
 pub fn browser_name(user_agent: &str) -> Option<String> {
-    let version_after = |marker: &str| {
-        let rest = user_agent.split(marker).nth(1)?;
-        let version = rest.split([' ', ')', ';']).next().unwrap_or_default();
-        (!version.is_empty()).then(|| version.to_owned())
-    };
-    let browser = if let Some(version) =
-        version_after("CriOS/").or_else(|| version_after("Chrome/"))
-    {
-        format!("Chrome {version}")
-    } else if let Some(version) = version_after("FxiOS/").or_else(|| version_after("Firefox/")) {
-        format!("Firefox {version}")
-    } else if user_agent.contains("Safari/")
-        && let Some(version) = version_after("Version/")
-    {
-        format!("Safari {version}")
-    } else {
-        return None;
-    };
+    let (name, version) = browser_and_version(user_agent)?;
+    let browser = format!("{name} {version}");
     let device = [
         ("iPhone", "iPhone"),
         ("iPad", "iPad"),
@@ -246,6 +246,79 @@ pub fn browser_name(user_agent: &str) -> Option<String> {
         Some(device) => format!("{browser} on {device}"),
         None => browser,
     })
+}
+
+/// The browser's name and version in a user agent. None for a browser it does not know.
+fn browser_and_version(user_agent: &str) -> Option<(&'static str, String)> {
+    let version_after = |marker: &str| {
+        let rest = user_agent.split(marker).nth(1)?;
+        let version = rest.split([' ', ')', ';']).next().unwrap_or_default();
+        (!version.is_empty()).then(|| scrub(version))
+    };
+    if let Some(version) = version_after("CriOS/").or_else(|| version_after("Chrome/")) {
+        Some(("Chrome", version))
+    } else if let Some(version) = version_after("FxiOS/").or_else(|| version_after("Firefox/")) {
+        Some(("Firefox", version))
+    } else if user_agent.contains("Safari/") {
+        version_after("Version/").map(|version| ("Safari", version))
+    } else {
+        None
+    }
+}
+
+/// What a user agent says ran the page: the browser, the OS and, on an iPhone or an iPad, the kind
+/// of device. A user agent's OS version is frozen, so the OS has none, and it names no model, so
+/// the device has no key. Every browser on iOS uses WebKit. Safari on iOS and Chrome say whether
+/// they are headless; other browsers do not.
+pub fn user_agent_environment(user_agent: &str) -> Environment {
+    let mobile_device = if user_agent.contains("iPhone") {
+        Some(("iPhone", DeviceKind::Phone, OsName::Ios))
+    } else if user_agent.contains("iPad") {
+        Some(("iPad", DeviceKind::Tablet, OsName::Ipados))
+    } else {
+        None
+    };
+    let os = match mobile_device {
+        Some((_, _, os)) => Some(os),
+        None if user_agent.contains("Android") => Some(OsName::Android),
+        None if user_agent.contains("Macintosh") => Some(OsName::Macos),
+        None if user_agent.contains("Windows") => Some(OsName::Windows),
+        None if user_agent.contains("Linux") || user_agent.contains("X11") => Some(OsName::Linux),
+        None => None,
+    };
+    let browser = browser_and_version(user_agent).map(|(name, version)| {
+        let engine = match (name, mobile_device) {
+            (_, Some(_)) => BrowserEngine::Webkit,
+            ("Chrome", None) => BrowserEngine::Blink,
+            ("Firefox", None) => BrowserEngine::Gecko,
+            _ => BrowserEngine::Webkit,
+        };
+        let headless = match (name, mobile_device) {
+            ("Safari", Some(_)) => Some(false),
+            ("Chrome", None) => Some(user_agent.contains("HeadlessChrome")),
+            _ => None,
+        };
+        EnvironmentBrowser {
+            name: name.to_owned(),
+            version: Some(version),
+            engine: Some(engine),
+            headless,
+        }
+    });
+    Environment {
+        browser,
+        os: os.map(|name| EnvironmentOs {
+            name,
+            version: None,
+        }),
+        device: mobile_device.map(|(name, kind, _)| EnvironmentDevice {
+            key: None,
+            name: name.to_owned(),
+            vendor: APPLE.to_owned(),
+            kind,
+            memory_bytes: None,
+        }),
+    }
 }
 
 #[cfg(test)]
@@ -296,6 +369,99 @@ mod tests {
     #[test]
     fn an_unknown_browser_has_no_name() {
         assert_eq!(browser_name("curl/8.0"), None);
+    }
+
+    #[test]
+    fn safari_on_an_iphone_is_webkit_on_ios_with_no_version_or_model() {
+        let environment = user_agent_environment(IPHONE_SAFARI);
+        assert_eq!(
+            environment.browser,
+            Some(EnvironmentBrowser {
+                name: "Safari".to_owned(),
+                version: Some("26.2".to_owned()),
+                engine: Some(BrowserEngine::Webkit),
+                headless: Some(false),
+            })
+        );
+        // The user agent says iOS 18.6, which Safari 26 freezes, so the version is not read.
+        assert_eq!(
+            environment.os,
+            Some(EnvironmentOs {
+                name: OsName::Ios,
+                version: None,
+            })
+        );
+        assert_eq!(
+            environment.device,
+            Some(EnvironmentDevice {
+                key: None,
+                name: "iPhone".to_owned(),
+                vendor: "Apple".to_owned(),
+                kind: DeviceKind::Phone,
+                memory_bytes: None,
+            })
+        );
+    }
+
+    #[test]
+    fn chrome_on_ios_is_webkit_and_an_ipad_is_a_tablet() {
+        let ipad = "Mozilla/5.0 (iPad; CPU OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, \
+            like Gecko) CriOS/150.0.1 Mobile/15E148 Safari/604.1";
+        let environment = user_agent_environment(ipad);
+        let browser = environment.browser.unwrap();
+        assert_eq!(browser.name, "Chrome");
+        assert_eq!(browser.engine, Some(BrowserEngine::Webkit));
+        assert_eq!(browser.headless, None);
+        assert_eq!(environment.os.unwrap().name, OsName::Ipados);
+        assert_eq!(environment.device.unwrap().kind, DeviceKind::Tablet);
+    }
+
+    #[test]
+    fn a_desktop_browser_has_no_device() {
+        let headless = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) \
+            HeadlessChrome/152.0.7977.82 Safari/537.36";
+        let environment = user_agent_environment(headless);
+        let browser = environment.browser.unwrap();
+        assert_eq!(browser.engine, Some(BrowserEngine::Blink));
+        assert_eq!(browser.headless, Some(true));
+        assert_eq!(environment.os.unwrap().name, OsName::Linux);
+        assert_eq!(environment.device, None);
+
+        let android = "Mozilla/5.0 (Android 15; Mobile; rv:140.0) Gecko/140.0 Firefox/140.0";
+        let environment = user_agent_environment(android);
+        assert_eq!(
+            environment.browser.unwrap().engine,
+            Some(BrowserEngine::Gecko)
+        );
+        assert_eq!(environment.os.unwrap().name, OsName::Android);
+        assert_eq!(environment.device, None);
+
+        let windows = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, \
+            like Gecko) Chrome/150.0.0.0 Safari/537.36";
+        let environment = user_agent_environment(windows);
+        assert_eq!(environment.browser.unwrap().headless, Some(false));
+        assert_eq!(environment.os.unwrap().name, OsName::Windows);
+
+        let mac = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 \
+            (KHTML, like Gecko) Version/27.0 Safari/605.1.15";
+        let environment = user_agent_environment(mac);
+        assert_eq!(
+            environment.browser.unwrap().engine,
+            Some(BrowserEngine::Webkit)
+        );
+        assert_eq!(environment.os.unwrap().name, OsName::Macos);
+    }
+
+    #[test]
+    fn an_unknown_user_agent_gives_nothing_known() {
+        assert_eq!(
+            user_agent_environment("curl/8.0"),
+            Environment {
+                browser: None,
+                os: None,
+                device: None,
+            }
+        );
     }
 
     #[test]

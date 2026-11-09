@@ -51,10 +51,25 @@ pub fn dyno_in(dir: &Path, extra_env: &[(&str, &str)], args: &[&str]) -> Outcome
     }
 }
 
+/// Copies the folder `from` to `to`, with everything in it.
+pub fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_dir(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
 /// Snapshot settings that hide what differs between machines and runs.
 pub fn without_run_details() -> insta::Settings {
     let mut settings = insta::Settings::clone_current();
     for prefix in [".run", ".games[].result.run"] {
+        settings.add_redaction(&format!("{prefix}.run_id"), "[run_id]");
         settings.add_redaction(&format!("{prefix}.started_at"), "[started_at]");
         settings.add_redaction(&format!("{prefix}.duration_ms"), "[duration_ms]");
         settings.add_redaction(&format!("{prefix}.machine"), "[machine]");

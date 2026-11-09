@@ -13,9 +13,13 @@ use dyno_run::Driver;
 use dyno_run::exec::ExecDriver;
 use dyno_schema::budget::{Budget, BudgetRef};
 use dyno_schema::catalogue::{CatalogueEntry, CatalogueResult, GameEntry, GamesFile, Shard};
+use dyno_schema::environment::Environment;
 use dyno_schema::launch_url::LaunchUrl;
+use dyno_schema::link::find_link;
 use dyno_schema::profile::{HostProfile, Scenario};
-use dyno_schema::result::{CheckResult, Deterministic, Inputs, Release, RunInfo, Target, Versions};
+use dyno_schema::result::{
+    BuildLink, CheckResult, Deterministic, Inputs, Release, RunInfo, Target, Versions,
+};
 use dyno_schema::runner::{RUNNER_PROTOCOL_VERSION, RunRequest};
 use dyno_schema::status::Status;
 use dyno_schema::{SCHEMA_VERSION, TOOL_VERSION};
@@ -24,7 +28,9 @@ use dyno_score::budget::budget_verdicts;
 use dyno_score::model::{MODEL_VERSION, model_measures, provisional_tier};
 use dyno_score::status::{overall_status, run_coverage, worst};
 use dyno_serve::{DEFAULT_PORT, DEFAULT_WAIT_FOR_BROWSER, ServeDriver, ServeError, ServeOptions};
+use uuid::Uuid;
 
+use crate::baseline::EmptyBuild;
 use crate::cli::{CheckArgs, DriverArg};
 use crate::device;
 use crate::exit::{self, CliError};
@@ -39,6 +45,8 @@ pub struct CheckTarget {
     build: Option<PathBuf>,
     /// The full launch URL, query string included.
     launch_url: Option<LaunchUrl>,
+    /// Whether the build is dyno's own empty build, which no person named and no game owns.
+    baseline: bool,
 }
 
 /// The flags that apply to every game in a check.
@@ -121,10 +129,20 @@ pub fn run(args: CheckArgs) -> Result<Status, CliError> {
             .collect::<Result<Vec<_>, CliError>>()?;
         return upload_results(&uploader, &uploads, catalogue.status);
     }
-    let target = parse_targets(&args.targets)?;
+    // The empty build's folder lives until the check is done with it.
+    let empty_build = args.baseline.then(EmptyBuild::write).transpose()?;
+    let target = match &empty_build {
+        Some(empty_build) => CheckTarget {
+            build: Some(empty_build.path().to_owned()),
+            launch_url: None,
+            baseline: true,
+        },
+        None => parse_targets(&args.targets)?,
+    };
     let release = Release {
         game: args.game,
         version: args.release,
+        game_id: args.game_id,
     };
     let result = check_target(&target, release, &options)?;
     let json = output::json_text(&result)?;
@@ -168,14 +186,35 @@ fn upload_results(
     Ok(status)
 }
 
-/// Checks one target and returns its result. It writes nothing.
+/// Checks one target and returns its result. It writes nothing. With no game id in the release,
+/// the link file above the build gives one.
 pub fn check_target(
     target: &CheckTarget,
     release: Release,
     options: &CheckOptions,
 ) -> Result<CheckResult, CliError> {
     check_run_flags(options, target)?;
+    let release = linked_release(release, target)?;
     check_one(target, release, options)
+}
+
+/// The release with the game from the nearest `dyno.toml` above the build, when the caller gave no
+/// game id. The entry's name is the game label when none is given. A link file that does not parse
+/// is a usage error. The empty build belongs to no game, so it is never looked up.
+fn linked_release(mut release: Release, target: &CheckTarget) -> Result<Release, CliError> {
+    let Some(build) = target.build.as_deref() else {
+        return Ok(release);
+    };
+    if release.game_id.is_some() || target.baseline {
+        return Ok(release);
+    }
+    if let Some(found) = find_link(build).map_err(CliError::usage)? {
+        release.game_id = Some(found.game.id);
+        if release.game.is_none() {
+            release.game = found.game.name;
+        }
+    }
+    Ok(release)
 }
 
 impl CheckTarget {
@@ -189,7 +228,11 @@ impl CheckTarget {
             Some(text) => Some(LaunchUrl::parse(text).map_err(CliError::usage)?),
             None => None,
         };
-        Ok(CheckTarget { build, launch_url })
+        Ok(CheckTarget {
+            build,
+            launch_url,
+            baseline: false,
+        })
     }
 }
 
@@ -272,16 +315,18 @@ fn check_catalogue(
     let games = GamesFile::load(games_file).map_err(CliError::usage)?;
     // Builds in a games file are relative to the file.
     let root = games_file.parent().unwrap_or(Path::new(""));
-    // Read every selected game's target and check the flags before any check starts.
+    // Read every selected game's target and link file, and check the flags, before any check
+    // starts.
     let mut planned = Vec::new();
     for game in games.select(shard) {
         let target = catalogue_target(root, game).map_err(in_game(game))?;
         check_run_flags(options, &target).map_err(in_game(game))?;
-        planned.push((game, target));
+        let release = linked_release(catalogue_release(game), &target).map_err(in_game(game))?;
+        planned.push((game, target, release));
     }
     let mut entries = Vec::new();
-    for (game, target) in planned {
-        let result = check_one(&target, catalogue_release(game), options).map_err(in_game(game))?;
+    for (game, target, release) in planned {
+        let result = check_one(&target, release, options).map_err(in_game(game))?;
         entries.push(CatalogueEntry {
             id: game.id.clone(),
             result,
@@ -318,6 +363,7 @@ fn catalogue_target(root: &Path, game: &GameEntry) -> Result<CheckTarget, CliErr
     Ok(CheckTarget {
         build: game.build.as_ref().map(|build| root.join(build)),
         launch_url,
+        baseline: false,
     })
 }
 
@@ -325,6 +371,7 @@ fn catalogue_release(game: &GameEntry) -> Release {
     Release {
         game: Some(game.id.clone()),
         version: game.release.clone(),
+        game_id: None,
     }
 }
 
@@ -358,6 +405,7 @@ fn check_one(
     options: &CheckOptions,
 ) -> Result<CheckResult, CliError> {
     let clock = Clock::start();
+    let run_id = Uuid::new_v4().to_string();
     // A served run's launch URL is dyno's own server. The result records the build, not that URL.
     let mut served = match (&options.driver, &target.build) {
         (DriverArg::Serve, Some(build)) => Some(serve(build, &options.serve)?),
@@ -385,6 +433,7 @@ fn check_one(
     let mut run_measures = model_measures(has_launch_url);
     let mut run_findings = Vec::new();
     let mut driver = None;
+    let mut environment = None;
     // The recording starts before the person is told to open the page, so it sees the whole run.
     // Safari opens the page once the recording is on. The page waits for the run to start.
     let device_run = match (&served, options.device) {
@@ -422,10 +471,22 @@ fn check_one(
         run_measures.extend(lab.measures);
         run_findings = lab.findings;
         driver = lab.driver;
+        environment = lab.environment;
     }
     if let Some(device_run) = device_run {
         output::print_summary(&[device_run.saving_line()]);
-        run_measures.extend(device_run.finish(served.as_ref().and_then(ServeDriver::last_run)));
+        let finished = device_run.finish(served.as_ref().and_then(ServeDriver::last_run));
+        run_measures.extend(finished.measures);
+        // The trace knows the model, the iOS version and the memory, which a user agent does not.
+        if finished.device.is_some() {
+            let environment = environment.get_or_insert(Environment {
+                browser: None,
+                os: None,
+                device: None,
+            });
+            environment.os = finished.os;
+            environment.device = finished.device;
+        }
     }
 
     let inputs = Inputs {
@@ -461,14 +522,19 @@ fn check_one(
         findings: scan.findings,
     };
     let run = RunInfo {
+        run_id: Some(run_id),
+        build_link: Some(build_link(target, &options.driver)),
+        environment,
         started_at: clock.started_at(),
         duration_ms: clock.elapsed_ms(),
         machine: machine(),
         tool_build: tool_build(),
         target: Target {
+            // The empty build's folder is dyno's own, which nobody gave.
             build: target
                 .build
                 .as_ref()
+                .filter(|_| !target.baseline)
                 .map(|build| build.display().to_string()),
             launch_url: target.launch_url.as_ref().map(LaunchUrl::recorded),
         },
@@ -479,6 +545,18 @@ fn check_one(
         tier: provisional_tier(has_launch_url),
     };
     CheckResult::new(deterministic, run).map_err(CliError::internal)
+}
+
+/// How the run's evidence ties to the build: no build; a static scan only; a build that dyno
+/// served to the browser; or a build and a separate launch URL that dyno did not check against
+/// each other.
+fn build_link(target: &CheckTarget, driver: &DriverArg) -> BuildLink {
+    match (&target.build, &target.launch_url) {
+        (None, _) => BuildLink::None,
+        (Some(_), _) if *driver == DriverArg::Serve => BuildLink::Served,
+        (Some(_), Some(_)) => BuildLink::Asserted,
+        (Some(_), None) => BuildLink::Scanned,
+    }
 }
 
 fn new_driver(driver: &DriverArg) -> Box<dyn Driver> {
@@ -555,6 +633,22 @@ mod tests {
     fn a_target_launch_url_must_be_http() {
         let target = CheckTarget::new(None, Some("file:///game/index.html"));
         assert!(matches!(target, Err(CliError::Usage(_))));
+    }
+
+    #[test]
+    fn the_build_link_says_how_the_run_ties_to_the_build() {
+        let url_only = targets(&["https://example.com/game"]).unwrap();
+        let build_only = targets(&["dist"]).unwrap();
+        let both = targets(&["dist", "https://example.com/game"]).unwrap();
+        assert_eq!(build_link(&url_only, &DriverArg::Cdp), BuildLink::None);
+        assert_eq!(build_link(&build_only, &DriverArg::Cdp), BuildLink::Scanned);
+        assert_eq!(build_link(&both, &DriverArg::Cdp), BuildLink::Asserted);
+        let exec = DriverArg::Exec(PathBuf::from("driver"));
+        assert_eq!(build_link(&both, &exec), BuildLink::Asserted);
+        assert_eq!(
+            build_link(&build_only, &DriverArg::Serve),
+            BuildLink::Served
+        );
     }
 
     #[test]

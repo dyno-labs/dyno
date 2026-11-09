@@ -1,0 +1,398 @@
+[
+  {
+    "id": "static.inventory.files",
+    "source": "static",
+    "phase": 1,
+    "unit": "count",
+    "covers": "supplied_files",
+    "quantity": "files",
+    "statistic": "all_files"
+  },
+  {
+    "id": "static.bytes.by_type",
+    "source": "static",
+    "phase": 1,
+    "unit": "bytes",
+    "covers": "supplied_files",
+    "quantity": "download_bytes",
+    "statistic": "all_files"
+  },
+  {
+    "id": "static.bytes.compressed",
+    "source": "static",
+    "phase": 1,
+    "unit": "bytes",
+    "covers": "supplied_files",
+    "quantity": "compressed_bytes",
+    "statistic": "all_files"
+  },
+  {
+    "id": "static.bytes.duplicates",
+    "source": "static",
+    "phase": 1,
+    "unit": "bytes",
+    "covers": "supplied_files",
+    "quantity": "duplicate_bytes",
+    "statistic": "all_files"
+  },
+  {
+    "id": "static.textures.decoded",
+    "source": "static",
+    "phase": 1,
+    "unit": "bytes",
+    "covers": "supplied_files",
+    "quantity": "textures",
+    "statistic": "all_files"
+  },
+  {
+    "id": "static.audio.decoded_48k",
+    "source": "static",
+    "phase": 1,
+    "unit": "bytes",
+    "covers": "supplied_files",
+    "quantity": "audio",
+    "statistic": "all_files_at48k"
+  },
+  {
+    "id": "static.audio.decoded_24k",
+    "source": "static",
+    "phase": 1,
+    "unit": "bytes",
+    "covers": "supplied_files",
+    "quantity": "audio",
+    "statistic": "all_files_at24k"
+  },
+  {
+    "id": "static.audio.stereo_files",
+    "source": "static",
+    "phase": 1,
+    "unit": "count",
+    "covers": "supplied_files",
+    "quantity": "stereo_sounds",
+    "statistic": "all_files"
+  },
+  {
+    "id": "static.audio.stereo_mono_safe",
+    "source": "static",
+    "phase": 1,
+    "unit": "count",
+    "covers": "supplied_files",
+    "quantity": "mono_safe_stereo_sounds",
+    "statistic": "all_files"
+  },
+  {
+    "id": "static.audio.sprite_silence",
+    "source": "static",
+    "phase": 1,
+    "unit": "basis_points",
+    "covers": "supplied_files",
+    "quantity": "sprite_silence",
+    "statistic": "largest"
+  },
+  {
+    "id": "static.audio.silence_by_decode",
+    "source": "static",
+    "phase": 1,
+    "unit": "basis_points",
+    "covers": "supplied_files",
+    "quantity": "audio_silence",
+    "statistic": "all_files"
+  },
+  {
+    "id": "static.render.antialias",
+    "source": "static",
+    "phase": 1,
+    "unit": "flag",
+    "covers": "supplied_files",
+    "quantity": "antialias",
+    "statistic": "all_files"
+  },
+  {
+    "id": "static.render.resolution_uncapped",
+    "source": "static",
+    "phase": 1,
+    "unit": "flag",
+    "covers": "supplied_files",
+    "quantity": "resolution_uncapped",
+    "statistic": "all_files"
+  },
+  {
+    "id": "static.render.backend",
+    "source": "static",
+    "phase": 1,
+    "unit": "text",
+    "covers": "supplied_files",
+    "quantity": "render_backend",
+    "statistic": "all_files"
+  },
+  {
+    "id": "static.render.canvas",
+    "source": "static",
+    "phase": 1,
+    "unit": "bytes",
+    "covers": "supplied_files",
+    "quantity": "canvas",
+    "statistic": "all_files"
+  },
+  {
+    "id": "static.bundle.engines",
+    "source": "static",
+    "phase": 1,
+    "unit": "count",
+    "covers": "supplied_files",
+    "quantity": "libraries",
+    "statistic": "all_files"
+  },
+  {
+    "id": "static.bundle.external_urls",
+    "source": "static",
+    "phase": 1,
+    "unit": "count",
+    "covers": "supplied_files",
+    "quantity": "external_urls",
+    "statistic": "all_files"
+  },
+  {
+    "id": "static.bundle.source_map",
+    "source": "static",
+    "phase": 2,
+    "unit": "bytes",
+    "covers": "supplied_files",
+    "quantity": "script_bytes",
+    "statistic": "all_files"
+  },
+  {
+    "id": "lab.time.first_frame",
+    "source": "lab",
+    "phase": 1,
+    "unit": "ms",
+    "covers": "load_to_idle",
+    "quantity": "first_frame_time",
+    "statistic": "since_navigation"
+  },
+  {
+    "id": "lab.time.ready",
+    "source": "lab",
+    "phase": 1,
+    "unit": "ms",
+    "covers": "load_to_idle",
+    "quantity": "ready_time",
+    "statistic": "since_navigation"
+  },
+  {
+    "id": "lab.bytes.loaded_by_idle",
+    "source": "lab",
+    "phase": 1,
+    "unit": "bytes",
+    "covers": "load_to_idle",
+    "quantity": "download_bytes",
+    "statistic": "by_idle"
+  },
+  {
+    "id": "lab.bytes.to_playable",
+    "source": "lab",
+    "phase": 1,
+    "unit": "bytes",
+    "covers": "load_to_idle",
+    "quantity": "download_bytes",
+    "statistic": "to_playable"
+  },
+  {
+    "id": "lab.audio.decoded",
+    "source": "lab",
+    "phase": 1,
+    "unit": "bytes",
+    "covers": "load_to_idle",
+    "quantity": "audio",
+    "statistic": "by_idle"
+  },
+  {
+    "id": "lab.audio.context_rate",
+    "source": "lab",
+    "phase": 1,
+    "unit": "hertz",
+    "covers": "load_to_idle",
+    "quantity": "audio_rate",
+    "statistic": "at_idle"
+  },
+  {
+    "id": "lab.textures.uploaded",
+    "source": "lab",
+    "phase": 1,
+    "unit": "bytes",
+    "covers": "load_to_idle",
+    "quantity": "textures",
+    "statistic": "by_idle"
+  },
+  {
+    "id": "lab.textures.resident",
+    "source": "lab",
+    "phase": 1,
+    "unit": "bytes",
+    "covers": "load_to_idle",
+    "quantity": "textures",
+    "statistic": "at_idle"
+  },
+  {
+    "id": "lab.canvas.contexts",
+    "source": "lab",
+    "phase": 1,
+    "unit": "count",
+    "covers": "load_to_idle",
+    "quantity": "canvas_contexts",
+    "statistic": "by_idle"
+  },
+  {
+    "id": "lab.canvas.bytes",
+    "source": "lab",
+    "phase": 1,
+    "unit": "bytes",
+    "covers": "load_to_idle",
+    "quantity": "canvas",
+    "statistic": "at_idle"
+  },
+  {
+    "id": "lab.js_heap",
+    "source": "lab",
+    "phase": 1,
+    "unit": "bytes",
+    "covers": "load_to_idle",
+    "quantity": "js_heap",
+    "statistic": "at_idle"
+  },
+  {
+    "id": "lab.inactive.audio_running",
+    "source": "lab",
+    "phase": 1,
+    "unit": "flag",
+    "covers": "load_to_idle",
+    "quantity": "audio_running",
+    "statistic": "while_inactive"
+  },
+  {
+    "id": "lab.inactive.frame_rate",
+    "source": "lab",
+    "phase": 1,
+    "unit": "hertz",
+    "covers": "load_to_idle",
+    "quantity": "frame_rate",
+    "statistic": "while_inactive"
+  },
+  {
+    "id": "lab.inactive.allocated",
+    "source": "lab",
+    "phase": 1,
+    "unit": "bytes",
+    "covers": "load_to_idle",
+    "quantity": "allocated_bytes",
+    "statistic": "while_inactive"
+  },
+  {
+    "id": "lab.self_check.frame_dpr",
+    "source": "lab",
+    "phase": 1,
+    "unit": "milli",
+    "covers": "load_to_idle",
+    "quantity": "frame_dpr",
+    "statistic": "at_idle"
+  },
+  {
+    "id": "lab.self_check.frame_requests",
+    "source": "lab",
+    "phase": 1,
+    "unit": "count",
+    "covers": "load_to_idle",
+    "quantity": "frame_requests",
+    "statistic": "by_idle"
+  },
+  {
+    "id": "lab.self_check.webgl_renderer",
+    "source": "lab",
+    "phase": 1,
+    "unit": "text",
+    "covers": "load_to_idle",
+    "quantity": "webgl_renderer",
+    "statistic": "at_idle"
+  },
+  {
+    "id": "model.footprint",
+    "source": "model",
+    "phase": 1,
+    "unit": "bytes",
+    "covers": "model_inputs",
+    "quantity": "footprint",
+    "statistic": "modelled_active"
+  },
+  {
+    "id": "model.footprint_inactive",
+    "source": "model",
+    "phase": 2,
+    "unit": "bytes",
+    "covers": "model_inputs",
+    "quantity": "footprint",
+    "statistic": "modelled_inactive"
+  },
+  {
+    "id": "play.spins",
+    "source": "lab",
+    "phase": 2,
+    "unit": "count",
+    "covers": "demo_spins",
+    "quantity": "spins",
+    "statistic": "during_spins"
+  },
+  {
+    "id": "play.peak",
+    "source": "lab",
+    "phase": 2,
+    "unit": "bytes",
+    "covers": "demo_spins",
+    "quantity": "memory",
+    "statistic": "peak_during_spins"
+  },
+  {
+    "id": "play.growth_per_100_spins",
+    "source": "lab",
+    "phase": 2,
+    "unit": "bytes_change",
+    "covers": "demo_spins",
+    "quantity": "memory",
+    "statistic": "growth_per100_spins"
+  },
+  {
+    "id": "play.bonus_peak",
+    "source": "lab",
+    "phase": 2,
+    "unit": "bytes",
+    "covers": "demo_spins",
+    "quantity": "memory",
+    "statistic": "peak_during_bonus"
+  },
+  {
+    "id": "device.phys_footprint",
+    "source": "device",
+    "phase": 2,
+    "unit": "bytes",
+    "covers": "fresh_device_runs",
+    "quantity": "footprint",
+    "statistic": "at_idle"
+  },
+  {
+    "id": "device.phys_footprint_peak",
+    "source": "device",
+    "phase": 2,
+    "unit": "bytes",
+    "covers": "fresh_device_runs",
+    "quantity": "footprint",
+    "statistic": "peak"
+  },
+  {
+    "id": "device.kills",
+    "source": "device",
+    "phase": 2,
+    "unit": "count",
+    "covers": "fresh_device_runs",
+    "quantity": "kills",
+    "statistic": "of_runs"
+  }
+]

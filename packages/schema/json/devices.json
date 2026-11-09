@@ -1,0 +1,266 @@
+[
+  {
+    "key": "iphone-xs",
+    "name": "iPhone XS",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2018
+  },
+  {
+    "key": "iphone-xs-max",
+    "name": "iPhone XS Max",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2018
+  },
+  {
+    "key": "iphone-xr",
+    "name": "iPhone XR",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2018
+  },
+  {
+    "key": "iphone-11",
+    "name": "iPhone 11",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2019
+  },
+  {
+    "key": "iphone-11-pro",
+    "name": "iPhone 11 Pro",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2019
+  },
+  {
+    "key": "iphone-11-pro-max",
+    "name": "iPhone 11 Pro Max",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2019
+  },
+  {
+    "key": "iphone-se-2nd-generation",
+    "name": "iPhone SE (2nd generation)",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2020
+  },
+  {
+    "key": "iphone-12-mini",
+    "name": "iPhone 12 mini",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2020
+  },
+  {
+    "key": "iphone-12",
+    "name": "iPhone 12",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2020
+  },
+  {
+    "key": "iphone-12-pro",
+    "name": "iPhone 12 Pro",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2020
+  },
+  {
+    "key": "iphone-12-pro-max",
+    "name": "iPhone 12 Pro Max",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2020
+  },
+  {
+    "key": "iphone-13-mini",
+    "name": "iPhone 13 mini",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2021
+  },
+  {
+    "key": "iphone-13",
+    "name": "iPhone 13",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2021
+  },
+  {
+    "key": "iphone-13-pro",
+    "name": "iPhone 13 Pro",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2021
+  },
+  {
+    "key": "iphone-13-pro-max",
+    "name": "iPhone 13 Pro Max",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2021
+  },
+  {
+    "key": "iphone-se-3rd-generation",
+    "name": "iPhone SE (3rd generation)",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2022
+  },
+  {
+    "key": "iphone-14",
+    "name": "iPhone 14",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2022
+  },
+  {
+    "key": "iphone-14-plus",
+    "name": "iPhone 14 Plus",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2022
+  },
+  {
+    "key": "iphone-14-pro",
+    "name": "iPhone 14 Pro",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2022
+  },
+  {
+    "key": "iphone-14-pro-max",
+    "name": "iPhone 14 Pro Max",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2022
+  },
+  {
+    "key": "iphone-15",
+    "name": "iPhone 15",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2023
+  },
+  {
+    "key": "iphone-15-plus",
+    "name": "iPhone 15 Plus",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2023
+  },
+  {
+    "key": "iphone-15-pro",
+    "name": "iPhone 15 Pro",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2023
+  },
+  {
+    "key": "iphone-15-pro-max",
+    "name": "iPhone 15 Pro Max",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2023
+  },
+  {
+    "key": "iphone-16",
+    "name": "iPhone 16",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2024
+  },
+  {
+    "key": "iphone-16-plus",
+    "name": "iPhone 16 Plus",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2024
+  },
+  {
+    "key": "iphone-16-pro",
+    "name": "iPhone 16 Pro",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2024
+  },
+  {
+    "key": "iphone-16-pro-max",
+    "name": "iPhone 16 Pro Max",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2024
+  },
+  {
+    "key": "iphone-16e",
+    "name": "iPhone 16e",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2025
+  },
+  {
+    "key": "iphone-17",
+    "name": "iPhone 17",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2025
+  },
+  {
+    "key": "iphone-air",
+    "name": "iPhone Air",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2025
+  },
+  {
+    "key": "iphone-17-pro",
+    "name": "iPhone 17 Pro",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2025
+  },
+  {
+    "key": "iphone-17-pro-max",
+    "name": "iPhone 17 Pro Max",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2025
+  }
+]

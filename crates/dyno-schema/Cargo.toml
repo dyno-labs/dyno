@@ -17,6 +17,7 @@ thiserror.workspace = true
 toml.workspace = true
 ts-rs.workspace = true
 url.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

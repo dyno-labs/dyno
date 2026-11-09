@@ -8,6 +8,7 @@ use std::time::Duration;
 use dyno_ios::RunWindow;
 use dyno_ios::devicectl::{is_locked, open_in_safari};
 use dyno_ios::xctrace::{DeviceError, Recording, choose_device, connected_devices};
+use dyno_schema::environment::{EnvironmentDevice, EnvironmentOs};
 use dyno_schema::measure::Measure;
 use dyno_serve::RunTimes;
 
@@ -96,27 +97,53 @@ impl DeviceRun {
         )
     }
 
-    /// Stops the recording and gives the device measures of the run. A run that never started,
-    /// or a trace that cannot be read, gives every device measure as missing, with the reason.
-    pub fn finish(self, run: Option<RunTimes>) -> Vec<Measure> {
+    /// Stops the recording and gives the device measures of the run, and the OS and device that
+    /// its trace recorded. A run that never started, or a trace that cannot be read, gives every
+    /// device measure as missing, with the reason, and no OS or device.
+    pub fn finish(self, run: Option<RunTimes>) -> FinishedDeviceRun {
         let trace = self.recording.stop();
         let Some(run) = run else {
-            return dyno_ios::missing_device_measures(
+            return FinishedDeviceRun::missing(
                 "the run did not start, so the trace has no run to read",
             );
         };
         match trace {
-            Ok(trace) => dyno_ios::device_measures(
-                &trace,
-                &RunWindow {
-                    navigated_epoch_ms: run.navigated_epoch_ms,
-                    idle_epoch_ms: run.idle_epoch_ms,
-                    ended_epoch_ms: run.ended_epoch_ms,
-                },
-            ),
-            Err(error) => {
-                dyno_ios::missing_device_measures(&without_name(&error.to_string(), &self.name))
+            Ok(trace) => {
+                let (os, device) = dyno_ios::trace_environment(&trace.device);
+                FinishedDeviceRun {
+                    measures: dyno_ios::device_measures(
+                        &trace,
+                        &RunWindow {
+                            navigated_epoch_ms: run.navigated_epoch_ms,
+                            idle_epoch_ms: run.idle_epoch_ms,
+                            ended_epoch_ms: run.ended_epoch_ms,
+                        },
+                    ),
+                    os,
+                    device,
+                }
             }
+            Err(error) => FinishedDeviceRun::missing(&without_name(&error.to_string(), &self.name)),
+        }
+    }
+}
+
+/// What a device run gave once its recording stopped.
+pub struct FinishedDeviceRun {
+    pub measures: Vec<Measure>,
+    /// The OS the trace recorded, with its version.
+    pub os: Option<EnvironmentOs>,
+    /// The device the trace recorded: its model and memory.
+    pub device: Option<EnvironmentDevice>,
+}
+
+impl FinishedDeviceRun {
+    /// Every device measure missing for this reason, and no OS or device.
+    fn missing(reason: &str) -> FinishedDeviceRun {
+        FinishedDeviceRun {
+            measures: dyno_ios::missing_device_measures(reason),
+            os: None,
+            device: None,
         }
     }
 }

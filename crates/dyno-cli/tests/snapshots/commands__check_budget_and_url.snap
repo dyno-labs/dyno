@@ -677,8 +677,10 @@ expression: json(&outcome)
   },
   "result_hash": "754aa3ebb86f5763b68b15ddda84714d1746339e9893bc23add4772da584ba51",
   "run": {
+    "build_link": "asserted",
     "driver": null,
     "duration_ms": "[duration_ms]",
+    "environment": null,
     "findings": [
       {
         "fixes": [],
@@ -1232,8 +1234,10 @@ expression: json(&outcome)
     ],
     "release": {
       "game": null,
+      "game_id": null,
       "version": "v1"
     },
+    "run_id": "[run_id]",
     "started_at": "[started_at]",
     "target": {
       "build": "tiny-build",

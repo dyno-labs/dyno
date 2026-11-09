@@ -9,6 +9,7 @@ use dyno_schema::status::Status;
 
 mod account;
 mod banner;
+mod baseline;
 mod check;
 mod cli;
 mod compare;

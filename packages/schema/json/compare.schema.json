@@ -536,12 +536,17 @@
           "const": "play.bonus_peak"
         },
         {
-          "description": "Median `phys_footprint` of fresh-process runs on the iPhone, minus the empty harness.",
+          "description": "The `phys_footprint` of the game's process on the iPhone, at the first sample after the\nframe went idle. Its peak in the run window is an item too, for readers from before\n`device.phys_footprint_peak`.",
           "type": "string",
           "const": "device.phys_footprint"
         },
         {
-          "description": "Fresh-process runs that the iPhone killed, one item per syslog line.",
+          "description": "The largest `phys_footprint` of the game's process on the iPhone in the run window,\nfrom the answer to the page's `hello` to the end of the run, with the slack of a sample\nat each end that places the run on the trace's clock.",
+          "type": "string",
+          "const": "device.phys_footprint_peak"
+        },
+        {
+          "description": "Runs that the iPhone killed: the game's process left the trace before the run ended, as\na process that iOS kills does. One item per kill.",
           "type": "string",
           "const": "device.kills"
         }
@@ -605,6 +610,14 @@
             "string",
             "null"
           ]
+        },
+        "game_id": {
+          "description": "The game's id on the dyno site, a UUID: from `--game-id`, or from the `dyno.toml` entry\nfor the build. Null when neither gives one.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         },
         "version": {
           "type": [

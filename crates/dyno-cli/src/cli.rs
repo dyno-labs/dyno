@@ -58,10 +58,16 @@ pub struct CheckArgs {
     #[arg(
         value_name = "TARGET",
         num_args = 1..=MAX_TARGETS,
-        required_unless_present = "games",
-        conflicts_with = "games"
+        required_unless_present_any = ["games", "baseline"],
+        conflicts_with_all = ["games", "baseline"]
     )]
     pub targets: Vec<String>,
+
+    /// [phase 2] Check the empty build inside dyno instead of a target: one page with nothing on
+    /// it, whose build id never changes. With --device, it gives the phone's footprint with no
+    /// game
+    #[arg(long, conflicts_with_all = ["games", "game", "release", "game_id"])]
+    pub baseline: bool,
 
     /// [phase 1] Check every game in a games file (TOML, or JSON by the .json extension)
     #[arg(long, value_name = "FILE")]
@@ -103,6 +109,16 @@ pub struct CheckArgs {
     /// hash
     #[arg(long, value_name = "VERSION", conflicts_with = "games")]
     pub release: Option<String>,
+
+    /// [phase 3] The game's id on the dyno site, a UUID. Default: the entry for the build in the
+    /// nearest dyno.toml above it. Outside the result hash
+    #[arg(
+        long,
+        value_name = "UUID",
+        conflicts_with = "games",
+        value_parser = parse_game_id
+    )]
+    pub game_id: Option<String>,
 
     /// [phase 1] The browser driver: cdp, the built-in Chromium driver; exec:PROGRAM, a program
     /// that speaks the runner protocol on stdin and stdout; or serve, which serves the build and
@@ -278,6 +294,11 @@ Exit codes:
   0   every result uploaded
   64  usage error: not signed in, or a result file that cannot be read or is not JSON
   70  a result did not upload: the site cannot be reached, or did not take it";
+
+/// Parses `--game-id`: a UUID, written in lower case with dashes.
+fn parse_game_id(text: &str) -> Result<String, String> {
+    dyno_schema::link::game_id(text)
+}
 
 /// Parses `--host-profile`. Help lists the known names, and the value is the profile itself.
 fn host_profile_parser() -> impl TypedValueParser<Value = HostProfile> {

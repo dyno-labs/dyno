@@ -28,6 +28,26 @@
     "run"
   ],
   "$defs": {
+    "BrowserEngine": {
+      "description": "A browser engine.",
+      "oneOf": [
+        {
+          "description": "Chromium and the browsers built on it.",
+          "type": "string",
+          "const": "blink"
+        },
+        {
+          "description": "Safari, and every browser on iOS.",
+          "type": "string",
+          "const": "webkit"
+        },
+        {
+          "description": "Firefox.",
+          "type": "string",
+          "const": "gecko"
+        }
+      ]
+    },
     "BudgetId": {
       "description": "Every budget a budget file can set. Each id is the key path in the file.",
       "oneOf": [
@@ -209,6 +229,31 @@
         "limit"
       ]
     },
+    "BuildLink": {
+      "description": "How a run's evidence ties to the build it names.",
+      "oneOf": [
+        {
+          "description": "The check had no build.",
+          "type": "string",
+          "const": "none"
+        },
+        {
+          "description": "A static scan of the build, and no browser run.",
+          "type": "string",
+          "const": "scanned"
+        },
+        {
+          "description": "The browser loaded the build that dyno served (`--driver serve`).",
+          "type": "string",
+          "const": "served"
+        },
+        {
+          "description": "A build and a separate launch URL. dyno did not check that the URL serves that build.",
+          "type": "string",
+          "const": "asserted"
+        }
+      ]
+    },
     "BuildManifest": {
       "description": "Every supplied file of one build. `compare` diffs two manifests to find suspect assets.",
       "type": "object",
@@ -332,6 +377,15 @@
         }
       ]
     },
+    "DeviceKind": {
+      "description": "A kind of device.",
+      "type": "string",
+      "enum": [
+        "phone",
+        "tablet",
+        "desktop"
+      ]
+    },
     "DriverInfo": {
       "description": "The browser driver behind a run: the Rust CDP driver, or a fallback subprocess.",
       "type": "object",
@@ -353,6 +407,138 @@
       "required": [
         "name",
         "version"
+      ]
+    },
+    "Environment": {
+      "description": "What ran a check. A field is null when the driver does not say.",
+      "type": "object",
+      "properties": {
+        "browser": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EnvironmentBrowser"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "device": {
+          "description": "Null for a desktop browser.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EnvironmentDevice"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "os": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EnvironmentOs"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "EnvironmentBrowser": {
+      "description": "The browser that loaded the game.",
+      "type": "object",
+      "properties": {
+        "engine": {
+          "description": "Null when dyno does not know the browser's engine.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BrowserEngine"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "headless": {
+          "description": "Whether the browser ran with no window. Null when the driver does not say.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "Such as \"Chromium\" or \"Safari\".",
+          "type": "string"
+        },
+        "version": {
+          "description": "Such as \"152.0.7977.82\". Null when the driver does not say.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "EnvironmentDevice": {
+      "description": "The device the browser ran on.",
+      "type": "object",
+      "properties": {
+        "key": {
+          "description": "The device catalogue's key, such as \"iphone-14-pro-max\": the model name in lower case,\nwith one `-` for each run of other characters. A model the catalogue does not list keeps\nits own key. Null when the model is not known, as from a user agent, which names only\n\"iPhone\".",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/DeviceKind"
+        },
+        "memory_bytes": {
+          "description": "The device's memory, from a device run's trace. Null otherwise.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "name": {
+          "description": "The model as the trace names it, such as \"iPhone 14 Pro Max\", or the kind of device a user\nagent names, such as \"iPhone\". Never the device's own name, which is often its owner's.",
+          "type": "string"
+        },
+        "vendor": {
+          "description": "Such as \"Apple\".",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "vendor",
+        "kind"
+      ]
+    },
+    "EnvironmentOs": {
+      "description": "The operating system the browser ran on.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/OsName"
+        },
+        "version": {
+          "description": "Such as \"26.6.2\". Null when the source does not give it. A user agent's OS version is\nfrozen, as Safari on iOS 26 says iOS 18.6, so dyno never reads it from there.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name"
       ]
     },
     "Evidence": {
@@ -923,12 +1109,17 @@
           "const": "play.bonus_peak"
         },
         {
-          "description": "Median `phys_footprint` of fresh-process runs on the iPhone, minus the empty harness.",
+          "description": "The `phys_footprint` of the game's process on the iPhone, at the first sample after the\nframe went idle. Its peak in the run window is an item too, for readers from before\n`device.phys_footprint_peak`.",
           "type": "string",
           "const": "device.phys_footprint"
         },
         {
-          "description": "Fresh-process runs that the iPhone killed, one item per syslog line.",
+          "description": "The largest `phys_footprint` of the game's process on the iPhone in the run window,\nfrom the answer to the page's `hello` to the end of the run, with the slack of a sample\nat each end that places the run on the trace's clock.",
+          "type": "string",
+          "const": "device.phys_footprint_peak"
+        },
+        {
+          "description": "Runs that the iPhone killed: the game's process left the trace before the run ended, as\na process that iOS kills does. One item per kill.",
           "type": "string",
           "const": "device.kills"
         }
@@ -1067,6 +1258,18 @@
         }
       ]
     },
+    "OsName": {
+      "description": "An operating system.",
+      "type": "string",
+      "enum": [
+        "linux",
+        "macos",
+        "windows",
+        "ios",
+        "ipados",
+        "android"
+      ]
+    },
     "ProfileRef": {
       "description": "Which host profile, and which version of it, a result used.",
       "type": "object",
@@ -1098,6 +1301,14 @@
             "string",
             "null"
           ]
+        },
+        "game_id": {
+          "description": "The game's id on the dyno site, a UUID: from `--game-id`, or from the `dyno.toml` entry\nfor the build. Null when neither gives one.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         },
         "version": {
           "type": [
@@ -1193,9 +1404,21 @@
       ]
     },
     "RunInfo": {
-      "description": "What differs between machines and runs. The hash excludes it.",
+      "description": "What differs between machines and runs. The hash excludes it.\n\nA field that a later dyno added is missing from a result that an earlier one wrote, so a\nreader treats a missing or null field as not known.",
       "type": "object",
       "properties": {
+        "build_link": {
+          "description": "How the run's evidence ties to the build.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BuildLink"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "driver": {
           "description": "The browser driver. Null when there was no browser run.",
           "anyOf": [
@@ -1211,6 +1434,18 @@
           "type": "integer",
           "format": "uint64",
           "minimum": 0
+        },
+        "environment": {
+          "description": "What actually ran: the browser, the OS and the device. Null when there was no browser or\ndevice run, or when the run failed before the browser said what it was.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Environment"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "findings": {
           "description": "Lab rule findings, such as the host contract checks. Sorted by rule id, then by the\nfinding's canonical JSON.",
@@ -1231,6 +1466,14 @@
         },
         "release": {
           "$ref": "#/$defs/Release"
+        },
+        "run_id": {
+          "description": "A UUID v4 that dyno makes when the check starts. Each game of a games file gets its own,\nand an upload sends it again when it is retried, so the site keeps one run.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         },
         "started_at": {
           "description": "RFC 3339 UTC time the check started.",

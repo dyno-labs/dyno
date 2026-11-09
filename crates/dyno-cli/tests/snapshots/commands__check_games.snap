@@ -635,8 +635,10 @@ expression: json(&outcome)
         },
         "result_hash": "8dcd677612b35c5153c2a579e43bd007dcd229869026ee530ea2e52cfa1de80d",
         "run": {
+          "build_link": "scanned",
           "driver": null,
           "duration_ms": "[duration_ms]",
+          "environment": null,
           "findings": [],
           "machine": "[machine]",
           "measures": [
@@ -687,8 +689,10 @@ expression: json(&outcome)
           ],
           "release": {
             "game": "tiny",
+            "game_id": null,
             "version": "v1"
           },
+          "run_id": "[run_id]",
           "started_at": "[started_at]",
           "target": {
             "build": "tiny-build",
@@ -1208,8 +1212,10 @@ expression: json(&outcome)
         },
         "result_hash": "fbd409a2efce7c4418fd4c6e0d947c7ea7cd77f112d866ea88f41ea7b257f9ab",
         "run": {
+          "build_link": "none",
           "driver": null,
           "duration_ms": "[duration_ms]",
+          "environment": null,
           "findings": [
             {
               "fixes": [],
@@ -1763,8 +1769,10 @@ expression: json(&outcome)
           ],
           "release": {
             "game": "tiny-online",
+            "game_id": null,
             "version": null
           },
+          "run_id": "[run_id]",
           "started_at": "[started_at]",
           "target": {
             "build": null,

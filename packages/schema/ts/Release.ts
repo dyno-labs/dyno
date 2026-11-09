@@ -4,4 +4,9 @@
  * Labels the caller gives. Outside the hash, so two callers who name a release differently
  * still get the same hash.
  */
-export type Release = { game: string | null, version: string | null, };
+export type Release = { game: string | null, version: string | null, 
+/**
+ * The game's id on the dyno site, a UUID: from `--game-id`, or from the `dyno.toml` entry
+ * for the build. Null when neither gives one.
+ */
+game_id?: string | null, };

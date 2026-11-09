@@ -19,6 +19,7 @@ use ts_rs::TS;
 use crate::SCHEMA_VERSION;
 use crate::budget::{BudgetRef, BudgetVerdict};
 use crate::canonical::{self, tie_breaker};
+use crate::environment::Environment;
 use crate::ids::{BudgetId, MeasureId, Phase};
 use crate::manifest::BuildManifest;
 use crate::measure::{Measure, MeasureStatus};
@@ -112,8 +113,25 @@ pub struct Inputs {
 }
 
 /// What differs between machines and runs. The hash excludes it.
+///
+/// A field that a later dyno added is missing from a result that an earlier one wrote, so a
+/// reader treats a missing or null field as not known.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct RunInfo {
+    /// A UUID v4 that dyno makes when the check starts. Each game of a games file gets its own,
+    /// and an upload sends it again when it is retried, so the site keeps one run.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub run_id: Option<String>,
+    /// How the run's evidence ties to the build.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub build_link: Option<BuildLink>,
+    /// What actually ran: the browser, the OS and the device. Null when there was no browser or
+    /// device run, or when the run failed before the browser said what it was.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub environment: Option<Environment>,
     /// RFC 3339 UTC time the check started.
     pub started_at: String,
     pub duration_ms: u64,
@@ -167,6 +185,25 @@ pub struct Target {
 pub struct Release {
     pub game: Option<String>,
     pub version: Option<String>,
+    /// The game's id on the dyno site, a UUID: from `--game-id`, or from the `dyno.toml` entry
+    /// for the build. Null when neither gives one.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub game_id: Option<String>,
+}
+
+/// How a run's evidence ties to the build it names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum BuildLink {
+    /// The check had no build.
+    None,
+    /// A static scan of the build, and no browser run.
+    Scanned,
+    /// The browser loaded the build that dyno served (`--driver serve`).
+    Served,
+    /// A build and a separate launch URL. dyno did not check that the URL serves that build.
+    Asserted,
 }
 
 /// The browser driver behind a run: the Rust CDP driver, or a fallback subprocess.

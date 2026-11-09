@@ -4,6 +4,10 @@ use dyno_schema::budget::{BudgetLimit, BudgetVerdict};
 use dyno_schema::canonical::{
     MAX_SAFE_INTEGER, sha256_hex, sha256_of_canonical_json, to_canonical_json,
 };
+use dyno_schema::environment::{
+    BrowserEngine, DeviceKind, Environment, EnvironmentBrowser, EnvironmentDevice, EnvironmentOs,
+    OsName,
+};
 use dyno_schema::ids::{BudgetId, MeasureId, RuleId};
 use dyno_schema::manifest::{BuildManifest, FileKind, ManifestFile};
 use dyno_schema::measure::{
@@ -12,8 +16,8 @@ use dyno_schema::measure::{
 use dyno_schema::path::RelPath;
 use dyno_schema::profile::{HostProfile, Scenario};
 use dyno_schema::result::{
-    CheckResult, Deterministic, DeviceClass, Inputs, LoadedResult, Machine, Release, ResultError,
-    RunInfo, Target, TierReport, ToolBuild, Versions, raw_hash_matches,
+    BuildLink, CheckResult, Deterministic, DeviceClass, Inputs, LoadedResult, Machine, Release,
+    ResultError, RunInfo, Target, TierReport, ToolBuild, Versions, raw_hash_matches,
 };
 use dyno_schema::rule::{Finding, Fix, FixAction};
 use dyno_schema::status::{RunCoverage, Status, Verdict};
@@ -155,6 +159,9 @@ fn measure_mut(deterministic: &mut Deterministic, id: MeasureId) -> &mut Measure
 
 fn run_info(started_at: &str, os: &str) -> RunInfo {
     RunInfo {
+        run_id: Some("0b1f8f8e-5d3a-4c7e-9a52-1f2d3c4b5a69".to_owned()),
+        build_link: Some(BuildLink::Scanned),
+        environment: None,
         started_at: started_at.to_owned(),
         duration_ms: 12,
         machine: Machine {
@@ -374,6 +381,55 @@ fn the_hash_excludes_the_run_part() {
     )
     .unwrap();
     assert_eq!(later_on_linux.result_hash, reference_result().result_hash);
+}
+
+#[test]
+fn the_hash_excludes_the_run_id_build_link_environment_and_game_id() {
+    let mut run = run_info(REFERENCE_TIME, "macos");
+    run.run_id = Some("5c0a1d2e-3f40-4a51-8b62-7c83d94ea5f6".to_owned());
+    run.build_link = Some(BuildLink::Served);
+    run.release.game_id = Some("6f1c2a8e-0000-4000-8000-000000000000".to_owned());
+    run.environment = Some(Environment {
+        browser: Some(EnvironmentBrowser {
+            name: "Safari".to_owned(),
+            version: Some("26.2".to_owned()),
+            engine: Some(BrowserEngine::Webkit),
+            headless: Some(false),
+        }),
+        os: Some(EnvironmentOs {
+            name: OsName::Ios,
+            version: Some("26.6.2".to_owned()),
+        }),
+        device: Some(EnvironmentDevice {
+            key: Some("iphone-14-pro-max".to_owned()),
+            name: "iPhone 14 Pro Max".to_owned(),
+            vendor: "Apple".to_owned(),
+            kind: DeviceKind::Phone,
+            memory_bytes: Some(6_442_450_944),
+        }),
+    });
+    let result = CheckResult::new(deterministic(WALK, ITEMS, MEASURE_ORDER), run).unwrap();
+    assert_eq!(result.result_hash, reference_result().result_hash);
+}
+
+#[test]
+fn a_result_from_before_the_run_identity_fields_still_reads_and_matches() {
+    let mut json = reference_json();
+    let run = json["run"].as_object_mut().unwrap();
+    for field in ["run_id", "build_link", "environment"] {
+        run.remove(field).unwrap();
+    }
+    run["release"]
+        .as_object_mut()
+        .unwrap()
+        .remove("game_id")
+        .unwrap();
+    let loaded = LoadedResult::from_json(json).unwrap();
+    assert!(loaded.hash_matches);
+    assert_eq!(loaded.result.run.run_id, None);
+    assert_eq!(loaded.result.run.build_link, None);
+    assert_eq!(loaded.result.run.environment, None);
+    assert_eq!(loaded.result.run.release.game_id, None);
 }
 
 #[test]

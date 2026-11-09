@@ -20,8 +20,10 @@ The check summary gives the status and why, the decoded memory and the build siz
 | `--budget <FILE>`                   | 1     | The budget file. TOML, or JSON when the name ends in `.json`. See [`examples/budget.toml`](../examples/budget.toml).                                                                                                                                                    |
 | `--out <FILE>`                      | 1     | Write the JSON to this file instead of stdout.                                                                                                                                                                                                                          |
 | `--host-profile <NAME>`             | 1     | How the host page embeds the game, and the contract it checks. Default `reels`, the only profile so far.                                                                                                                                                                |
-| `--game <NAME>`                     | 1     | A game name label for the result. Not in the hash. Not with `--games`.                                                                                                                                                                                                  |
+| `--game <NAME>`                     | 1     | A game name label for the result. Not in the hash. Not with `--games`. Default: the `name` of the build's entry in `dyno.toml`.                                                                                                                                         |
 | `--release <VERSION>`               | 1     | A release version label for the result. Not in the hash. Not with `--games`.                                                                                                                                                                                            |
+| `--game-id <UUID>`                  | 3     | The game's id on the dyno site. Not in the hash. Not with `--games`. Default: the `id` of the build's entry in `dyno.toml`. See [Link a build to its game](#link-a-build-to-its-game).                                                                                  |
+| `--baseline`                        | 2     | Check the empty build inside dyno instead of a target. Not with a target, `--games`, `--game`, `--release` or `--game-id`. See [The empty build](#the-empty-build).                                                                                                     |
 | `--games <FILE>`                    | 1     | Check every game in a games file instead of a target.                                                                                                                                                                                                                   |
 | `--shard <I/N>`                     | 1     | With `--games`: check only shard I of N.                                                                                                                                                                                                                                |
 | `--driver <DRIVER>`                 | 1     | The browser driver. `cdp`, the default, is the built-in Chromium driver. `exec:<PROGRAM>` runs PROGRAM, which must speak the runner protocol, and needs a launch URL. `serve` serves the build to a browser on the network, and needs a build folder and no launch URL. |
@@ -52,9 +54,33 @@ The build must be a folder: unzip a .zip first. While the run waits and runs, an
 With `--device` too, dyno records an Activity Monitor trace of every process on the connected phone with `xcrun xctrace` while the phone's Safari runs the served check. Run it on the Mac the phone is plugged into: the phone must be unlocked, trust the Mac, and have Developer Mode on. Set Auto-Lock to Never. Use a cable that carries data: with the link on Wi-Fi only, xctrace lost an iPhone 14 Pro Max about 10 s into every recording. A locked phone is a usage error, and a phone that locks during the run disconnects from xctrace, which leaves the device measures missing. Before it records, dyno opens the harness page in the phone's Safari with `xcrun devicectl`, which restarts Safari. `--no-open` leaves that to you. When the launch fails, dyno says so and you open the URL by hand. dyno starts the recording before it prints the URL, and stops it when the run ends. Saving the trace can take a minute. The trace gives two measures:
 
 - `device.phys_footprint`: the physical footprint (`phys_footprint`, which iOS reads to kill a process) of the game's WebContent process, at the first sample after the frame went idle, with its peak during the run as an item. The game's process is the WebContent process with the largest footprint during the run.
+- `device.phys_footprint_peak`: the largest footprint of the game's process in the run window, from dyno's answer to the page's `hello` to the end of the run. The trace takes a sample about once a second, so the window takes in 1.5 s more at each end, as it does to find the game's process. It is the same value as the item above, as a measure of its own.
 - `device.kills`: 1 when the game's process left the trace more than 3 s before the run ended, as a process that iOS kills does. 0 otherwise.
 
+The trace also names the phone's model, its iOS version and its memory, which go into `run.environment` (see [What ran](#what-ran)). The phone's own name, which is often its owner's, never goes into a result.
+
 With `--out`, the trace is kept beside the result, as `<name>.trace`, for Instruments. Without it, the trace is deleted. `DYNO_XCRUN` names another program to run instead of `xcrun`, such as a fake in tests.
+
+#### Link a build to its game
+
+The dyno site keeps a history of builds for each game, and needs to know which game a result is about. A game's id on the site is a UUID. A check sets `run.release.game_id` from `--game-id`, or else from `dyno.toml`. Neither changes the result hash.
+
+dyno looks for `dyno.toml` in the build's parent folders, nearest first, and never inside the build. It reads only the first one it finds. That file's entry for the build gives its `id`, and its `name` as the `--game` label when none is given. An entry's `build` is relative to the file, and matches when it is the same folder or .zip as the build, whatever path names it. A file with no entry for the build gives no game, even when a file further up has one. A file that does not parse is a usage error (64). One file can name many builds, so one repository can hold many games:
+
+```toml
+schema_version = 0
+
+[[game]]
+id = "6f1c2a8e-0000-4000-8000-000000000000" # the game's id on the site
+name = "Moon Lander" # the --game label when none is given
+build = "studio/games/moon_lander/dist"
+```
+
+`name` is optional. `packages/schema/json/dyno-toml.schema.json` gives the file's shape. With `--games`, dyno looks up each game's build the same way, and the games file's `id` stays the label.
+
+#### The empty build
+
+`--baseline` checks the empty build inside dyno instead of a target: one file, `index.html`, that holds `<!doctype html><title>baseline</title>` and a newline. Its build id never changes: `7114691fda7748ccc7c091ffeae74100f190d0557000f8739823a040446c5c4e`. A device run of it, `dyno check --baseline --driver serve --device`, gives the phone's footprint with no game, which a game's footprint can be measured over. dyno writes the build to a folder of its own, so `run.target.build` is null. The empty build belongs to no game, so `--baseline` takes no game label and reads no `dyno.toml`.
 
 A games file starts with `schema_version = 0`, then lists one `[[game]]` table per game. Each has an `id` and a `build`, a `launch_url` or both. A `release` label is optional. Builds are relative to the games file. Shards split the games in id order: game k, counting from 0, falls in shard (k mod N) + 1. The output is a catalogue result. Its status is the worst status of its games. A selection with no games is `incomplete`, because it checked nothing.
 
@@ -107,7 +133,7 @@ The server has three tools. A relative path is relative to the folder the server
 | `compare`     | `base` and `head`. Optional: `budget`.                                                            | The result that `dyno compare` gives.                                                                                          |
 | `read_result` | `path`, a result file from `dyno check`                                                           | Its `status`, its `result_hash`, and `hash_matches`, which is false when the file was edited. Then the check summary.          |
 
-A check or compare that ends `fail`, `warn`, `incomplete` or `invalid` is a tool call that worked, because the status is in the result. An error that stops the command, such as a bad path or flag, is a tool error (`isError` is true) with the message. A check with a `launch_url` uses the CDP driver and the `alone` scenario. The tools have no spins, device or driver argument.
+A `check` with a build looks up its game in `dyno.toml`, as `dyno check` does. A check or compare that ends `fail`, `warn`, `incomplete` or `invalid` is a tool call that worked, because the status is in the result. An error that stops the command, such as a bad path or flag, is a tool error (`isError` is true) with the message. A check with a `launch_url` uses the CDP driver and the `alone` scenario. The tools have no spins, device or driver argument.
 
 ### `dyno login` (Phase 3)
 
@@ -204,12 +230,32 @@ A `floor` uncertainty alone does not make a value partial. Only `scope.not_cover
 
 The exit code comes from the status alone, and the status comes from the deterministic part alone. So the same `result_hash` always gives the same exit code.
 
+## What ran
+
+The `run` part of a check says which run made it, and what ran it. None of these fields is in the hash, and a result from an older dyno has none of them, so a reader treats a missing field as not known.
+
+| Field                 | What it holds                                                                                                                                                                                                                                                                     |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `run.run_id`          | A UUID v4 that dyno makes when the check starts. Each game of a games file gets its own. An upload that is retried sends the same one, so the site keeps one run.                                                                                                                 |
+| `run.build_link`      | How the run's evidence ties to the build: `none` (no build), `scanned` (a static scan only), `served` (the browser loaded the build that `--driver serve` served) or `asserted` (a build and a separate launch URL, which dyno did not check against each other).                 |
+| `run.environment`     | What ran: `browser` (`name`, `version`, `engine` and `headless`), `os` (`name` and `version`) and `device` (`key`, `name`, `vendor`, `kind` and `memory_bytes`). Null when no browser or device run gave anything, such as a run that failed before the browser said what it was. |
+| `run.release.game_id` | The game's id on the dyno site, from `--game-id` or `dyno.toml`.                                                                                                                                                                                                                  |
+
+Each driver fills in the environment from what it can see, and a field it cannot see is null:
+
+- The CDP driver: the Chromium that `Browser.getVersion` names, headless, on this machine's OS, with no OS version.
+- `--driver serve`: the user agent that the harness page sends. It gives the browser, its engine and the OS. It gives no OS version, because a browser freezes it (Safari on iOS 26 says 18.6), and no phone model, because Safari says only "iPhone". So `device.key` is null.
+- `--device`: the trace's model, iOS version and memory, which win over the user agent. `device.key` is the model name in lower case, with one `-` for each run of other characters: "iPhone 14 Pro Max" is `iphone-14-pro-max`.
+- `--driver exec:<PROGRAM>`: only the browser that the program's `hello` names, with no OS or device.
+
+`packages/schema/json/devices.json` lists the devices dyno knows, by the same key: every iPhone from the iPhone XS and XR of 2018 to the iPhone 17 family. A run on a model that the list does not have keeps its own key. The list has no memory sizes: Apple does not publish them, and each device run's trace gives its own. `packages/schema/json/measures.json` lists every measure id with its source, phase, unit and scope, and two more things: its `quantity`, what it counts (such as `textures` or `footprint`), and its `statistic`, which reading it is (such as `all_files`, `by_idle`, `at_idle` or `peak`). A site groups and labels measures by them.
+
 ## The result hash
 
 A result has two parts:
 
 - `deterministic`: everything the same build, tool version and budget file give on any machine. Static measures, budget verdicts, static findings, the build manifest, the inputs, the versions, the status and the run coverage. The run coverage is the one exception: with a launch URL or `--device`, it says whether this machine's run gave every required measure, and the status follows it.
-- `run`: everything that differs between machines and runs, and the labels that must not change the hash. Timestamps, durations, the machine, the tool build, the target paths and URLs, the release labels, the driver, the browser, device and model measures, the lab findings and the tier.
+- `run`: everything that differs between machines and runs, and the labels that must not change the hash. The run id, timestamps, durations, the machine, the tool build, the target paths and URLs, the build link, the release labels and the game id, the driver, the environment, the browser, device and model measures, the lab findings and the tier.
 
 What the hash promises depends on the inputs. A check with only a build gives the same `result_hash` and exit code on any machine. With a launch URL or `--device`, the run coverage depends on the machine and the browser, and the status follows it. The hash then identifies the result, but a check on another machine is not expected to give the same hash.
 

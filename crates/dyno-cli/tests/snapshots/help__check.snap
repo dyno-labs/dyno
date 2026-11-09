@@ -11,6 +11,9 @@ Arguments:
           [phase 1] A build folder or .zip (static scan), an http(s) launch URL (browser run), or one of each
 
 Options:
+      --baseline
+          [phase 2] Check the empty build inside dyno instead of a target: one page with nothing on it, whose build id never changes. With --device, it gives the phone's footprint with no game
+
       --games <FILE>
           [phase 1] Check every game in a games file (TOML, or JSON by the .json extension)
 
@@ -34,6 +37,9 @@ Options:
 
       --release <VERSION>
           [phase 1] The release version to label the result with, such as v12. Outside the result hash
+
+      --game-id <UUID>
+          [phase 3] The game's id on the dyno site, a UUID. Default: the entry for the build in the nearest dyno.toml above it. Outside the result hash
 
       --driver <DRIVER>
           [phase 1] The browser driver: cdp, the built-in Chromium driver; exec:PROGRAM, a program that speaks the runner protocol on stdin and stdout; or serve, which serves the build and waits for a browser on the network to open it, such as Safari on an iPhone. exec needs a launch URL, and serve needs a build folder and no launch URL

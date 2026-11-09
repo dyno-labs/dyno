@@ -141,8 +141,9 @@ fn fits_the_check(row: &Measure, part: Part, inputs: &Inputs) -> bool {
 
 /// Every check has the static measures, and a build makes the phase 1 ones required. A launch URL
 /// brings the lab measures: phase 1 ones are required, and play ones are when `--spins` asks.
-/// `--device` brings the device measures, all required. Model measures are never required, and
-/// field measures are never expected.
+/// `--device` brings the device measures, all required but the footprint over the empty build,
+/// which needs `--runs` too. Model measures are never required, and field measures are never
+/// expected.
 fn expectation(id: MeasureId, inputs: &Inputs) -> Expectation {
     let spec = id.spec();
     match spec.source {
@@ -151,8 +152,12 @@ fn expectation(id: MeasureId, inputs: &Inputs) -> Expectation {
         Source::Lab if spec.covers == Covers::DemoSpins => required_if(inputs.spins.is_some()),
         Source::Lab => required_if(spec.phase == 1),
         Source::Model => Expectation::Optional,
-        Source::Device if inputs.device => Expectation::Required,
-        Source::Device | Source::Field => Expectation::Unexpected,
+        Source::Device if !inputs.device => Expectation::Unexpected,
+        Source::Device if id == MeasureId::DeviceFootprintOverBaseline => {
+            required_if(inputs.device_runs.is_some())
+        }
+        Source::Device => Expectation::Required,
+        Source::Field => Expectation::Unexpected,
     }
 }
 
@@ -253,6 +258,7 @@ mod tests {
     const PEAK: MeasureId = MeasureId::PlayPeak;
     const MODEL_FOOTPRINT: MeasureId = MeasureId::ModelFootprint;
     const DEVICE_FOOTPRINT: MeasureId = MeasureId::DevicePhysFootprint;
+    const OVER_BASELINE: MeasureId = MeasureId::DeviceFootprintOverBaseline;
     /// The measure that the stereo rule reads.
     const STEREO_FILES: MeasureId = MeasureId::StaticAudioStereoFiles;
     const SPINS: u32 = 100;
@@ -272,6 +278,7 @@ mod tests {
             scenario: Scenario::Alone,
             spins: None,
             device: false,
+            device_runs: None,
         }
     }
 
@@ -293,6 +300,13 @@ mod tests {
         Inputs {
             device: true,
             ..nothing_asked()
+        }
+    }
+
+    fn a_device_with_runs() -> Inputs {
+        Inputs {
+            device_runs: Some(3),
+            ..a_device()
         }
     }
 
@@ -426,32 +440,43 @@ mod tests {
             PEAK,
             MODEL_FOOTPRINT,
             DEVICE_FOOTPRINT,
+            OVER_BASELINE,
         ];
         let cases = [
             (
                 nothing_asked(),
                 [
-                    Optional, Optional, Unexpected, Unexpected, Optional, Unexpected,
+                    Optional, Optional, Unexpected, Unexpected, Optional, Unexpected, Unexpected,
                 ],
             ),
             (
                 a_build(),
                 [
-                    Required, Optional, Unexpected, Unexpected, Optional, Unexpected,
+                    Required, Optional, Unexpected, Unexpected, Optional, Unexpected, Unexpected,
                 ],
             ),
             (
                 a_launch_url(),
-                [Optional, Optional, Required, Optional, Optional, Unexpected],
+                [
+                    Optional, Optional, Required, Optional, Optional, Unexpected, Unexpected,
+                ],
             ),
             (
                 a_launch_url_with_spins(),
-                [Optional, Optional, Required, Required, Optional, Unexpected],
+                [
+                    Optional, Optional, Required, Required, Optional, Unexpected, Unexpected,
+                ],
             ),
             (
                 a_device(),
                 [
-                    Optional, Optional, Unexpected, Unexpected, Optional, Required,
+                    Optional, Optional, Unexpected, Unexpected, Optional, Required, Optional,
+                ],
+            ),
+            (
+                a_device_with_runs(),
+                [
+                    Optional, Optional, Unexpected, Unexpected, Optional, Required, Required,
                 ],
             ),
         ];
@@ -799,6 +824,24 @@ mod tests {
     fn device_measures_count_with_the_device_flag() {
         let rows = without(run_rows(&a_device()), DEVICE_FOOTPRINT);
         assert_eq!(run_coverage(&a_device(), &rows), RunCoverage::Missing);
+    }
+
+    #[test]
+    fn the_footprint_over_the_empty_build_counts_only_with_runs() {
+        let missing = |row: &mut Measure| {
+            row.status = MeasureStatus::Missing;
+            row.value = None;
+        };
+        let without_runs = edited(run_rows(&a_device()), OVER_BASELINE, missing);
+        assert_eq!(
+            run_coverage(&a_device(), &without_runs),
+            RunCoverage::Complete
+        );
+        let with_runs = edited(run_rows(&a_device_with_runs()), OVER_BASELINE, missing);
+        assert_eq!(
+            run_coverage(&a_device_with_runs(), &with_runs),
+            RunCoverage::Missing
+        );
     }
 
     #[test]

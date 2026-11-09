@@ -387,6 +387,15 @@
     "statistic": "peak"
   },
   {
+    "id": "device.footprint_over_baseline",
+    "source": "device",
+    "phase": 2,
+    "unit": "bytes_change",
+    "covers": "fresh_device_runs",
+    "quantity": "footprint",
+    "statistic": "median_peak_over_baseline"
+  },
+  {
     "id": "device.kills",
     "source": "device",
     "phase": 2,

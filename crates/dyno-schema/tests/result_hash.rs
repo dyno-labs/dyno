@@ -109,6 +109,7 @@ fn deterministic(
             scenario: Scenario::Alone,
             spins: None,
             device: false,
+            device_runs: None,
         },
         build: Some(BuildManifest {
             build_id: Some(sha256_hex(b"build")),
@@ -430,6 +431,22 @@ fn a_result_from_before_the_run_identity_fields_still_reads_and_matches() {
     assert_eq!(loaded.result.run.build_link, None);
     assert_eq!(loaded.result.run.environment, None);
     assert_eq!(loaded.result.run.release.game_id, None);
+}
+
+#[test]
+fn device_runs_are_left_out_of_the_json_and_the_hash_when_not_given() {
+    let reference = reference_json();
+    assert!(
+        reference["deterministic"]["inputs"]
+            .get("device_runs")
+            .is_none()
+    );
+    let mut with_runs = deterministic(WALK, ITEMS, MEASURE_ORDER);
+    with_runs.inputs.device_runs = Some(3);
+    let result = CheckResult::new(with_runs, run_info(REFERENCE_TIME, "macos")).unwrap();
+    assert_ne!(result.result_hash, reference_result().result_hash);
+    let json = serde_json::to_value(&result).unwrap();
+    assert_eq!(json["deterministic"]["inputs"]["device_runs"], 3);
 }
 
 #[test]

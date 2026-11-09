@@ -740,6 +740,15 @@
           "description": "Whether `--device` asked for an iPhone run (Phase 2).",
           "type": "boolean"
         },
+        "device_runs": {
+          "description": "The runs of the game, and of the empty build, that `--runs` asked for with `--device`.\nLeft out of the JSON when not given, so the hash of a check without it does not change.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
         "host_profile": {
           "$ref": "#/$defs/ProfileRef"
         },
@@ -1117,6 +1126,11 @@
           "description": "The largest `phys_footprint` of the game's process on the iPhone in the run window,\nfrom the answer to the page's `hello` to the end of the run, with the slack of a sample\nat each end that places the run on the trace's clock.",
           "type": "string",
           "const": "device.phys_footprint_peak"
+        },
+        {
+          "description": "The median `phys_footprint` peak of N runs of the game, minus the median peak of N runs\nof the empty build, on the same phone. Needs `--runs`. A difference, so a game within\nthe noise of the empty page can give a value below 0.",
+          "type": "string",
+          "const": "device.footprint_over_baseline"
         },
         {
           "description": "Runs that the iPhone killed: the game's process left the trace before the run ended, as\na process that iOS kills does. One item per kill.",

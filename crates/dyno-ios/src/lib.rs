@@ -6,11 +6,13 @@
 //! jetsam reads, about once a second. [`device_measures`] finds the game's WebContent process and
 //! reads its footprint when the frame went idle, and whether it left the trace before the run
 //! ended, as a process that iOS kills does. Before it records, [`devicectl`] checks that the
-//! phone is unlocked and opens the page in its Safari.
+//! phone is unlocked and opens the page in its Safari. With `--runs`, [`runs`] reads the runs of
+//! the game and of the empty build into one set of device measures.
 //!
 //! `doctor` is still a stub: it runs no command and touches no device.
 
 pub mod devicectl;
+pub mod runs;
 pub mod trace;
 pub mod xctrace;
 
@@ -29,8 +31,8 @@ use crate::trace::{Trace, TraceDevice};
 /// The plan phase that builds `doctor` and the device run.
 pub const DEVICE_PHASE: Phase = 2;
 
-/// The measures of a device run. A check has them only when `--device` asks for them, so they
-/// are always required.
+/// The measures of one device run. A check has them only when `--device` asks for them, so they
+/// are always required. `device.footprint_over_baseline` needs `--runs`, so [`runs`] gives it.
 pub const DEVICE_MEASURES: &[MeasureId] = &[
     MeasureId::DevicePhysFootprint,
     MeasureId::DevicePhysFootprintPeak,
@@ -61,6 +63,10 @@ pub fn doctor() -> DoctorReport {
         checks,
     }
 }
+
+/// The item of `device.phys_footprint` that holds the peak, for readers from before
+/// `device.phys_footprint_peak`.
+const PEAK_ITEM: &str = "peak during the run";
 
 /// The name of Safari's process that runs a page.
 const WEB_CONTENT: &str = "com.apple.WebKit.WebContent";
@@ -135,7 +141,7 @@ pub fn device_measures(trace: &Trace, run: &RunWindow) -> Vec<Measure> {
         Some(bytes) => Measure {
             value: Some(MeasureValue::Integer(saturating(bytes))),
             items: vec![MeasureItem {
-                key: "peak during the run".to_owned(),
+                key: PEAK_ITEM.to_owned(),
                 value: MeasureValue::Integer(saturating(peak)),
             }],
             evidence: evidence.clone(),
@@ -259,12 +265,13 @@ mod tests {
     }
 
     #[test]
-    fn missing_device_measures_cover_every_device_measure_and_are_required() {
+    fn missing_device_measures_cover_every_measure_of_one_run_and_are_required() {
         let measures = missing_device_measures("no phone");
         let device: Vec<MeasureId> = MeasureId::ALL
             .iter()
             .copied()
             .filter(|id| id.spec().source == Source::Device)
+            .filter(|&id| id != MeasureId::DeviceFootprintOverBaseline)
             .collect();
         let ids: Vec<MeasureId> = measures.iter().map(|measure| measure.id).collect();
         assert_eq!(ids, device);

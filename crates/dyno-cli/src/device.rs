@@ -162,6 +162,12 @@ pub fn kept_trace(out: &Path) -> PathBuf {
     out.with_extension("trace")
 }
 
+/// Where `--runs` keeps the trace of one run, beside the trace a single run keeps: as
+/// `<name>.game-2.trace` for the second run of the game, for example.
+pub fn run_trace(kept: &Path, of: &str, run: u32) -> PathBuf {
+    kept.with_extension(format!("{of}-{run}.trace"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,6 +189,19 @@ mod tests {
         assert_eq!(
             kept_trace(Path::new("runs/game-1.json")),
             PathBuf::from("runs/game-1.trace")
+        );
+    }
+
+    #[test]
+    fn each_run_of_runs_keeps_its_own_trace() {
+        let kept = kept_trace(Path::new("runs/moon_lander.json"));
+        assert_eq!(
+            run_trace(&kept, "empty", 3),
+            PathBuf::from("runs/moon_lander.empty-3.trace")
+        );
+        assert_eq!(
+            run_trace(&kept, "game", 1),
+            PathBuf::from("runs/moon_lander.game-1.trace")
         );
     }
 }

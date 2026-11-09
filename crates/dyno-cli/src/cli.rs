@@ -165,6 +165,17 @@ pub struct CheckArgs {
     #[arg(long)]
     pub no_open: bool,
 
+    /// [phase 2] With --device, run the empty build and the game N times each, in turn, each in a
+    /// fresh Safari with its own recording. The device measures are then the medians of the runs,
+    /// the kills in N runs, and the game's peak over the empty build's
+    #[arg(
+        long,
+        value_name = "N",
+        value_parser = clap::value_parser!(u32).range(1..),
+        conflicts_with = "baseline"
+    )]
+    pub runs: Option<u32>,
+
     /// [phase 3] Upload the result to the dyno site and print its link, or each game's with
     /// --games. Needs dyno login or DYNO_TOKEN
     #[arg(long)]

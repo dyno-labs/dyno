@@ -9,17 +9,20 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use dyno_cdp::CdpDriver;
+use dyno_ios::runs::{device_runs_measures, over_baseline_unsupported};
 use dyno_run::Driver;
 use dyno_run::exec::ExecDriver;
 use dyno_schema::budget::{Budget, BudgetRef};
 use dyno_schema::catalogue::{CatalogueEntry, CatalogueResult, GameEntry, GamesFile, Shard};
-use dyno_schema::environment::Environment;
+use dyno_schema::environment::{Environment, EnvironmentDevice, EnvironmentOs};
 use dyno_schema::launch_url::LaunchUrl;
 use dyno_schema::link::find_link;
+use dyno_schema::measure::Measure;
 use dyno_schema::profile::{HostProfile, Scenario};
 use dyno_schema::result::{
-    BuildLink, CheckResult, Deterministic, Inputs, Release, RunInfo, Target, Versions,
+    BuildLink, CheckResult, Deterministic, DriverInfo, Inputs, Release, RunInfo, Target, Versions,
 };
+use dyno_schema::rule::Finding;
 use dyno_schema::runner::{RUNNER_PROTOCOL_VERSION, RunRequest};
 use dyno_schema::status::Status;
 use dyno_schema::{SCHEMA_VERSION, TOOL_VERSION};
@@ -32,7 +35,7 @@ use uuid::Uuid;
 
 use crate::baseline::EmptyBuild;
 use crate::cli::{CheckArgs, DriverArg};
-use crate::device;
+use crate::device::{self, DeviceRun};
 use crate::exit::{self, CliError};
 use crate::output::{self, ResultPlace};
 use crate::run_info::{Clock, machine, tool_build};
@@ -58,6 +61,8 @@ pub struct CheckOptions {
     scenario: Scenario,
     spins: Option<u32>,
     device: bool,
+    /// The runs of the game, and of the empty build, that `--runs` asks for with `--device`.
+    device_runs: Option<u32>,
     /// The device `--device` records, when one is named.
     device_id: Option<String>,
     /// Where `--device` keeps its trace. None deletes it after the check.
@@ -92,10 +97,17 @@ pub fn run(args: CheckArgs) -> Result<Status, CliError> {
             "--serve-host, --serve-port and --serve-query need --driver serve",
         ));
     }
+    let device = args.device || args.device_id.is_some();
+    if args.runs.is_some() && !device {
+        return Err(CliError::usage(
+            "--runs needs --device: it runs the game and the empty build on the phone",
+        ));
+    }
     let options = CheckOptions {
         scenario: args.scenario.into(),
         spins: args.spins,
-        device: args.device || args.device_id.is_some(),
+        device,
+        device_runs: args.runs,
         device_id: args.device_id,
         // A games file checks several games, so only one target keeps its trace.
         device_trace: match (&args.out, &args.games) {
@@ -255,6 +267,7 @@ impl CheckOptions {
             scenario: Scenario::Alone,
             spins: None,
             device: false,
+            device_runs: None,
             device_id: None,
             device_trace: None,
             device_open: true,
@@ -406,19 +419,18 @@ fn check_one(
 ) -> Result<CheckResult, CliError> {
     let clock = Clock::start();
     let run_id = Uuid::new_v4().to_string();
+    let device_runs = options.device_runs.filter(|_| options.device);
     // A served run's launch URL is dyno's own server. The result records the build, not that URL.
-    let mut served = match (&options.driver, &target.build) {
-        (DriverArg::Serve, Some(build)) => Some(serve(build, &options.serve)?),
+    // `--runs` serves each run's build on its own, after the scan.
+    let served = match (&options.driver, &target.build, device_runs) {
+        (DriverArg::Serve, Some(build), None) => Some(serve(build, &options.serve)?),
         _ => None,
     };
     let launch_url = match &served {
-        Some(driver) => Some(
-            LaunchUrl::parse(&driver.launch_url(options.serve_query.as_deref()))
-                .map_err(CliError::usage)?,
-        ),
+        Some(driver) => Some(served_launch_url(driver, options.serve_query.as_deref())?),
         None => target.launch_url.clone(),
     };
-    let has_launch_url = launch_url.is_some();
+    let has_launch_url = launch_url.is_some() || device_runs.is_some();
 
     let scan = match &target.build {
         Some(build) => dyno_static::scan(build, &options.host_profile, options.budget.as_ref())
@@ -431,63 +443,11 @@ fn check_one(
     };
 
     let mut run_measures = model_measures(has_launch_url);
-    let mut run_findings = Vec::new();
-    let mut driver = None;
-    let mut environment = None;
-    // The recording starts before the person is told to open the page, so it sees the whole run.
-    // Safari opens the page once the recording is on. The page waits for the run to start.
-    let device_run = match (&served, options.device) {
-        (Some(served), true) => Some(device::start(
-            options.device_id.as_deref(),
-            options.device_open.then(|| served.harness_url()),
-            options.device_trace.as_deref(),
-            DEVICE_TRACE_LIMIT,
-        )?),
-        _ => None,
+    let browser = match (device_runs, &target.build) {
+        (Some(runs), Some(build)) => device_runs_run(build, runs, options)?,
+        _ => browser_run(served, launch_url.as_ref(), options)?,
     };
-    if let Some(device_run) = &device_run {
-        output::print_summary(&device_run.lines());
-    }
-    if let Some(served) = &served {
-        output::print_summary(&output::serve_lines(
-            served.harness_url(),
-            options.serve.wait_for_browser,
-        ));
-    }
-    if let Some(launch_url) = &launch_url {
-        let request = RunRequest {
-            protocol_version: RUNNER_PROTOCOL_VERSION,
-            launch_url: launch_url.as_str().to_owned(),
-            host_profile: options.host_profile.clone(),
-            scenario: options.scenario,
-            spins: options.spins,
-            idle_after_ms: IDLE_AFTER_MS,
-            timeout_ms: RUN_TIMEOUT_MS,
-        };
-        let lab = match served.as_mut() {
-            Some(served) => dyno_run::run_lab(served, &request),
-            None => dyno_run::run_lab(new_driver(&options.driver).as_mut(), &request),
-        };
-        run_measures.extend(lab.measures);
-        run_findings = lab.findings;
-        driver = lab.driver;
-        environment = lab.environment;
-    }
-    if let Some(device_run) = device_run {
-        output::print_summary(&[device_run.saving_line()]);
-        let finished = device_run.finish(served.as_ref().and_then(ServeDriver::last_run));
-        run_measures.extend(finished.measures);
-        // The trace knows the model, the iOS version and the memory, which a user agent does not.
-        if finished.device.is_some() {
-            let environment = environment.get_or_insert(Environment {
-                browser: None,
-                os: None,
-                device: None,
-            });
-            environment.os = finished.os;
-            environment.device = finished.device;
-        }
-    }
+    run_measures.extend(browser.measures);
 
     let inputs = Inputs {
         build: target.build.is_some(),
@@ -497,6 +457,7 @@ fn check_one(
         scenario: options.scenario,
         spins: options.spins,
         device: options.device,
+        device_runs,
     };
     let run_coverage = run_coverage(&inputs, &run_measures);
     let status = overall_status(
@@ -524,7 +485,7 @@ fn check_one(
     let run = RunInfo {
         run_id: Some(run_id),
         build_link: Some(build_link(target, &options.driver)),
-        environment,
+        environment: browser.environment,
         started_at: clock.started_at(),
         duration_ms: clock.elapsed_ms(),
         machine: machine(),
@@ -539,12 +500,196 @@ fn check_one(
             launch_url: target.launch_url.as_ref().map(LaunchUrl::recorded),
         },
         release,
-        driver,
+        driver: browser.driver,
         measures: run_measures,
-        findings: run_findings,
+        findings: browser.findings,
         tier: provisional_tier(has_launch_url),
     };
     CheckResult::new(deterministic, run).map_err(CliError::internal)
+}
+
+/// What the browser and device runs of one check gave.
+#[derive(Default)]
+struct BrowserRun {
+    measures: Vec<Measure>,
+    findings: Vec<Finding>,
+    driver: Option<DriverInfo>,
+    environment: Option<Environment>,
+}
+
+/// The browser run of a check with a launch URL, and with `--device` the device run around it.
+/// With no launch URL, nothing runs.
+fn browser_run(
+    mut served: Option<ServeDriver>,
+    launch_url: Option<&LaunchUrl>,
+    options: &CheckOptions,
+) -> Result<BrowserRun, CliError> {
+    let mut browser = BrowserRun::default();
+    // The recording starts before the person is told to open the page, so it sees the whole run.
+    // Safari opens the page once the recording is on. The page waits for the run to start.
+    let device_run = match (&served, options.device) {
+        (Some(served), true) => Some(start_device_run(
+            served,
+            options.device_trace.as_deref(),
+            options,
+        )?),
+        _ => None,
+    };
+    if let Some(served) = &served {
+        output::print_summary(&output::serve_lines(
+            served.harness_url(),
+            options.serve.wait_for_browser,
+        ));
+    }
+    if let Some(launch_url) = launch_url {
+        let request = run_request(launch_url, options);
+        let lab = match served.as_mut() {
+            Some(served) => dyno_run::run_lab(served, &request),
+            None => dyno_run::run_lab(new_driver(&options.driver).as_mut(), &request),
+        };
+        browser.measures = lab.measures;
+        browser.findings = lab.findings;
+        browser.driver = lab.driver;
+        browser.environment = lab.environment;
+    }
+    if let Some(device_run) = device_run {
+        output::print_summary(&[device_run.saving_line()]);
+        let finished = device_run.finish(served.as_ref().and_then(ServeDriver::last_run));
+        browser.environment = with_trace(browser.environment, finished.os, finished.device);
+        browser.measures.extend(finished.measures);
+        browser.measures.push(over_baseline_unsupported());
+    }
+    Ok(browser)
+}
+
+/// What one run of `--runs` is a run of.
+#[derive(Clone, Copy)]
+enum RunOf {
+    EmptyBuild,
+    Game,
+}
+
+/// `--runs`: N runs of the empty build and N of the game, in turn, each served on its own and
+/// opened in a fresh Safari with its own recording. The lab measures, the driver and the browser
+/// come from the first game run that completed, or else the first game run, and the phone from
+/// the first game run whose trace named it. The device measures come from every run.
+fn device_runs_run(
+    build: &Path,
+    runs: u32,
+    options: &CheckOptions,
+) -> Result<BrowserRun, CliError> {
+    let empty_build = EmptyBuild::write()?;
+    let mut game_device = Vec::new();
+    let mut empty_device = Vec::new();
+    let mut game_labs = Vec::new();
+    let mut phone = None;
+    for run in 1..=runs {
+        for of in [RunOf::EmptyBuild, RunOf::Game] {
+            let (path, query, name, trace_name) = match of {
+                RunOf::EmptyBuild => (empty_build.path(), None, "the empty build", "empty"),
+                RunOf::Game => (build, options.serve_query.as_deref(), "the game", "game"),
+            };
+            output::print_summary(&[format!("dyno check: run {run} of {runs} of {name}.")]);
+            let mut served = serve(path, &options.serve)?;
+            let request = run_request(&served_launch_url(&served, query)?, options);
+            let trace = options
+                .device_trace
+                .as_deref()
+                .map(|trace| device::run_trace(trace, trace_name, run));
+            let device_run = start_device_run(&served, trace.as_deref(), options)?;
+            output::print_summary(&output::serve_lines(
+                served.harness_url(),
+                options.serve.wait_for_browser,
+            ));
+            let lab = dyno_run::run_lab(&mut served, &request);
+            output::print_summary(&[device_run.saving_line()]);
+            let finished = device_run.finish(served.last_run());
+            match of {
+                RunOf::EmptyBuild => empty_device.push(finished.measures),
+                RunOf::Game => {
+                    if phone.is_none() && finished.device.is_some() {
+                        phone = Some((finished.os, finished.device));
+                    }
+                    game_device.push(finished.measures);
+                    game_labs.push(lab);
+                }
+            }
+        }
+    }
+    // clap takes --runs from 1, so there is a game run.
+    let first_completed = game_labs
+        .iter()
+        .position(|lab| lab.driver.is_some())
+        .unwrap_or(0);
+    let lab = game_labs.swap_remove(first_completed);
+    let environment = match phone {
+        Some((os, device)) => with_trace(lab.environment, os, device),
+        None => lab.environment,
+    };
+    let mut measures = lab.measures;
+    measures.extend(device_runs_measures(&game_device, &empty_device));
+    Ok(BrowserRun {
+        measures,
+        findings: lab.findings,
+        driver: lab.driver,
+        environment,
+    })
+}
+
+/// Starts recording the phone, opens the served page in its Safari unless `--no-open`, and says
+/// so.
+fn start_device_run(
+    served: &ServeDriver,
+    trace: Option<&Path>,
+    options: &CheckOptions,
+) -> Result<DeviceRun, CliError> {
+    let device_run = device::start(
+        options.device_id.as_deref(),
+        options.device_open.then(|| served.harness_url()),
+        trace,
+        DEVICE_TRACE_LIMIT,
+    )?;
+    output::print_summary(&device_run.lines());
+    Ok(device_run)
+}
+
+/// The environment with the OS and the device that a device run's trace recorded. They know the
+/// model, the iOS version and the memory, which a user agent does not. A trace that named no model
+/// changes nothing.
+fn with_trace(
+    environment: Option<Environment>,
+    os: Option<EnvironmentOs>,
+    device: Option<EnvironmentDevice>,
+) -> Option<Environment> {
+    if device.is_none() {
+        return environment;
+    }
+    let mut environment = environment.unwrap_or(Environment {
+        browser: None,
+        os: None,
+        device: None,
+    });
+    environment.os = os;
+    environment.device = device;
+    Some(environment)
+}
+
+/// The launch URL of a served run: dyno's game server, with this query string.
+fn served_launch_url(served: &ServeDriver, query: Option<&str>) -> Result<LaunchUrl, CliError> {
+    LaunchUrl::parse(&served.launch_url(query)).map_err(CliError::usage)
+}
+
+/// A load-and-idle run of this launch URL, with the check's profile, scenario and spins.
+fn run_request(launch_url: &LaunchUrl, options: &CheckOptions) -> RunRequest {
+    RunRequest {
+        protocol_version: RUNNER_PROTOCOL_VERSION,
+        launch_url: launch_url.as_str().to_owned(),
+        host_profile: options.host_profile.clone(),
+        scenario: options.scenario,
+        spins: options.spins,
+        idle_after_ms: IDLE_AFTER_MS,
+        timeout_ms: RUN_TIMEOUT_MS,
+    }
 }
 
 /// How the run's evidence ties to the build: no build; a static scan only; a build that dyno

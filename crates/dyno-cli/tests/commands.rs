@@ -491,7 +491,7 @@ fn a_piped_version_is_one_line_with_no_banner() {
 fn usage_and_config_errors_exit_64() {
     let dir = tempfile::tempdir().unwrap();
     let bad_budget = write_file(dir.path(), "bad.toml", BAD_BUDGET);
-    let cases: [&[&str]; 14] = [
+    let cases: [&[&str]; 17] = [
         &[],
         &["check"],
         &["check", "no-such-build"],
@@ -506,6 +506,25 @@ fn usage_and_config_errors_exit_64() {
         &["check", "--games", "games.toml", "--shard", "3/2"],
         &["check", "--games", "games.toml", "--spins", "10"],
         &["check", "--shard", "1/2", "tiny-build"],
+        &["check", "tiny-build", "--driver", "serve", "--runs", "2"],
+        &[
+            "check",
+            "tiny-build",
+            "--driver",
+            "serve",
+            "--device",
+            "--runs",
+            "0",
+        ],
+        &[
+            "check",
+            "--baseline",
+            "--driver",
+            "serve",
+            "--device",
+            "--runs",
+            "2",
+        ],
     ];
     for args in cases {
         let outcome = dyno(args);

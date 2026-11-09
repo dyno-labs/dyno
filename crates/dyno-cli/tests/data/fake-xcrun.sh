@@ -4,7 +4,7 @@
 # 1, and the Mac itself has no lock state. A launch writes the URL it opens to the file that
 # FAKE_XCRUN_LAUNCHED names, when it names one. A recording saves on an interrupt. Its export has
 # a WebContent process of 200 MiB at every second for a minute from the start, so a run finds it
-# at idle.
+# at idle. A trace whose name says it is of the empty build (`*.empty-<n>.trace`) has 60 MiB.
 # FAKE_XCRUN_FAIL names a step that fails instead: list, record, export, lockState or launch. With
 # disconnect, a recording loses the phone once it starts, and an interrupt then does not stop it.
 # With disconnect-save, it loses the phone, then saves and exits by itself.
@@ -83,9 +83,13 @@ case "$1 $step" in
 		printf '<col><mnemonic>%s</mnemonic></col>' "$column"
 	done
 	printf '</schema>\n'
+	bytes=209715200
+	case "$trace" in
+	*.empty-*.trace) bytes=62914560 ;;
+	esac
 	second=0
 	while [ "$second" -le 60 ]; do
-		printf '<row><start-time fmt="%s s">%s000000000</start-time><process fmt="com.apple.WebKit.WebContent (412)"/><pid fmt="412">412</pid><size-in-bytes fmt="200 MiB">209715200</size-in-bytes></row>\n' "$second" "$second"
+		printf '<row><start-time fmt="%s s">%s000000000</start-time><process fmt="com.apple.WebKit.WebContent (412)"/><pid fmt="412">412</pid><size-in-bytes fmt="%s B">%s</size-in-bytes></row>\n' "$second" "$second" "$bytes" "$bytes"
 		second=$((second + 1))
 	done
 	printf '</node></trace-query-result>\n'

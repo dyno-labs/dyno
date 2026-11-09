@@ -4,4 +4,4 @@
  * Which reading of a quantity a measure is: over the build's files, by idle, at idle or at its
  * peak, for example.
  */
-export type Statistic = "all_files" | "all_files_at48k" | "all_files_at24k" | "largest" | "since_navigation" | "by_idle" | "to_playable" | "at_idle" | "while_inactive" | "peak" | "modelled_active" | "modelled_inactive" | "during_spins" | "peak_during_spins" | "growth_per100_spins" | "peak_during_bonus" | "of_runs";
+export type Statistic = "all_files" | "all_files_at48k" | "all_files_at24k" | "largest" | "since_navigation" | "by_idle" | "to_playable" | "at_idle" | "while_inactive" | "peak" | "median_peak_over_baseline" | "modelled_active" | "modelled_inactive" | "during_spins" | "peak_during_spins" | "growth_per100_spins" | "peak_during_bonus" | "of_runs";

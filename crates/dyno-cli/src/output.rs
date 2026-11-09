@@ -669,6 +669,7 @@ mod tests {
                 scenario: Scenario::Alone,
                 spins: None,
                 device: false,
+                device_runs: None,
             },
             build: None,
             status,

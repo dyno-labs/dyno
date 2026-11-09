@@ -110,6 +110,11 @@ pub struct Inputs {
     pub spins: Option<u32>,
     /// Whether `--device` asked for an iPhone run (Phase 2).
     pub device: bool,
+    /// The runs of the game, and of the empty build, that `--runs` asked for with `--device`.
+    /// Left out of the JSON when not given, so the hash of a check without it does not change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub device_runs: Option<u32>,
 }
 
 /// What differs between machines and runs. The hash excludes it.

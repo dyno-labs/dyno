@@ -258,6 +258,15 @@ fn a_device_check_records_the_phone_and_reads_its_footprint_at_idle() {
     assert_eq!(peak["status"], "measured", "{peak}");
     assert_eq!(peak["required"], true, "{peak}");
     assert_eq!(peak["value"], 209_715_200);
+    // One run gives no footprint over the empty build, and does not need one.
+    let over = run_measure(&result, "device.footprint_over_baseline");
+    assert_eq!(over["status"], "unsupported", "{over}");
+    assert_eq!(over["required"], false, "{over}");
+    assert!(
+        result["deterministic"]["inputs"]
+            .get("device_runs")
+            .is_none()
+    );
     // Readers from before the peak measure find it as an item.
     assert_eq!(footprint["items"][0]["key"], "peak during the run");
     let kills = run_measure(&result, "device.kills");
@@ -464,6 +473,110 @@ fn a_trace_that_cannot_be_read_leaves_the_device_measures_missing() {
             .unwrap()
             .starts_with("cannot read the trace: xctrace export failed")
     );
+}
+
+/// A device check with `--runs`, run to the end with this test as the phone's browser in every
+/// run. dyno takes free ports for each run, so each run prints its own URL. It gives the outcome.
+fn device_runs_check(env: &[(&str, &str)], args: &[&str]) -> Outcome {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_dyno"))
+        .args(["check", "tiny-build", "--driver", "serve", "--device"])
+        .args(args)
+        .args(["--serve-host", "127.0.0.1", "--serve-port", "0"])
+        .current_dir(data_dir())
+        .env("DYNO_CHROMIUM", NO_CHROMIUM)
+        .env("DYNO_XCRUN", fake_xcrun())
+        .envs(env.iter().copied())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the dyno binary runs");
+    let mut stderr = BufReader::new(child.stderr.take().unwrap());
+    let mut said = String::new();
+    loop {
+        let mut line = String::new();
+        if stderr.read_line(&mut line).unwrap() == 0 {
+            break;
+        }
+        said.push_str(&line);
+        if let Some(rest) = line.split("open http://").nth(1) {
+            open_as_browser(rest.split('/').next().unwrap(), "");
+        }
+    }
+    let output = child.wait_with_output().unwrap();
+    Outcome {
+        args: Vec::new(),
+        code: output.status.code().unwrap(),
+        stdout: String::from_utf8(output.stdout).unwrap(),
+        stderr: said,
+    }
+}
+
+#[test]
+fn runs_give_the_medians_the_kills_and_the_game_over_the_empty_build() {
+    let folder = tempfile::tempdir().unwrap();
+    let out = folder.path().join("result.json");
+    let outcome = device_runs_check(&[], &["--runs", "2", "--out", &out.display().to_string()]);
+    for run in ["1 of 2 of the empty build", "2 of 2 of the game"] {
+        assert!(
+            outcome.stderr.contains(&format!("dyno check: run {run}.")),
+            "{}",
+            outcome.stderr
+        );
+    }
+    let result: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
+    assert_eq!(result["deterministic"]["inputs"]["device_runs"], 2);
+    // The fake phone gives the game 200 MiB in every run, and the empty build 60 MiB.
+    let footprint = run_measure(&result, "device.phys_footprint");
+    assert_eq!(footprint["value"], 209_715_200, "{footprint}");
+    assert_eq!(footprint["uncertainty"]["kind"], "range", "{footprint}");
+    let peak = run_measure(&result, "device.phys_footprint_peak");
+    assert_eq!(peak["value"], 209_715_200, "{peak}");
+    assert_eq!(peak["items"].as_array().unwrap().len(), 2, "{peak}");
+    let kills = run_measure(&result, "device.kills");
+    assert_eq!(kills["value"], 0, "{kills}");
+    assert_eq!(kills["items"].as_array().unwrap().len(), 2, "{kills}");
+    let over = run_measure(&result, "device.footprint_over_baseline");
+    assert_eq!(over["status"], "measured", "{over}");
+    assert_eq!(over["required"], true, "{over}");
+    assert_eq!(over["value"], 209_715_200 - 62_914_560, "{over}");
+    assert_eq!(result["deterministic"]["run_coverage"], "complete");
+    // The lab measures and the phone come from a game run.
+    let frame_dpr = run_measure(&result, "lab.self_check.frame_dpr");
+    assert_eq!(frame_dpr["status"], "measured", "{frame_dpr}");
+    assert_eq!(
+        result["run"]["environment"]["device"]["key"],
+        "iphone-14-pro-max"
+    );
+    for trace in ["empty-1", "game-1", "empty-2", "game-2"] {
+        assert!(
+            folder.path().join(format!("result.{trace}.trace")).is_dir(),
+            "{trace}"
+        );
+    }
+}
+
+#[test]
+fn a_run_of_runs_that_did_not_complete_says_which_run_and_why() {
+    let outcome = device_runs_check(&[("FAKE_XCRUN_FAIL", "export")], &["--runs", "1"]);
+    let result: serde_json::Value = serde_json::from_str(&outcome.stdout).unwrap();
+    for id in [
+        "device.phys_footprint",
+        "device.phys_footprint_peak",
+        "device.kills",
+        "device.footprint_over_baseline",
+    ] {
+        let measure = run_measure(&result, id);
+        assert_eq!(measure["status"], "missing", "{measure}");
+        assert!(
+            measure["reason"]
+                .as_str()
+                .unwrap()
+                .starts_with("game run 1 of 1 did not complete: cannot read the trace"),
+            "{measure}"
+        );
+    }
+    assert_eq!(result["deterministic"]["run_coverage"], "missing");
 }
 
 /// A device check that stops before its run, with the fake xcrun's environment.

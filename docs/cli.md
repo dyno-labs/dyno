@@ -35,6 +35,7 @@ The check summary gives the status and why, the decoded memory and the build siz
 | `--device`                          | 2     | Also record the game's memory on the connected iPhone with xctrace, while its Safari runs the check. Needs `--driver serve` and a Mac with Xcode.                                                                                                                       |
 | `--device-id <ID>`                  | 2     | With `--device`: the device to record, by its UDID or name as `xcrun xctrace list devices` gives them. Default: the only connected iPhone.                                                                                                                              |
 | `--no-open`                         | 2     | With `--device`: do not open the page in the phone's Safari. Open it by hand.                                                                                                                                                                                           |
+| `--runs <N>`                        | 2     | With `--device`: run the empty build and the game N times each, in turn, with N at least 1. Not with `--baseline`. See [Runs of the game and the empty build](#runs-of-the-game-and-the-empty-build).                                                                   |
 | `--upload`                          | 3     | After the check, upload the result to the dyno site and print its link to stderr. With `--games`, upload each game's result. Needs `dyno login` or `DYNO_TOKEN`. See [Upload results to the dyno site](#upload-results-to-the-dyno-site).                               |
 
 A flag that needs a launch URL is checked before any work starts. With `--games`, such a flag needs a `launch_url` on every selected game.
@@ -60,6 +61,19 @@ With `--device` too, dyno records an Activity Monitor trace of every process on 
 The trace also names the phone's model, its iOS version and its memory, which go into `run.environment` (see [What ran](#what-ran)). The phone's own name, which is often its owner's, never goes into a result.
 
 With `--out`, the trace is kept beside the result, as `<name>.trace`, for Instruments. Without it, the trace is deleted. `DYNO_XCRUN` names another program to run instead of `xcrun`, such as a fake in tests.
+
+A single run has `device.footprint_over_baseline` as `unsupported`: it needs `--runs`.
+
+#### Runs of the game and the empty build
+
+One run of a game on a phone varies from the next, and its footprint includes what Safari itself takes for an empty page. `--runs <N>` with `--device` runs the [empty build](#the-empty-build) and the game N times each, in turn: empty build, game, empty build, game, and so on. Each run serves its build on its own, opens the page in a fresh Safari (unless `--no-open`), and has its own recording. The ports stay the same, so with `--no-open` the URL to open is the same for every run. With `--out`, each run's trace is kept beside the result, as `<name>.empty-1.trace`, `<name>.game-1.trace` and so on. The result is one result, with `inputs.device_runs` set to N:
+
+- `device.phys_footprint`: the median of the game runs' readings at idle.
+- `device.phys_footprint_peak`: the median of the game runs' peaks.
+- `device.kills`: how many of the N game runs the phone killed.
+- `device.footprint_over_baseline`: the median of the game runs' peaks, minus the median of the empty build runs' peaks. This is the game's own footprint on the phone. It is a change in size (`bytes_change`), so a game within the noise of the empty page can give a value below 0.
+
+Each has an item per run. The median of an even number of runs is the mean of the middle two, rounded down. A footprint's uncertainty is the range from its smallest run to its largest. The lab measures, the driver and the browser come from the first game run that completed. Every run counts toward N, so a run that does not give a reading, such as one whose trace cannot be read, leaves the measures that need it missing, and the reason names the run and says why. A missing measure keeps an item for each run that did give a reading. A game that the phone killed before idle has no reading at idle, but still has its peak and its kill. A phone that cannot record, such as one that locked between runs, stops the check, as it does before a single run.
 
 #### Link a build to its game
 

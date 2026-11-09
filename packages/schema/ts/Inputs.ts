@@ -26,4 +26,9 @@ spins: number | null,
 /**
  * Whether `--device` asked for an iPhone run (Phase 2).
  */
-device: boolean, };
+device: boolean, 
+/**
+ * The runs of the game, and of the empty build, that `--runs` asked for with `--device`.
+ * Left out of the JSON when not given, so the hash of a check without it does not change.
+ */
+device_runs?: number, };

@@ -77,6 +77,9 @@ Options:
       --no-open
           [phase 2] With --device, do not open the page in the phone's Safari: open it by hand
 
+      --runs <N>
+          [phase 2] With --device, run the empty build and the game N times each, in turn, each in a fresh Safari with its own recording. The device measures are then the medians of the runs, the kills in N runs, and the game's peak over the empty build's
+
       --upload
           [phase 3] Upload the result to the dyno site and print its link, or each game's with --games. Needs dyno login or DYNO_TOKEN
 

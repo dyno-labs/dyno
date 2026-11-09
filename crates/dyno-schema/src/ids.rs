@@ -177,6 +177,8 @@ pub enum Statistic {
     WhileInactive,
     /// The largest reading in the run window, from the navigation to the end of the run.
     Peak,
+    /// The median of the game runs' peaks, minus the median of the empty build runs' peaks.
+    MedianPeakOverBaseline,
     /// The model's value while the game is active.
     ModelledActive,
     /// The model's value while the game is inactive.
@@ -384,6 +386,10 @@ dotted_ids! {
         /// from the answer to the page's `hello` to the end of the run, with the slack of a sample
         /// at each end that places the run on the trace's clock.
         DevicePhysFootprintPeak = "device.phys_footprint_peak" => MeasureSpec::device(2, Unit::Bytes, Quantity::Footprint, Statistic::Peak),
+        /// The median `phys_footprint` peak of N runs of the game, minus the median peak of N runs
+        /// of the empty build, on the same phone. Needs `--runs`. A difference, so a game within
+        /// the noise of the empty page can give a value below 0.
+        DeviceFootprintOverBaseline = "device.footprint_over_baseline" => MeasureSpec::device(2, Unit::BytesChange, Quantity::Footprint, Statistic::MedianPeakOverBaseline),
         /// Runs that the iPhone killed: the game's process left the trace before the run ended, as
         /// a process that iOS kills does. One item per kill.
         DeviceKills = "device.kills" => MeasureSpec::device(2, Unit::Count, Quantity::Kills, Statistic::OfRuns),

@@ -192,6 +192,8 @@ Each upload prints a link: to the game's report, with the game's name, when the 
 
 dyno saves the token in `credentials.json` in its config folder: `DYNO_CONFIG_DIR`, or else `dyno` in `XDG_CONFIG_HOME`, or else `~/.config/dyno`. Only you can read the file. `DYNO_TOKEN` wins over the saved token. `DYNO_API_URL` names another site, such as one on your own machine.
 
+In GitHub Actions, the dyno Action needs no token of yours. Once you connect the repo in the site's Settings, GitHub, the Action asks GitHub for a short-lived OIDC token for each upload and passes it to `dyno upload` in `DYNO_TOKEN`, which sends it to the site as it sends a CLI token. The site checks with GitHub that the token is from a run of that repo, and keeps the result for your org. Such a token can only upload results and download dyno. When the site refuses a token that is not a CLI token, dyno says to check `DYNO_TOKEN`, since `dyno login` cannot help.
+
 ## Statuses
 
 Each measure has one of these statuses:

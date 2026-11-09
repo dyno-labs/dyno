@@ -21,6 +21,9 @@ const INTERNAL: i32 = 70;
 /// A token in the site's format: `dyno_` and 43 base64url characters.
 const TOKEN: &str = "dyno_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const OTHER_TOKEN: &str = "dyno_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+/// A GitHub Actions OIDC token, as the dyno Action passes it in DYNO_TOKEN: a JWT, not a CLI token.
+/// Made up, and signed by no one.
+const OIDC_TOKEN: &str = "eyJhbGciOiJSUzI1NiIsImtpZCI6ImsxIn0.eyJpc3MiOiJodHRwczovL3Rva2VuLmFjdGlvbnMuZ2l0aHVidXNlcmNvbnRlbnQuY29tIn0.c2lnbmF0dXJl"; // gitleaks:allow
 const EMAIL: &str = "tester@example.com";
 const ID: &str = "0b9e2c4e-5f1a-4d7e-9c3b-2a6f8e1d4c70";
 /// The id of the one game the fake site has.
@@ -608,6 +611,50 @@ fn an_upload_with_a_revoked_token_says_to_sign_in_again() {
     );
     assert_exit(&outcome, INTERNAL);
     assert_stderr_has(&outcome, "that token was revoked (run dyno login again)");
+}
+
+#[test]
+fn a_github_actions_token_in_dyno_token_uploads_as_it_is() {
+    let site = FakeSite::start(good_site);
+    let setup = Setup::new(&site);
+    let folder = tempfile::tempdir().unwrap();
+    let file = folder.path().join("result.json");
+    fs::write(&file, "{}").unwrap();
+    let outcome = setup.dyno_with(
+        &[("DYNO_TOKEN", OIDC_TOKEN)],
+        None,
+        &["upload", file.to_str().unwrap()],
+    );
+    assert_exit(&outcome, PASS);
+    let upload = site.only_request();
+    assert_eq!(
+        upload.header("authorization"),
+        Some(format!("Bearer {OIDC_TOKEN}").as_str())
+    );
+}
+
+#[test]
+fn a_github_actions_token_the_site_refuses_says_to_check_dyno_token() {
+    let site = FakeSite::start(|_| {
+        (
+            401,
+            r#"{"error":"the GitHub Actions token is not valid: it has expired"}"#.to_owned(),
+        )
+    });
+    let setup = Setup::new(&site);
+    let folder = tempfile::tempdir().unwrap();
+    let file = folder.path().join("result.json");
+    fs::write(&file, "{}").unwrap();
+    let outcome = setup.dyno_with(
+        &[("DYNO_TOKEN", OIDC_TOKEN)],
+        None,
+        &["upload", file.to_str().unwrap()],
+    );
+    assert_exit(&outcome, INTERNAL);
+    assert_stderr_has(
+        &outcome,
+        "the GitHub Actions token is not valid: it has expired (check DYNO_TOKEN)",
+    );
 }
 
 #[test]

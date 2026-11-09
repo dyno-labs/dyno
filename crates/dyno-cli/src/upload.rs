@@ -61,7 +61,10 @@ impl Uploader {
     /// Uploads one result and gives the link to print: the game's report when the site linked the
     /// run to a game, and the run's own page otherwise, with the game's name.
     pub fn upload(&self, json: &[u8]) -> Result<String, SiteError> {
-        let uploaded = self.site.upload(&self.token, json).map_err(sign_in_again)?;
+        let uploaded = self
+            .site
+            .upload(&self.token, json)
+            .map_err(|error| refused_token(&self.token, error))?;
         let page = self.site.uploaded_page(&uploaded);
         Ok(match &uploaded.game {
             Some(game) => format!("{page} ({})", game.name),
@@ -84,6 +87,25 @@ pub fn sign_in_again(error: SiteError) -> SiteError {
         } => SiteError::Refused {
             status: UNAUTHORIZED,
             message: format!("{message} (run dyno login again)"),
+        },
+        error => error,
+    }
+}
+
+/// A token the site does not take says what to do. A CLI token: sign in again. Any other token,
+/// such as the GitHub Actions token that the dyno Action passes in `DYNO_TOKEN`: check it there,
+/// since `dyno login` cannot help.
+fn refused_token(token: &str, error: SiteError) -> SiteError {
+    if token.starts_with("dyno_") {
+        return sign_in_again(error);
+    }
+    match error {
+        SiteError::Refused {
+            status: UNAUTHORIZED,
+            message,
+        } => SiteError::Refused {
+            status: UNAUTHORIZED,
+            message: format!("{message} (check {TOKEN_VAR})"),
         },
         error => error,
     }

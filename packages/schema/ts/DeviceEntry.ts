@@ -11,10 +11,15 @@ export type DeviceEntry = {
  */
 key: string, 
 /**
- * The model name as xctrace writes it, such as "iPhone 14 Pro Max".
+ * The model name, such as "iPhone 14 Pro Max".
  */
 name: string, vendor: string, kind: DeviceKind, os_family: OsName, 
 /**
  * The year the model came out.
  */
-year: number, };
+year: number, 
+/**
+ * Apple's model identifiers for it, such as "iPhone15,3": what the phone gives as its
+ * `ProductType`.
+ */
+identifiers: Array<string>, };

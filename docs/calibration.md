@@ -80,8 +80,9 @@ negative k).
 ## Not built yet
 
 - A check of the device run on the reference phone. `dyno check <build> --driver serve --device`
-  reads `device.phys_footprint` from an Activity Monitor trace (docs/cli.md). It was tried with a
-  Mac recording itself; the first phone trace checks that a phone's export reads the same way.
+  reads `device.phys_footprint` from the phone's sysmontap samples (docs/cli.md). It was tried on
+  an iPhone 14 Pro Max over Wi-Fi, from Linux and from a Mac, with a test page; a calibration
+  game run on it is still to do.
 
 - Model versioning: the fitted k and b as a versioned data file in `dyno-score`, and
   `model.footprint` from it. It waits for the first fit.

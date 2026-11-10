@@ -109,6 +109,24 @@ rmcp = { version = "3.9.0", default-features = false, features = [
 # `dyno login` and `dyno upload`: a small blocking HTTP client, with rustls for TLS.
 ureq = { version = "3.5.1", default-features = false, features = ["rustls"] }
 
+# The device run of `--device`: it reads an iPhone through usbmuxd or straight over the network,
+# with no Xcode. idevice breaks its API at each point release before 0.2, so it is pinned exactly.
+# Only the services the run uses, with ring for TLS, which ureq's rustls already brings. plist reads
+# the values the phone sends.
+idevice = { version = "=0.1.68", default-features = false, features = [
+  "core_device",
+  "core_device_proxy",
+  "device_info",
+  "dvt",
+  "ring",
+  "rsd",
+  "syslog_relay",
+  "tcp",
+  "tunnel_tcp_stack",
+  "usbmuxd",
+] }
+plist = "1.8.0"
+
 # `dyno link` edits dyno.toml and keeps its comments. From the same project as toml, whose parts
 # are already in the tree.
 toml_edit = "0.25.19"

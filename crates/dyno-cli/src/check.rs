@@ -6,9 +6,9 @@
 //! writes nothing, so the MCP `check` tool calls it too.
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use dyno_cdp::CdpDriver;
+use dyno_ios::Address;
 use dyno_ios::runs::{device_runs_measures, over_baseline_unsupported};
 use dyno_run::Driver;
 use dyno_run::exec::ExecDriver;
@@ -65,10 +65,10 @@ pub struct CheckOptions {
     device: bool,
     /// The runs of the game, and of the empty build, that `--runs` asks for with `--device`.
     device_runs: Option<u32>,
-    /// The device `--device` records, when one is named.
-    device_id: Option<String>,
-    /// Where `--device` keeps its trace. None deletes it after the check.
-    device_trace: Option<PathBuf>,
+    /// Where the phone that `--device` records is.
+    device_address: Address,
+    /// Where `--device` saves its recording. None saves none.
+    device_recording: Option<PathBuf>,
     /// Whether `--device` opens the page in the phone's Safari.
     device_open: bool,
     driver: DriverArg,
@@ -87,11 +87,6 @@ const IDLE_AFTER_MS: u32 = 10_000;
 /// A browser run stops after this long.
 const RUN_TIMEOUT_MS: u32 = 120_000;
 
-/// A device recording stops by itself after this long, if dyno does not stop it: the wait for a
-/// browser, the run, and a minute more.
-const DEVICE_TRACE_LIMIT: Duration =
-    Duration::from_secs(DEFAULT_WAIT_FOR_BROWSER.as_secs() + RUN_TIMEOUT_MS as u64 / 1_000 + 60);
-
 /// Runs `dyno check` and returns the status for the exit code.
 pub fn run(args: CheckArgs) -> Result<Status, CliError> {
     if args.browser && args.driver != DriverArg::Cdp {
@@ -106,7 +101,7 @@ pub fn run(args: CheckArgs) -> Result<Status, CliError> {
             "--serve-host, --serve-port and --serve-query need --driver serve",
         ));
     }
-    let device = args.device || args.device_id.is_some();
+    let device = args.device || args.device_id.is_some() || args.device_ip.is_some();
     if args.runs.is_some() && !device {
         return Err(CliError::usage(
             "--runs needs --device: it runs the game and the empty build on the phone",
@@ -117,10 +112,16 @@ pub fn run(args: CheckArgs) -> Result<Status, CliError> {
         spins: args.spins,
         device,
         device_runs: args.runs,
-        device_id: args.device_id,
-        // A games file checks several games, so only one target keeps its trace.
-        device_trace: match (&args.out, &args.games) {
-            (Some(out), None) => Some(device::kept_trace(out)),
+        device_address: match (args.device_ip, args.pairing_file) {
+            (Some(ip), Some(pairing_file)) => Address::Network { ip, pairing_file },
+            // clap asks for both or neither.
+            _ => Address::Usbmuxd {
+                udid: args.device_id,
+            },
+        },
+        // A games file checks several games, so only one target saves its recording.
+        device_recording: match (&args.out, &args.games) {
+            (Some(out), None) => Some(device::saved_recording(out)),
             _ => None,
         },
         device_open: !args.no_open,
@@ -278,8 +279,8 @@ impl CheckOptions {
             spins: None,
             device: false,
             device_runs: None,
-            device_id: None,
-            device_trace: None,
+            device_address: Address::Usbmuxd { udid: None },
+            device_recording: None,
             device_open: true,
             driver: DriverArg::Cdp,
             browser: false,
@@ -575,7 +576,7 @@ fn browser_run(
     let device_run = match (&served, options.device) {
         (Some(served), true) => Some(start_device_run(
             served,
-            options.device_trace.as_deref(),
+            options.device_recording.as_deref(),
             options,
         )?),
         _ => None,
@@ -598,9 +599,8 @@ fn browser_run(
         browser.environment = lab.environment;
     }
     if let Some(device_run) = device_run {
-        output::print_summary(&[device_run.saving_line()]);
         let finished = device_run.finish(served.as_ref().and_then(ServeDriver::last_run));
-        browser.environment = with_trace(browser.environment, finished.os, finished.device);
+        browser.environment = with_phone(browser.environment, finished.os, finished.device);
         browser.measures.extend(finished.measures);
         browser.measures.push(over_baseline_unsupported());
     }
@@ -617,7 +617,7 @@ enum RunOf {
 /// `--runs`: N runs of the empty build and N of the game, in turn, each served on its own and
 /// opened in a fresh Safari with its own recording. The lab measures, the driver and the browser
 /// come from the first game run that completed, or else the first game run, and the phone from
-/// the first game run whose trace named it. The device measures come from every run.
+/// the first game run whose recording named it. The device measures come from every run.
 fn device_runs_run(
     build: &Path,
     runs: u32,
@@ -630,24 +630,23 @@ fn device_runs_run(
     let mut phone = None;
     for run in 1..=runs {
         for of in [RunOf::EmptyBuild, RunOf::Game] {
-            let (path, query, name, trace_name) = match of {
+            let (path, query, name, recording_name) = match of {
                 RunOf::EmptyBuild => (empty_build.path(), None, "the empty build", "empty"),
                 RunOf::Game => (build, options.serve_query.as_deref(), "the game", "game"),
             };
             output::print_summary(&[format!("dyno check: run {run} of {runs} of {name}.")]);
             let mut served = serve(path, &options.serve)?;
             let request = run_request(&served_launch_url(&served, query)?, options);
-            let trace = options
-                .device_trace
+            let recording = options
+                .device_recording
                 .as_deref()
-                .map(|trace| device::run_trace(trace, trace_name, run));
-            let device_run = start_device_run(&served, trace.as_deref(), options)?;
+                .map(|saved| device::run_recording(saved, recording_name, run));
+            let device_run = start_device_run(&served, recording.as_deref(), options)?;
             output::print_summary(&output::serve_lines(
                 served.harness_url(),
                 options.serve.wait_for_browser,
             ));
             let lab = dyno_run::run_lab(&mut served, &request);
-            output::print_summary(&[device_run.saving_line()]);
             let finished = device_run.finish(served.last_run());
             match of {
                 RunOf::EmptyBuild => empty_device.push(finished.measures),
@@ -668,7 +667,7 @@ fn device_runs_run(
         .unwrap_or(0);
     let lab = game_labs.swap_remove(first_completed);
     let environment = match phone {
-        Some((os, device)) => with_trace(lab.environment, os, device),
+        Some((os, device)) => with_phone(lab.environment, os, device),
         None => lab.environment,
     };
     let mut measures = lab.measures;
@@ -685,23 +684,22 @@ fn device_runs_run(
 /// so.
 fn start_device_run(
     served: &ServeDriver,
-    trace: Option<&Path>,
+    recording: Option<&Path>,
     options: &CheckOptions,
 ) -> Result<DeviceRun, CliError> {
     let device_run = device::start(
-        options.device_id.as_deref(),
+        &options.device_address,
         options.device_open.then(|| served.harness_url()),
-        trace,
-        DEVICE_TRACE_LIMIT,
+        recording,
     )?;
     output::print_summary(&device_run.lines());
     Ok(device_run)
 }
 
-/// The environment with the OS and the device that a device run's trace recorded. They know the
-/// model, the iOS version and the memory, which a user agent does not. A trace that named no model
-/// changes nothing.
-fn with_trace(
+/// The environment with the OS and the device of a device run's phone. They know the model, the
+/// iOS version and the memory, which a user agent does not. A phone that gave no model changes
+/// nothing.
+fn with_phone(
     environment: Option<Environment>,
     os: Option<EnvironmentOs>,
     device: Option<EnvironmentDevice>,
@@ -847,5 +845,10 @@ mod tests {
             targets(&["https://a.example", "http://b.example"]),
             Err(CliError::Usage(_))
         ));
+    }
+
+    #[test]
+    fn no_phone_leaves_the_environment_as_it_was() {
+        assert_eq!(with_phone(None, None, None), None);
     }
 }

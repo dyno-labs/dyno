@@ -5,7 +5,10 @@
     "vendor": "Apple",
     "kind": "phone",
     "os_family": "ios",
-    "year": 2018
+    "year": 2018,
+    "identifiers": [
+      "iPhone11,2"
+    ]
   },
   {
     "key": "iphone-xs-max",
@@ -13,7 +16,11 @@
     "vendor": "Apple",
     "kind": "phone",
     "os_family": "ios",
-    "year": 2018
+    "year": 2018,
+    "identifiers": [
+      "iPhone11,4",
+      "iPhone11,6"
+    ]
   },
   {
     "key": "iphone-xr",
@@ -21,7 +28,10 @@
     "vendor": "Apple",
     "kind": "phone",
     "os_family": "ios",
-    "year": 2018
+    "year": 2018,
+    "identifiers": [
+      "iPhone11,8"
+    ]
   },
   {
     "key": "iphone-11",
@@ -29,7 +39,10 @@
     "vendor": "Apple",
     "kind": "phone",
     "os_family": "ios",
-    "year": 2019
+    "year": 2019,
+    "identifiers": [
+      "iPhone12,1"
+    ]
   },
   {
     "key": "iphone-11-pro",
@@ -37,7 +50,10 @@
     "vendor": "Apple",
     "kind": "phone",
     "os_family": "ios",
-    "year": 2019
+    "year": 2019,
+    "identifiers": [
+      "iPhone12,3"
+    ]
   },
   {
     "key": "iphone-11-pro-max",
@@ -45,7 +61,10 @@
     "vendor": "Apple",
     "kind": "phone",
     "os_family": "ios",
-    "year": 2019
+    "year": 2019,
+    "identifiers": [
+      "iPhone12,5"
+    ]
   },
   {
     "key": "iphone-se-2nd-generation",
@@ -53,7 +72,10 @@
     "vendor": "Apple",
     "kind": "phone",
     "os_family": "ios",
-    "year": 2020
+    "year": 2020,
+    "identifiers": [
+      "iPhone12,8"
+    ]
   },
   {
     "key": "iphone-12-mini",
@@ -61,7 +83,10 @@
     "vendor": "Apple",
     "kind": "phone",
     "os_family": "ios",
-    "year": 2020
+    "year": 2020,
+    "identifiers": [
+      "iPhone13,1"
+    ]
   },
   {
     "key": "iphone-12",
@@ -69,7 +94,10 @@
     "vendor": "Apple",
     "kind": "phone",
     "os_family": "ios",
-    "year": 2020
+    "year": 2020,
+    "identifiers": [
+      "iPhone13,2"
+    ]
   },
   {
     "key": "iphone-12-pro",
@@ -77,7 +105,10 @@
     "vendor": "Apple",
     "kind": "phone",
     "os_family": "ios",
-    "year": 2020
+    "year": 2020,
+    "identifiers": [
+      "iPhone13,3"
+    ]
   },
   {
     "key": "iphone-12-pro-max",
@@ -85,7 +116,10 @@
     "vendor": "Apple",
     "kind": "phone",
     "os_family": "ios",
-    "year": 2020
+    "year": 2020,
+    "identifiers": [
+      "iPhone13,4"
+    ]
   },
   {
     "key": "iphone-13-mini",
@@ -93,7 +127,10 @@
     "vendor": "Apple",
     "kind": "phone",
     "os_family": "ios",
-    "year": 2021
+    "year": 2021,
+    "identifiers": [
+      "iPhone14,4"
+    ]
   },
   {
     "key": "iphone-13",
@@ -101,7 +138,10 @@
     "vendor": "Apple",
     "kind": "phone",
     "os_family": "ios",
-    "year": 2021
+    "year": 2021,
+    "identifiers": [
+      "iPhone14,5"
+    ]
   },
   {
     "key": "iphone-13-pro",
@@ -109,7 +149,10 @@
     "vendor": "Apple",
     "kind": "phone",
     "os_family": "ios",
-    "year": 2021
+    "year": 2021,
+    "identifiers": [
+      "iPhone14,2"
+    ]
   },
   {
     "key": "iphone-13-pro-max",
@@ -117,7 +160,10 @@
     "vendor": "Apple",
     "kind": "phone",
     "os_family": "ios",
-    "year": 2021
+    "year": 2021,
+    "identifiers": [
+      "iPhone14,3"
+    ]
   },
   {
     "key": "iphone-se-3rd-generation",
@@ -125,7 +171,10 @@
     "vendor": "Apple",
     "kind": "phone",
     "os_family": "ios",
-    "year": 2022
+    "year": 2022,
+    "identifiers": [
+      "iPhone14,6"
+    ]
   },
   {
     "key": "iphone-14",
@@ -133,7 +182,10 @@
     "vendor": "Apple",
     "kind": "phone",
     "os_family": "ios",
-    "year": 2022
+    "year": 2022,
+    "identifiers": [
+      "iPhone14,7"
+    ]
   },
   {
     "key": "iphone-14-plus",
@@ -141,7 +193,10 @@
     "vendor": "Apple",
     "kind": "phone",
     "os_family": "ios",
-    "year": 2022
+    "year": 2022,
+    "identifiers": [
+      "iPhone14,8"
+    ]
   },
   {
     "key": "iphone-14-pro",
@@ -149,7 +204,10 @@
     "vendor": "Apple",
     "kind": "phone",
     "os_family": "ios",
-    "year": 2022
+    "year": 2022,
+    "identifiers": [
+      "iPhone15,2"
+    ]
   },
   {
     "key": "iphone-14-pro-max",
@@ -157,7 +215,10 @@
     "vendor": "Apple",
     "kind": "phone",
     "os_family": "ios",
-    "year": 2022
+    "year": 2022,
+    "identifiers": [
+      "iPhone15,3"
+    ]
   },
   {
     "key": "iphone-15",
@@ -165,7 +226,10 @@
     "vendor": "Apple",
     "kind": "phone",
     "os_family": "ios",
-    "year": 2023
+    "year": 2023,
+    "identifiers": [
+      "iPhone15,4"
+    ]
   },
   {
     "key": "iphone-15-plus",
@@ -173,7 +237,10 @@
     "vendor": "Apple",
     "kind": "phone",
     "os_family": "ios",
-    "year": 2023
+    "year": 2023,
+    "identifiers": [
+      "iPhone15,5"
+    ]
   },
   {
     "key": "iphone-15-pro",
@@ -181,7 +248,10 @@
     "vendor": "Apple",
     "kind": "phone",
     "os_family": "ios",
-    "year": 2023
+    "year": 2023,
+    "identifiers": [
+      "iPhone16,1"
+    ]
   },
   {
     "key": "iphone-15-pro-max",
@@ -189,7 +259,10 @@
     "vendor": "Apple",
     "kind": "phone",
     "os_family": "ios",
-    "year": 2023
+    "year": 2023,
+    "identifiers": [
+      "iPhone16,2"
+    ]
   },
   {
     "key": "iphone-16",
@@ -197,7 +270,10 @@
     "vendor": "Apple",
     "kind": "phone",
     "os_family": "ios",
-    "year": 2024
+    "year": 2024,
+    "identifiers": [
+      "iPhone17,3"
+    ]
   },
   {
     "key": "iphone-16-plus",
@@ -205,7 +281,10 @@
     "vendor": "Apple",
     "kind": "phone",
     "os_family": "ios",
-    "year": 2024
+    "year": 2024,
+    "identifiers": [
+      "iPhone17,4"
+    ]
   },
   {
     "key": "iphone-16-pro",
@@ -213,7 +292,10 @@
     "vendor": "Apple",
     "kind": "phone",
     "os_family": "ios",
-    "year": 2024
+    "year": 2024,
+    "identifiers": [
+      "iPhone17,1"
+    ]
   },
   {
     "key": "iphone-16-pro-max",
@@ -221,7 +303,10 @@
     "vendor": "Apple",
     "kind": "phone",
     "os_family": "ios",
-    "year": 2024
+    "year": 2024,
+    "identifiers": [
+      "iPhone17,2"
+    ]
   },
   {
     "key": "iphone-16e",
@@ -229,7 +314,10 @@
     "vendor": "Apple",
     "kind": "phone",
     "os_family": "ios",
-    "year": 2025
+    "year": 2025,
+    "identifiers": [
+      "iPhone17,5"
+    ]
   },
   {
     "key": "iphone-17",
@@ -237,7 +325,10 @@
     "vendor": "Apple",
     "kind": "phone",
     "os_family": "ios",
-    "year": 2025
+    "year": 2025,
+    "identifiers": [
+      "iPhone18,3"
+    ]
   },
   {
     "key": "iphone-air",
@@ -245,7 +336,10 @@
     "vendor": "Apple",
     "kind": "phone",
     "os_family": "ios",
-    "year": 2025
+    "year": 2025,
+    "identifiers": [
+      "iPhone18,4"
+    ]
   },
   {
     "key": "iphone-17-pro",
@@ -253,7 +347,10 @@
     "vendor": "Apple",
     "kind": "phone",
     "os_family": "ios",
-    "year": 2025
+    "year": 2025,
+    "identifiers": [
+      "iPhone18,1"
+    ]
   },
   {
     "key": "iphone-17-pro-max",
@@ -261,6 +358,42 @@
     "vendor": "Apple",
     "kind": "phone",
     "os_family": "ios",
-    "year": 2025
+    "year": 2025,
+    "identifiers": [
+      "iPhone18,2"
+    ]
+  },
+  {
+    "key": "iphone-17e",
+    "name": "iPhone 17e",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2026,
+    "identifiers": [
+      "iPhone18,5"
+    ]
+  },
+  {
+    "key": "iphone-18-pro",
+    "name": "iPhone 18 Pro",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2026,
+    "identifiers": [
+      "iPhone19,2"
+    ]
+  },
+  {
+    "key": "iphone-18-pro-max",
+    "name": "iPhone 18 Pro Max",
+    "vendor": "Apple",
+    "kind": "phone",
+    "os_family": "ios",
+    "year": 2026,
+    "identifiers": [
+      "iPhone19,3"
+    ]
   }
 ]

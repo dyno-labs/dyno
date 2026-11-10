@@ -1,20 +1,30 @@
 //! The iPhone lab: `dyno check --device` and `dyno doctor`.
 //!
-//! A device run records an Activity Monitor trace of every process on the phone with `xcrun
-//! xctrace` (module [`xctrace`]) while the phone's Safari runs a served check (`--driver serve`).
-//! The trace ([`trace`]) gives each process's physical footprint, the `phys_footprint` that
-//! jetsam reads, about once a second. [`device_measures`] finds the game's WebContent process and
-//! reads its footprint when the frame went idle, and whether it left the trace before the run
-//! ended, as a process that iOS kills does. Before it records, [`devicectl`] checks that the
-//! phone is unlocked and opens the page in its Safari. With `--runs`, [`runs`] reads the runs of
-//! the game and of the empty build into one set of device measures.
+//! A device run records the phone while its Safari runs a served check (`--driver serve`). It
+//! reads the phone with the `idevice` crate, through usbmuxd or straight over the network, so it
+//! needs no Xcode and runs on Linux too ([`phone`]). The phone's sysmontap service ([`sysmon`])
+//! gives each process's physical footprint, the `phys_footprint` that jetsam reads, about once a
+//! second, and its log ([`syslog`]) gives the kernel's line when jetsam kills a process.
+//! [`Recorder`] runs the recording on a thread of its own, and opens the page in the phone's
+//! Safari once it records. [`device_measures`] finds the game's WebContent process, reads its
+//! footprint when the frame went idle and its peak, and counts a kill when the kernel killed it
+//! during the run. With `--runs`, [`runs`] reads the runs of the game and of the empty build into
+//! one set of device measures.
+//!
+//! [`trace`] reads an Activity Monitor trace that xctrace exported, and gives the same measures
+//! from it. `--device` does not use it: it is for traces that a device cloud's host records.
 //!
 //! `doctor` is still a stub: it runs no command and touches no device.
 
 pub mod devicectl;
+pub mod fake;
+mod phone;
+pub mod recorder;
+pub mod recording;
 pub mod runs;
+pub mod syslog;
+pub mod sysmon;
 pub mod trace;
-pub mod xctrace;
 
 use dyno_schema::SCHEMA_VERSION;
 use dyno_schema::devices::apple_os;
@@ -26,7 +36,8 @@ use dyno_schema::measure::{
 };
 use dyno_schema::status::{Status, Verdict};
 
-use crate::trace::{Trace, TraceDevice};
+pub use crate::recorder::{Address, DeviceError, OpenedWith, Recorder};
+use crate::recording::Recording;
 
 /// The plan phase that builds `doctor` and the device run.
 pub const DEVICE_PHASE: Phase = 2;
@@ -39,10 +50,10 @@ pub const DEVICE_MEASURES: &[MeasureId] = &[
     MeasureId::DeviceKills,
 ];
 
-/// Whether this Mac can run the game on an iPhone.
+/// Whether this computer can run the game on an iPhone.
 ///
-/// Stub: every check is incomplete, and the reason names the phase. The built version checks
-/// Xcode, a connected iPhone and trust.
+/// Stub: every check is incomplete, and the reason names the phase. The built version checks a
+/// connected iPhone and trust.
 pub fn doctor() -> DoctorReport {
     let checks = DoctorCheckId::ALL
         .iter()
@@ -66,21 +77,19 @@ pub fn doctor() -> DoctorReport {
 
 /// The item of `device.phys_footprint` that holds the peak, for readers from before
 /// `device.phys_footprint_peak`.
-const PEAK_ITEM: &str = "peak during the run";
+pub(crate) const PEAK_ITEM: &str = "peak during the run";
 
 /// The name of Safari's process that runs a page.
-const WEB_CONTENT: &str = "com.apple.WebKit.WebContent";
+pub const WEB_CONTENT: &str = "com.apple.WebKit.WebContent";
 
-/// How far outside the run a sample may be and still count: a sample is taken about once a
-/// second, and the trace's clock is placed on the run's to within that.
-const SLACK_MS: f64 = 1_500.0;
+/// How far outside the run a sample may be and still count: a sample comes about once a second.
+pub(crate) const SLACK_MS: f64 = 1_500.0;
 
-/// How long before the run ended the game's process may last appear and still count as alive.
-/// A busy process gets a sample every second.
-const KILL_GAP_MS: f64 = 3_000.0;
+/// How long before the run ended a source may end and still cover the run.
+const ENDED_GAP_MS: f64 = 3_000.0;
 
-/// When the run's steps happened, in ms since the Unix epoch on the Mac's clock, which the trace
-/// also uses.
+/// When the run's steps happened, in ms since the Unix epoch on this machine's clock, which the
+/// recording also uses.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RunWindow {
     /// When the harness page started to load the game.
@@ -91,59 +100,77 @@ pub struct RunWindow {
     pub ended_epoch_ms: f64,
 }
 
-/// The device measures of a run, from its trace.
+/// The device measures of a run, from its recording.
 ///
 /// The game's process is the WebContent process with the largest footprint during the run.
 /// `device.phys_footprint` is its first footprint at or after the frame went idle, with its peak
 /// during the run as an item. `device.phys_footprint_peak` is that peak as a measure of its own.
-/// `device.kills` is 1 when the process left the trace while the run was still on, as a process
-/// that iOS kills does. The evidence names the model and iOS version, never the phone's own name,
-/// which is often its owner's.
-pub fn device_measures(trace: &Trace, run: &RunWindow) -> Vec<Measure> {
-    let in_run: Vec<(f64, u32, u64)> = trace
+/// `device.kills` is 1 when the kernel's log says that jetsam killed the process during the run.
+/// The evidence names the model and iOS version, never the phone's own name, which is often its
+/// owner's.
+pub fn device_measures(recording: &Recording, run: &RunWindow) -> Vec<Measure> {
+    let in_run =
+        |at: f64| at >= run.navigated_epoch_ms - SLACK_MS && at <= run.ended_epoch_ms + SLACK_MS;
+    let pages: Vec<&recording::Sample> = recording
         .samples
         .iter()
-        .filter(|sample| sample.process == WEB_CONTENT)
-        .map(|sample| {
-            (
-                trace.started_epoch_ms + sample.ms,
-                sample.pid,
-                sample.footprint_bytes,
-            )
-        })
-        .filter(|(at, _, _)| {
-            *at >= run.navigated_epoch_ms - SLACK_MS && *at <= run.ended_epoch_ms + SLACK_MS
-        })
+        .filter(|sample| in_run(sample.epoch_ms))
         .collect();
-    let Some(&(_, game_pid, peak)) = in_run.iter().max_by_key(|(_, _, bytes)| *bytes) else {
-        return missing_device_measures(
-            "the trace of the phone has no Safari WebContent process during the run",
-        );
-    };
-    let game: Vec<(f64, u64)> = in_run
+    // The game's process is the one with the largest sample, so that sample is its peak.
+    let Some((game_pid, peak)) = pages
         .iter()
-        .filter(|(_, pid, _)| *pid == game_pid)
-        .map(|&(at, _, bytes)| (at, bytes))
+        .max_by_key(|sample| sample.footprint_bytes)
+        .map(|sample| (sample.pid, sample.footprint_bytes))
+    else {
+        return missing_device_measures(&match short_by(&recording.samples_cover, run) {
+            Some(short) => format!(
+                "the phone's samples ended {short:.0} s before the run did: {}",
+                ended(&recording.samples_cover)
+            ),
+            None => {
+                "the phone's samples have no Safari WebContent process during the run".to_owned()
+            }
+        });
+    };
+    let game: Vec<&recording::Sample> = pages
+        .into_iter()
+        .filter(|sample| sample.pid == game_pid)
         .collect();
+    let phone = format!(
+        "{}, iOS {}, process {WEB_CONTENT} ({game_pid})",
+        recording.phone.model(),
+        recording.phone.os_version
+    );
     let evidence = vec![Evidence {
-        method: Method::Xctrace,
-        detail: format!(
-            "an Activity Monitor trace of the phone: {}, iOS {}, process {WEB_CONTENT} ({game_pid})",
-            trace.device.model, trace.device.os_version
-        ),
+        method: Method::Sysmontap,
+        detail: format!("sysmontap samples of the phone: {phone}"),
     }];
+    // Samples that ended before the run did, as when the phone left the network, cannot give its
+    // peak.
+    let samples_short = short_by(&recording.samples_cover, run);
+    let peak = match samples_short {
+        None => Ok(peak),
+        Some(short) => Err(format!(
+            "the phone's samples ended {short:.0} s before the run did, so the peak of the run is \
+             not known: {}",
+            ended(&recording.samples_cover)
+        )),
+    };
     let at_idle = run.idle_epoch_ms.and_then(|idle| {
         game.iter()
-            .find(|(at, _)| *at >= idle)
-            .map(|&(_, bytes)| bytes)
+            .find(|sample| sample.epoch_ms >= idle)
+            .map(|sample| sample.footprint_bytes)
     });
     let footprint = match at_idle {
         Some(bytes) => Measure {
             value: Some(MeasureValue::Integer(saturating(bytes))),
-            items: vec![MeasureItem {
-                key: PEAK_ITEM.to_owned(),
-                value: MeasureValue::Integer(saturating(peak)),
-            }],
+            items: peak
+                .iter()
+                .map(|&peak| MeasureItem {
+                    key: PEAK_ITEM.to_owned(),
+                    value: MeasureValue::Integer(saturating(peak)),
+                })
+                .collect(),
             evidence: evidence.clone(),
             uncertainty: Uncertainty::exact(),
             ..required(Measure::blank(
@@ -156,72 +183,104 @@ pub fn device_measures(trace: &Trace, run: &RunWindow) -> Vec<Measure> {
             "the game's process has no sample after the frame went idle",
         )),
     };
-    let footprint_peak = Measure {
-        value: Some(MeasureValue::Integer(saturating(peak))),
-        evidence: evidence.clone(),
-        uncertainty: Uncertainty::exact(),
-        ..required(Measure::blank(
-            MeasureId::DevicePhysFootprintPeak,
-            MeasureStatus::Measured,
-        ))
-    };
-    // A trace that ended before the run did, as one that lost the phone, cannot tell a kill.
-    let trace_ended = trace
-        .samples
-        .iter()
-        .map(|sample| trace.started_epoch_ms + sample.ms)
-        .fold(f64::MIN, f64::max);
-    let kills = if trace_ended < run.ended_epoch_ms - KILL_GAP_MS {
-        required(Measure::missing(
-            MeasureId::DeviceKills,
-            &format!(
-                "the trace ended {:.0} s before the run did, so it cannot tell whether iOS killed the game",
-                (run.ended_epoch_ms - trace_ended) / 1_000.0
-            ),
-        ))
-    } else {
-        let last_seen = game.iter().map(|(at, _)| *at).fold(f64::MIN, f64::max);
-        let killed = last_seen < run.ended_epoch_ms - KILL_GAP_MS;
-        Measure {
-            value: Some(MeasureValue::Integer(i64::from(killed))),
-            items: if killed {
-                vec![MeasureItem {
-                    key: format!(
-                        "{WEB_CONTENT} ({game_pid}) left the trace {:.0} s before the run ended",
-                        (run.ended_epoch_ms - last_seen) / 1_000.0
-                    ),
-                    value: MeasureValue::Integer(1),
-                }]
-            } else {
-                Vec::new()
-            },
+    let footprint_peak = match peak {
+        Ok(peak) => Measure {
+            value: Some(MeasureValue::Integer(saturating(peak))),
             evidence,
             uncertainty: Uncertainty::exact(),
             ..required(Measure::blank(
-                MeasureId::DeviceKills,
+                MeasureId::DevicePhysFootprintPeak,
                 MeasureStatus::Measured,
             ))
-        }
+        },
+        Err(reason) => required(Measure::missing(
+            MeasureId::DevicePhysFootprintPeak,
+            &reason,
+        )),
     };
-    vec![footprint, footprint_peak, kills]
+    vec![
+        footprint,
+        footprint_peak,
+        kills(recording, run, game_pid, &phone),
+    ]
 }
 
-/// The OS and the device that a trace recorded: the model, its OS version and its memory, never
-/// the device's own name. Both are None when the trace does not name the model.
-pub fn trace_environment(
-    device: &TraceDevice,
+/// `device.kills`: 1 when the kernel killed the game's process during the run, 0 when the log
+/// covers the run and has no kill of it, and missing when the log ended before the run did.
+fn kills(recording: &Recording, run: &RunWindow, game_pid: u32, phone: &str) -> Measure {
+    let lines: Vec<&recording::LoggedLine> = recording
+        .memory_lines
+        .iter()
+        .filter(|logged| logged.line.pid == game_pid)
+        .filter(|logged| logged.epoch_ms >= run.navigated_epoch_ms - SLACK_MS)
+        .filter(|logged| logged.epoch_ms <= run.ended_epoch_ms + SLACK_MS)
+        .collect();
+    let killed = lines.iter().find(|logged| logged.line.is_kill());
+    if let (None, Some(short)) = (killed, short_by(&recording.log_covers, run)) {
+        return required(Measure::missing(
+            MeasureId::DeviceKills,
+            &format!(
+                "the phone's log ended {short:.0} s before the run did, so it cannot tell \
+                 whether iOS killed the game: {}",
+                ended(&recording.log_covers)
+            ),
+        ));
+    }
+    // The kernel's other lines about the process, such as a soft memory limit it went over.
+    let mut detail = format!("the phone's kernel log: {phone}");
+    for logged in lines.iter().filter(|logged| !logged.line.is_kill()) {
+        detail.push_str(&format!(". It logged \"{}\"", logged.line.short_text()));
+    }
+    Measure {
+        value: Some(MeasureValue::Integer(i64::from(killed.is_some()))),
+        items: killed
+            .map(|logged| MeasureItem {
+                key: format!(
+                    "{}, {:.0} s before the run ended",
+                    logged.line.short_text(),
+                    ((run.ended_epoch_ms - logged.epoch_ms) / 1_000.0).max(0.0)
+                ),
+                value: MeasureValue::Integer(1),
+            })
+            .into_iter()
+            .collect(),
+        evidence: vec![Evidence {
+            method: Method::Syslog,
+            detail,
+        }],
+        uncertainty: Uncertainty::exact(),
+        ..required(Measure::blank(
+            MeasureId::DeviceKills,
+            MeasureStatus::Measured,
+        ))
+    }
+}
+
+/// How many seconds before the run ended a source ended. None when it covers the run.
+fn short_by(cover: &recording::Coverage, run: &RunWindow) -> Option<f64> {
+    (cover.until_epoch_ms < run.ended_epoch_ms - ENDED_GAP_MS)
+        .then(|| (run.ended_epoch_ms - cover.until_epoch_ms) / 1_000.0)
+}
+
+fn ended(cover: &recording::Coverage) -> &str {
+    cover.ended.as_deref().unwrap_or("it stopped sending")
+}
+
+/// The OS and the device of a recording: the model, its iOS version and the memory iOS manages,
+/// never the phone's own name. Both are None when the phone did not give its model.
+pub fn phone_environment(
+    recording: &Recording,
 ) -> (Option<EnvironmentOs>, Option<EnvironmentDevice>) {
-    let Some(environment_device) =
-        EnvironmentDevice::of_apple_model(&device.model, device.memory_bytes)
-    else {
+    let model = recording.phone.model();
+    let Some(device) = EnvironmentDevice::of_apple_model(&model, recording.memory_bytes) else {
         return (None, None);
     };
-    let version = device.os_version.trim();
+    let version = recording.phone.os_version.trim();
     let os = EnvironmentOs {
-        name: apple_os(&device.model),
+        name: apple_os(&model),
         version: (!version.is_empty()).then(|| version.to_owned()),
     };
-    (Some(os), Some(environment_device))
+    (Some(os), Some(device))
 }
 
 /// Every device measure, missing for this reason.
@@ -233,14 +292,14 @@ pub fn missing_device_measures(reason: &str) -> Vec<Measure> {
 }
 
 /// A device measure is required: a check has it only when `--device` asks for it.
-fn required(measure: Measure) -> Measure {
+pub(crate) fn required(measure: Measure) -> Measure {
     Measure {
         required: true,
         ..measure
     }
 }
 
-fn saturating(bytes: u64) -> i64 {
+pub(crate) fn saturating(bytes: u64) -> i64 {
     i64::try_from(bytes).unwrap_or(i64::MAX)
 }
 
@@ -250,7 +309,9 @@ mod tests {
     use dyno_schema::measure::Source;
 
     use super::*;
-    use crate::trace::TraceDevice;
+    use crate::recording::tests::phone;
+    use crate::recording::{Coverage, LoggedLine, Sample};
+    use crate::syslog::memory_line;
 
     #[test]
     fn a_stub_doctor_is_incomplete_and_names_its_phase() {
@@ -283,21 +344,40 @@ mod tests {
     }
 
     const START: f64 = 1_000_000.0;
-    const GAME: &str = "com.apple.WebKit.WebContent (412)";
-    const OTHER_TAB: &str = "com.apple.WebKit.WebContent (377)";
+    const GAME: u32 = 412;
+    const OTHER_TAB: u32 = 377;
 
-    /// A trace that started at START, with these samples: (ms since START, process, bytes).
-    fn trace(samples: &[(u64, &str, u64)]) -> Trace {
-        let xml = crate::trace::tests::process_table(samples);
-        Trace {
+    /// A recording that started at START and stopped at 14 s, with these samples of page
+    /// processes, (ms since START, pid, bytes), and these log lines, (ms since START, line). Both
+    /// sources cover it to the end.
+    fn recording(samples: &[(u64, u32, u64)], lines: &[(u64, &str)]) -> Recording {
+        let at = |ms: u64| START + ms as f64;
+        let to_end = Coverage {
+            until_epoch_ms: at(14_000),
+            ended: None,
+        };
+        Recording {
+            phone: phone(),
+            memory_bytes: Some(5_910_052_864),
             started_epoch_ms: START,
-            device: TraceDevice {
-                name: "Dev’s iPhone".to_owned(),
-                model: "iPhone 14 Pro Max".to_owned(),
-                os_version: "26.6.2".to_owned(),
-                memory_bytes: Some(6_442_450_944),
-            },
-            samples: crate::trace::read_samples(&xml).unwrap(),
+            stopped_epoch_ms: at(14_000),
+            samples: samples
+                .iter()
+                .map(|&(ms, pid, footprint_bytes)| Sample {
+                    epoch_ms: at(ms),
+                    pid,
+                    footprint_bytes,
+                })
+                .collect(),
+            samples_cover: to_end.clone(),
+            memory_lines: lines
+                .iter()
+                .map(|&(ms, line)| LoggedLine {
+                    epoch_ms: at(ms),
+                    line: memory_line(line).unwrap(),
+                })
+                .collect(),
+            log_covers: to_end,
         }
     }
 
@@ -317,6 +397,9 @@ mod tests {
         }
     }
 
+    const KILL: &str = "memorystatus: killing process 412 [com.apple.WebKit.WebContent] in high \
+        band FOREGROUND (100) - memorystatus_available_pages: 53907";
+
     #[test]
     fn the_footprint_is_the_game_process_at_idle_with_its_peak() {
         let mut samples = vec![(500, OTHER_TAB, 50)];
@@ -332,7 +415,7 @@ mod tests {
             samples.push((second * 1_000, GAME, bytes));
             samples.push((second * 1_000, OTHER_TAB, 50));
         }
-        let [footprint, peak, kills] = device_measures(&trace(&samples), &run())
+        let [footprint, peak, kills] = device_measures(&recording(&samples, &[]), &run())
             .try_into()
             .unwrap();
         assert_eq!(footprint.id, MeasureId::DevicePhysFootprint);
@@ -344,60 +427,137 @@ mod tests {
         assert_eq!(value(&peak), Some(400));
         assert!(peak.required);
         assert!(peak.items.is_empty());
+        assert_eq!(footprint.evidence[0].method, Method::Sysmontap);
         assert_eq!(
             footprint.evidence[0].detail,
-            "an Activity Monitor trace of the phone: iPhone 14 Pro Max, iOS 26.6.2, process \
+            "sysmontap samples of the phone: iPhone 14 Pro Max, iOS 26.6.2 (23G90), process \
              com.apple.WebKit.WebContent (412)"
         );
         assert!(footprint.required);
         assert_eq!(value(&kills), Some(0));
         assert!(kills.items.is_empty());
+        assert_eq!(kills.evidence[0].method, Method::Syslog);
     }
 
     #[test]
-    fn a_game_process_that_leaves_the_trace_during_the_run_is_a_kill() {
+    fn a_kernel_kill_of_the_game_process_during_the_run_is_a_kill() {
         let samples = [
             (2_000, GAME, 900),
             (6_000, GAME, 1_800),
             (11_000, OTHER_TAB, 60),
         ];
-        let [footprint, peak, kills] = device_measures(&trace(&samples), &run())
+        let lines = [
+            (
+                5_000,
+                "memorystatus: com.apple.WebKit.WebContent [412] exceeded mem limit: \
+                     ActiveSoft 1536 MB (non-fatal)",
+            ),
+            (6_500, KILL),
+            (
+                6_600,
+                "memorystatus: killing_highwater_process pid 412 \
+                     [com.apple.WebKit.WebContent] (highwater 100 10s rf:- type:app) 2371666KB",
+            ),
+        ];
+        let [footprint, peak, kills] = device_measures(&recording(&samples, &lines), &run())
             .try_into()
             .unwrap();
         assert_eq!(footprint.status, MeasureStatus::Missing);
         // The peak in the run window is still read when the process died before idle.
         assert_eq!(value(&peak), Some(1_800));
         assert_eq!(value(&kills), Some(1));
+        assert_eq!(
+            kills.items[0].key,
+            "memorystatus: killing process 412 [com.apple.WebKit.WebContent] in high band \
+             FOREGROUND (100), 6 s before the run ended"
+        );
+        // The soft limit it went over first is kept in the evidence.
         assert!(
-            kills.items[0]
-                .key
-                .contains("left the trace 7 s before the run ended")
+            kills.evidence[0]
+                .detail
+                .contains("exceeded mem limit: ActiveSoft 1536 MB (non-fatal)"),
+            "{}",
+            kills.evidence[0].detail
         );
     }
 
     #[test]
-    fn a_trace_that_ended_before_the_run_cannot_tell_a_kill() {
-        // The phone disconnected at 8 s, 5 s before the run ended. Idle at 5 s is still read.
+    fn a_process_that_leaves_the_samples_with_no_kill_in_the_log_is_not_a_kill() {
+        // Sysmon can leave a live process out of samples, and a process can end for other reasons.
         let samples = [
             (2_000, GAME, 900),
             (6_000, GAME, 1_800),
-            (8_000, OTHER_TAB, 60),
+            (11_000, OTHER_TAB, 60),
         ];
+        let [_, _, kills] = device_measures(&recording(&samples, &[]), &run())
+            .try_into()
+            .unwrap();
+        assert_eq!(value(&kills), Some(0));
+    }
+
+    #[test]
+    fn kills_of_other_processes_or_outside_the_run_do_not_count() {
+        let samples = [
+            (2_000, GAME, 900),
+            (12_000, GAME, 900),
+            (2_000, OTHER_TAB, 60),
+        ];
+        let other = "memorystatus: killing process 377 [com.apple.WebKit.WebContent] in high \
+            band FOREGROUND (100)";
+        let lines = [(5_000, other), (20_000, KILL)];
+        let [_, _, kills] = device_measures(&recording(&samples, &lines), &run())
+            .try_into()
+            .unwrap();
+        assert_eq!(value(&kills), Some(0));
+    }
+
+    #[test]
+    fn a_log_that_ended_before_the_run_cannot_tell_a_kill_but_a_kill_it_saw_counts() {
+        let samples = [(2_000, GAME, 900), (12_000, GAME, 950)];
+        let mut short = recording(&samples, &[]);
+        short.log_covers = Coverage {
+            until_epoch_ms: START + 8_000.0,
+            ended: Some("the relay closed".to_owned()),
+        };
+        let [footprint, _, kills] = device_measures(&short, &run()).try_into().unwrap();
+        assert_eq!(value(&footprint), Some(950));
+        assert_eq!(kills.status, MeasureStatus::Missing);
+        assert_eq!(
+            kills.reason.as_deref(),
+            Some(
+                "the phone's log ended 5 s before the run did, so it cannot tell whether iOS \
+                 killed the game: the relay closed"
+            )
+        );
+        let mut seen = recording(&samples, &[(6_000, KILL)]);
+        seen.log_covers = short.log_covers.clone();
+        let [_, _, kills] = device_measures(&seen, &run()).try_into().unwrap();
+        assert_eq!(value(&kills), Some(1));
+    }
+
+    #[test]
+    fn samples_that_ended_before_the_run_give_no_peak() {
+        // The phone left at 8 s, 5 s before the run ended. Idle at 5 s is still read.
+        let samples = [(2_000, GAME, 900), (6_000, GAME, 1_800)];
+        let mut short = recording(&samples, &[]);
+        short.samples_cover = Coverage {
+            until_epoch_ms: START + 8_000.0,
+            ended: None,
+        };
         let window = RunWindow {
             idle_epoch_ms: Some(START + 5_000.0),
             ..run()
         };
-        let [footprint, _, kills] = device_measures(&trace(&samples), &window)
-            .try_into()
-            .unwrap();
+        let [footprint, peak, _] = device_measures(&short, &window).try_into().unwrap();
         assert_eq!(value(&footprint), Some(1_800));
-        assert_eq!(kills.status, MeasureStatus::Missing);
-        assert!(
-            kills
-                .reason
-                .as_deref()
-                .unwrap()
-                .starts_with("the trace ended 5 s before the run did")
+        assert!(footprint.items.is_empty());
+        assert_eq!(peak.status, MeasureStatus::Missing);
+        assert_eq!(
+            peak.reason.as_deref(),
+            Some(
+                "the phone's samples ended 5 s before the run did, so the peak of the run is not \
+                 known: it stopped sending"
+            )
         );
     }
 
@@ -416,33 +576,34 @@ mod tests {
             navigated_epoch_ms: START + 3_000.0,
             ..run()
         };
-        let [_, peak, _] = device_measures(&trace(&samples), &window)
+        let [_, peak, _] = device_measures(&recording(&samples, &[]), &window)
             .try_into()
             .unwrap();
         assert_eq!(value(&peak), Some(700));
     }
 
     #[test]
-    fn a_trace_names_the_model_its_os_version_and_its_memory_but_not_the_phone() {
-        let (os, device) = trace_environment(&trace(&[]).device);
+    fn a_recording_names_the_model_its_os_version_and_its_memory_but_not_the_phone() {
+        let (os, device) = phone_environment(&recording(&[], &[]));
         let os = os.unwrap();
         assert_eq!(os.name, OsName::Ios);
-        assert_eq!(os.version.as_deref(), Some("26.6.2"));
+        assert_eq!(os.version.as_deref(), Some("26.6.2 (23G90)"));
         let device = device.unwrap();
         assert_eq!(device.key.as_deref(), Some("iphone-14-pro-max"));
         assert_eq!(device.name, "iPhone 14 Pro Max");
-        assert_eq!(device.memory_bytes, Some(6_442_450_944));
-        let unnamed = TraceDevice {
-            model: String::new(),
-            ..trace(&[]).device
-        };
-        assert_eq!(trace_environment(&unnamed), (None, None));
+        assert_eq!(device.memory_bytes, Some(5_910_052_864));
+        let mut unnamed = recording(&[], &[]);
+        unnamed.phone.identifier = String::new();
+        assert_eq!(phone_environment(&unnamed), (None, None));
+        let mut no_version = recording(&[], &[]);
+        no_version.phone.os_version = String::new();
+        assert_eq!(phone_environment(&no_version).0.unwrap().version, None);
     }
 
     #[test]
-    fn a_trace_with_no_safari_process_in_the_run_gives_missing_measures() {
-        let samples = [(0, "SpringBoard (60)", 900), (60_000, GAME, 500)];
-        let measures = device_measures(&trace(&samples), &run());
+    fn a_recording_with_no_safari_process_in_the_run_gives_missing_measures() {
+        let samples = [(60_000, GAME, 500)];
+        let measures = device_measures(&recording(&samples, &[]), &run());
         assert!(
             measures
                 .iter()
@@ -458,13 +619,27 @@ mod tests {
     }
 
     #[test]
+    fn samples_that_ended_before_the_game_process_appeared_say_so() {
+        let mut short = recording(&[], &[]);
+        short.samples_cover = Coverage {
+            until_epoch_ms: START,
+            ended: Some("the tap closed".to_owned()),
+        };
+        let measures = device_measures(&short, &run());
+        assert_eq!(
+            measures[2].reason.as_deref(),
+            Some("the phone's samples ended 13 s before the run did: the tap closed")
+        );
+    }
+
+    #[test]
     fn a_run_that_never_went_idle_has_no_footprint_but_still_counts_kills() {
         let samples = [(2_000, GAME, 900), (12_500, GAME, 950)];
         let window = RunWindow {
             idle_epoch_ms: None,
             ..run()
         };
-        let [footprint, peak, kills] = device_measures(&trace(&samples), &window)
+        let [footprint, peak, kills] = device_measures(&recording(&samples, &[]), &window)
             .try_into()
             .unwrap();
         assert_eq!(footprint.status, MeasureStatus::Missing);

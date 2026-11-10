@@ -1320,7 +1320,12 @@
           "const": "syslog"
         },
         {
-          "description": "An xctrace recording on the iPhone.",
+          "description": "The iPhone's sysmontap samples, which Instruments' Activity Monitor reads too.",
+          "type": "string",
+          "const": "sysmontap"
+        },
+        {
+          "description": "An xctrace recording on the iPhone. Device runs of older dyno versions have it.",
           "type": "string",
           "const": "xctrace"
         }

@@ -1,5 +1,6 @@
 //! The command line. `--help` marks each command and flag with the plan phase that builds it.
 
+use std::net::IpAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -160,15 +161,25 @@ pub struct CheckArgs {
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..))]
     pub spins: Option<u32>,
 
-    /// [phase 2] Also record the game's memory on the connected iPhone with xctrace, while its
-    /// Safari runs the check. Needs --driver serve and a Mac with Xcode
+    /// [phase 2] Also record the game's memory on an iPhone, on a cable or on the network, while
+    /// its Safari runs the check. Needs --driver serve, and iOS 17 or later with Developer Mode on
     #[arg(long)]
     pub device: bool,
 
-    /// [phase 2] With --device, the device to record, by its UDID or name as `xcrun xctrace list
-    /// devices` gives them. Default: the only connected iPhone
-    #[arg(long, value_name = "ID")]
+    /// [phase 2] With --device, the iPhone to record, by its UDID, of those that usbmuxd lists.
+    /// Default: the only one
+    #[arg(long, value_name = "UDID", conflicts_with = "device_ip")]
     pub device_id: Option<String>,
+
+    /// [phase 2] Record the iPhone at this address on the network, with no usbmuxd: --device with
+    /// no cable, from Linux too. Needs --pairing-file
+    #[arg(long, value_name = "IP", requires = "pairing_file")]
+    pub device_ip: Option<IpAddr>,
+
+    /// [phase 2] With --device-ip, the phone's pair record: a plist from a computer the phone
+    /// trusts, such as /var/db/lockdown/<UDID>.plist on a Mac
+    #[arg(long, value_name = "FILE", requires = "device_ip")]
+    pub pairing_file: Option<PathBuf>,
 
     /// [phase 2] With --device, do not open the page in the phone's Safari: open it by hand
     #[arg(long)]

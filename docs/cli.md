@@ -35,8 +35,10 @@ A browser run starts Chromium with its sandbox. A container with no user namespa
 | `--serve-query <QUERY>`             | 1     | With `--driver serve`: the query string the game loads with, such as a demo session's `sessionID` and `rgs_url`. No result records it.                                                                                                                                  |
 | `--scenario <alone\|aged\|overlap>` | 2     | The harness scenario. Default `alone`. Any other scenario needs a launch URL.                                                                                                                                                                                           |
 | `--spins <N>`                       | 2     | Play N demo spins after load, with N at least 1. Needs a launch URL.                                                                                                                                                                                                    |
-| `--device`                          | 2     | Also record the game's memory on the connected iPhone with xctrace, while its Safari runs the check. Needs `--driver serve` and a Mac with Xcode.                                                                                                                       |
-| `--device-id <ID>`                  | 2     | With `--device`: the device to record, by its UDID or name as `xcrun xctrace list devices` gives them. Default: the only connected iPhone.                                                                                                                              |
+| `--device`                          | 2     | Also record the game's memory on an iPhone while its Safari runs the check, on a cable or on the network, from Linux or macOS. Needs `--driver serve`, and a phone with iOS 17 or later and Developer Mode on.                                                          |
+| `--device-id <UDID>`                | 2     | With `--device`, the phone to record, by its UDID, of those that usbmuxd lists. Default: the only one.                                                                                                                                                                  |
+| `--device-ip <IP>`                  | 2     | Record the phone at this address on the network, with no usbmuxd. It implies `--device`, and needs `--pairing-file`. See [A phone on the network](#a-phone-on-the-network).                                                                                             |
+| `--pairing-file <FILE>`             | 2     | With `--device-ip`, the phone's pair record: a plist from a computer that the phone trusts.                                                                                                                                                                             |
 | `--no-open`                         | 2     | With `--device`: do not open the page in the phone's Safari. Open it by hand.                                                                                                                                                                                           |
 | `--runs <N>`                        | 2     | With `--device`: run the empty build and the game N times each, in turn, with N at least 1. Not with `--baseline`. See [Runs of the game and the empty build](#runs-of-the-game-and-the-empty-build).                                                                   |
 | `--upload`                          | 3     | After the check, upload the result to the dyno site and print its link to stderr. With `--games`, upload each game's result. Needs `dyno login` or `DYNO_TOKEN`. See [Upload results to the dyno site](#upload-results-to-the-dyno-site).                               |
@@ -57,28 +59,42 @@ With `--driver serve`, dyno serves the build folder and a harness page, and wait
 
 The build must be a folder: unzip a .zip first. While the run waits and runs, anyone on the network can load the build from the two ports.
 
-With `--device` too, dyno records an Activity Monitor trace of every process on the connected phone with `xcrun xctrace` while the phone's Safari runs the served check. Run it on the Mac the phone is plugged into: the phone must be unlocked, trust the Mac, and have Developer Mode on. Set Auto-Lock to Never. Use a cable that carries data: with the link on Wi-Fi only, xctrace lost an iPhone 14 Pro Max about 10 s into every recording. A locked phone is a usage error, and a phone that locks during the run disconnects from xctrace, which leaves the device measures missing. Before it records, dyno opens the harness page in the phone's Safari with `xcrun devicectl`, which restarts Safari. `--no-open` leaves that to you. When the launch fails, dyno says so and you open the URL by hand. dyno starts the recording before it prints the URL, and stops it when the run ends. Saving the trace can take a minute. The trace gives two measures:
+With `--device` too, dyno records the phone while its Safari runs the served check. It reads the phone itself, with the [`idevice`](https://crates.io/crates/idevice) crate, so it needs no Xcode, and it runs on Linux too. It finds the phone through usbmuxd, which lists the phones on a cable, and on macOS the ones on Wi-Fi too. `--device-ip` reaches a phone straight over the network instead. The phone needs iOS 17 or later, Developer Mode on, and trust in this computer, or in the computer its pair record comes from. Set Auto-Lock to Never and keep the phone unlocked. Before it records, dyno opens the harness page in the phone's Safari, which restarts Safari. `--no-open` leaves that to you. When the launch fails, dyno says so and you open the URL by hand. On a Mac, dyno tries `xcrun devicectl` first. A locked phone is a usage error. dyno starts the recording before it prints the URL, and stops it when the run ends. The recording gives three measures:
 
-- `device.phys_footprint`: the physical footprint (`phys_footprint`, which iOS reads to kill a process) of the game's WebContent process, at the first sample after the frame went idle, with its peak during the run as an item. The game's process is the WebContent process with the largest footprint during the run.
-- `device.phys_footprint_peak`: the largest footprint of the game's process in the run window, from dyno's answer to the page's `hello` to the end of the run. The trace takes a sample about once a second, so the window takes in 1.5 s more at each end, as it does to find the game's process. It is the same value as the item above, as a measure of its own.
-- `device.kills`: 1 when the game's process left the trace more than 3 s before the run ended, as a process that iOS kills does. 0 otherwise.
+- `device.phys_footprint`: the physical footprint (`phys_footprint`, which iOS reads to kill a process) of the game's WebContent process, at the first sample after the frame went idle, with its peak during the run as an item. The game's process is the WebContent process with the largest footprint during the run. The phone's sysmontap service, which Instruments' Activity Monitor reads too, gives each process's footprint about once a second.
+- `device.phys_footprint_peak`: the largest footprint of the game's process in the run window, from dyno's answer to the page's `hello` to the end of the run. A sample comes about once a second, so the window takes in 1.5 s more at each end, as it does to find the game's process. It is the same value as the item above, as a measure of its own.
+- `device.kills`: 1 when the phone's kernel log says that jetsam killed the game's process during the run, 0 otherwise. The item has the kernel's line. Other lines about the process, such as a soft memory limit that it went over, are in the evidence.
 
-The trace also names the phone's model, its iOS version and its memory, which go into `run.environment` (see [What ran](#what-ran)). The phone's own name, which is often its owner's, never goes into a result.
+When the samples stop more than 3 s before the run ends, as when the phone leaves the network, there is no peak. When the log stops, `device.kills` is missing, unless the log saw the kill.
 
-With `--out`, the trace is kept beside the result, as `<name>.trace`, for Instruments. Without it, the trace is deleted. `DYNO_XCRUN` names another program to run instead of `xcrun`, such as a fake in tests.
+The phone also names its model, its iOS version and the memory that iOS manages, which go into `run.environment` (see [What ran](#what-ran)). Neither its own name, which is often its owner's, nor its UDID goes into a result.
+
+With `--out`, the recording is saved beside the result, as `<name>.device.json`: every sample of each Safari page process, and every kernel memory line, on this machine's clock. `DYNO_XCRUN` names another program to run instead of `xcrun`, and `DYNO_FAKE_PHONE` records a fake phone, both for tests.
+
+#### A phone on the network
+
+`--device-ip` and `--pairing-file` reach the phone at its address, with no cable and no usbmuxd. The phone must be on this machine's network, and two things must be set once, on a cable:
+
+- **Wi-Fi connections.** Turn on lockdown's Wi-Fi connections, `EnableWifiConnections` in the `com.apple.mobile.wireless_lockdown` domain. `pymobiledevice3 lockdown wifi-connections on` sets it, and it stays on.
+- **A pair record.** Copy the phone's pair record from a computer it trusts. On a Mac it is `/var/db/lockdown/<UDID>.plist`, which only root can read. On Linux with usbmuxd it is `/var/lib/lockdown/<UDID>.plist`. usbmuxd also gives it to a client that asks (`ReadPairRecord`). The file holds the keys that the phone trusts, so keep it as you would a password.
+
+```sh
+sudo cp /var/db/lockdown/<UDID>.plist phone.plist && sudo chown "$USER" phone.plist && chmod 600 phone.plist
+dyno check dist --driver serve --device-ip 192.0.2.20 --pairing-file phone.plist --out result.json
+```
 
 A single run has `device.footprint_over_baseline` as `unsupported`: it needs `--runs`.
 
 #### Runs of the game and the empty build
 
-One run of a game on a phone varies from the next, and its footprint includes what Safari itself takes for an empty page. `--runs <N>` with `--device` runs the [empty build](#the-empty-build) and the game N times each, in turn: empty build, game, empty build, game, and so on. Each run serves its build on its own, opens the page in a fresh Safari (unless `--no-open`), and has its own recording. The ports stay the same, so with `--no-open` the URL to open is the same for every run. With `--out`, each run's trace is kept beside the result, as `<name>.empty-1.trace`, `<name>.game-1.trace` and so on. The result is one result, with `inputs.device_runs` set to N:
+One run of a game on a phone varies from the next, and its footprint includes what Safari itself takes for an empty page. `--runs <N>` with `--device` runs the [empty build](#the-empty-build) and the game N times each, in turn: empty build, game, empty build, game, and so on. Each run serves its build on its own, opens the page in a fresh Safari (unless `--no-open`), and has its own recording. The ports stay the same, so with `--no-open` the URL to open is the same for every run. With `--out`, each run's recording is saved beside the result, as `<name>.empty-1.device.json`, `<name>.game-1.device.json` and so on. The result is one result, with `inputs.device_runs` set to N:
 
 - `device.phys_footprint`: the median of the game runs' readings at idle.
 - `device.phys_footprint_peak`: the median of the game runs' peaks.
 - `device.kills`: how many of the N game runs the phone killed.
 - `device.footprint_over_baseline`: the median of the game runs' peaks, minus the median of the empty build runs' peaks. This is the game's own footprint on the phone. It is a change in size (`bytes_change`), so a game within the noise of the empty page can give a value below 0.
 
-Each has an item per run. The median of an even number of runs is the mean of the middle two, rounded down. A footprint's uncertainty is the range from its smallest run to its largest. The lab measures, the driver and the browser come from the first game run that completed. Every run counts toward N, so a run that does not give a reading, such as one whose trace cannot be read, leaves the measures that need it missing, and the reason names the run and says why. A missing measure keeps an item for each run that did give a reading. A game that the phone killed before idle has no reading at idle, but still has its peak and its kill. A phone that cannot record, such as one that locked between runs, stops the check, as it does before a single run.
+Each has an item per run. The median of an even number of runs is the mean of the middle two, rounded down. A footprint's uncertainty is the range from its smallest run to its largest. The lab measures, the driver and the browser come from the first game run that completed. Every run counts toward N, so a run that does not give a reading, such as one whose samples stopped, leaves the measures that need it missing, and the reason names the run and says why. A missing measure keeps an item for each run that did give a reading. A game that the phone killed before idle has no reading at idle, but still has its peak and its kill. A phone that dyno cannot record, such as one that locked or left the network between runs, stops the check, as it does before a single run.
 
 #### Link a build to its game
 
@@ -134,7 +150,7 @@ The diff covers the deterministic parts only: every static measure whose status 
 
 ### `dyno doctor` (Phase 2)
 
-Checks that this Mac can run the game on an iPhone: Xcode, a connected iPhone, and trust. Until Phase 2 builds it, it reports its phase and `incomplete`. It runs no command against a device.
+Checks that this computer can run the game on an iPhone: a connected iPhone, and trust. Until Phase 2 builds it, it reports its phase and `incomplete`. It runs no command against a device.
 
 | Flag           | Phase | What it does                                   |
 | -------------- | ----- | ---------------------------------------------- |
@@ -294,10 +310,10 @@ Each driver fills in the environment from what it can see, and a field it cannot
 
 - The CDP driver: the Chromium that `Browser.getVersion` names, headless, on this machine's OS, with no OS version.
 - `--driver serve`: the user agent that the harness page sends. It gives the browser, its engine and the OS. It gives no OS version, because a browser freezes it (Safari on iOS 26 says 18.6), and no phone model, because Safari says only "iPhone". So `device.key` is null.
-- `--device`: the trace's model, iOS version and memory, which win over the user agent. `device.key` is the model name in lower case, with one `-` for each run of other characters: "iPhone 14 Pro Max" is `iphone-14-pro-max`.
+- `--device`: the phone's model, iOS version and build, and memory, which win over the user agent. The phone gives its model identifier, such as `iPhone15,3`, and the device catalogue names the model: "iPhone 14 Pro Max". `device.key` is the model name in lower case, with one `-` for each run of other characters: `iphone-14-pro-max`. A model that the catalogue does not list is named by its identifier. The OS version has the build, such as `26.6.2 (23G90)`. `memory_bytes` is the memory that iOS manages, from the sysmontap service's `physMemSize` in 16 KiB pages: a little under the phone's RAM, such as 5.5 GiB on a 6 GB iPhone 14 Pro Max, and a few pages more or less from run to run.
 - `--driver exec:<PROGRAM>`: only the browser that the program's `hello` names, with no OS or device.
 
-`packages/schema/json/devices.json` lists the devices dyno knows, by the same key: every iPhone from the iPhone XS and XR of 2018 to the iPhone 17 family. A run on a model that the list does not have keeps its own key. The list has no memory sizes: Apple does not publish them, and each device run's trace gives its own. `packages/schema/json/measures.json` lists every measure id with its source, phase, unit and scope, and two more things: its `quantity`, what it counts (such as `textures` or `footprint`), and its `statistic`, which reading it is (such as `all_files`, `by_idle`, `at_idle` or `peak`). A site groups and labels measures by them.
+`packages/schema/json/devices.json` lists the devices dyno knows, by the same key: every iPhone from the iPhone XS and XR of 2018 to the iPhone 18 Pro, with Apple's model identifiers for each. A run on a model that the list does not have is keyed by its identifier, such as `iphone99-1`. The list has no memory sizes: Apple does not publish them, and each device run reads its own. `packages/schema/json/measures.json` lists every measure id with its source, phase, unit and scope, and two more things: its `quantity`, what it counts (such as `textures` or `footprint`), and its `statistic`, which reading it is (such as `all_files`, `by_idle`, `at_idle` or `peak`). A site groups and labels measures by them.
 
 ## The result hash
 

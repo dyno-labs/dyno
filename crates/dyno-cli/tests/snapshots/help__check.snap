@@ -72,10 +72,16 @@ Options:
           [phase 2] Play N demo spins after load. Needs a launch URL
 
       --device
-          [phase 2] Also record the game's memory on the connected iPhone with xctrace, while its Safari runs the check. Needs --driver serve and a Mac with Xcode
+          [phase 2] Also record the game's memory on an iPhone, on a cable or on the network, while its Safari runs the check. Needs --driver serve, and iOS 17 or later with Developer Mode on
 
-      --device-id <ID>
-          [phase 2] With --device, the device to record, by its UDID or name as `xcrun xctrace list devices` gives them. Default: the only connected iPhone
+      --device-id <UDID>
+          [phase 2] With --device, the iPhone to record, by its UDID, of those that usbmuxd lists. Default: the only one
+
+      --device-ip <IP>
+          [phase 2] Record the iPhone at this address on the network, with no usbmuxd: --device with no cable, from Linux too. Needs --pairing-file
+
+      --pairing-file <FILE>
+          [phase 2] With --device-ip, the phone's pair record: a plist from a computer the phone trusts, such as /var/db/lockdown/<UDID>.plist on a Mac
 
       --no-open
           [phase 2] With --device, do not open the page in the phone's Safari: open it by hand

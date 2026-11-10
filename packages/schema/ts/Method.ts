@@ -3,4 +3,4 @@
 /**
  * How a value was found. Declared in alphabetical order, so evidence sorts by name.
  */
-export type Method = "audio_decode" | "bundle_scan" | "devtools_protocol" | "file_hash" | "file_header" | "file_size" | "host_message" | "model" | "network" | "probe" | "sprite_map" | "syslog" | "xctrace";
+export type Method = "audio_decode" | "bundle_scan" | "devtools_protocol" | "file_hash" | "file_header" | "file_size" | "host_message" | "model" | "network" | "probe" | "sprite_map" | "syslog" | "sysmontap" | "xctrace";

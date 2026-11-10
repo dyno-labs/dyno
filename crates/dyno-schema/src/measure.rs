@@ -151,7 +151,9 @@ pub enum Method {
     SpriteMap,
     /// The iPhone syslog.
     Syslog,
-    /// An xctrace recording on the iPhone.
+    /// The iPhone's sysmontap samples, which Instruments' Activity Monitor reads too.
+    Sysmontap,
+    /// An xctrace recording on the iPhone. Device runs of older dyno versions have it.
     Xctrace,
 }
 
@@ -403,6 +405,7 @@ mod tests {
             Method::Probe,
             Method::SpriteMap,
             Method::Syslog,
+            Method::Sysmontap,
             Method::Xctrace,
         ];
         let names: Vec<String> = methods

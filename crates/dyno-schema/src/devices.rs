@@ -1,10 +1,11 @@
 //! The devices dyno knows: every iPhone from 2018 on. `packages/schema/json/devices.json` is
 //! generated from this list, and a site reads it.
 //!
-//! A device's key is the slug of its model name as xctrace writes it: "iPhone 14 Pro Max" is
-//! `iphone-14-pro-max`. A device run keys its device the same way, so a run on a model that this
-//! list does not have still has a key. The list holds no memory sizes. Apple does not publish
-//! them, and each run's trace gives its own.
+//! A device's key is the slug of its model name: "iPhone 14 Pro Max" is `iphone-14-pro-max`. A
+//! device run reads the phone's model identifier, such as `iPhone15,3`, and keys its device by the
+//! model this list gives for it. A run on a model that this list does not have keys it by the
+//! identifier. The list holds no memory sizes. Apple does not publish them, and each run reads its
+//! own.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -16,74 +17,129 @@ use crate::environment::{DeviceKind, EnvironmentDevice, OsName};
 pub struct DeviceEntry {
     /// The slug of the name, such as "iphone-14-pro-max".
     pub key: String,
-    /// The model name as xctrace writes it, such as "iPhone 14 Pro Max".
+    /// The model name, such as "iPhone 14 Pro Max".
     pub name: String,
     pub vendor: String,
     pub kind: DeviceKind,
     pub os_family: OsName,
     /// The year the model came out.
     pub year: u16,
+    /// Apple's model identifiers for it, such as "iPhone15,3": what the phone gives as its
+    /// `ProductType`.
+    pub identifiers: Vec<String>,
 }
 
-/// The vendor of every device a device run can record: xctrace records Apple's devices only.
+/// The vendor of every device a device run can record: it records Apple's devices only.
 pub const APPLE: &str = "Apple";
 
-/// Every iPhone from 2018 on, in the order they came out: (key, name, year).
-const IPHONES: &[(&str, &str, u16)] = &[
-    ("iphone-xs", "iPhone XS", 2018),
-    ("iphone-xs-max", "iPhone XS Max", 2018),
-    ("iphone-xr", "iPhone XR", 2018),
-    ("iphone-11", "iPhone 11", 2019),
-    ("iphone-11-pro", "iPhone 11 Pro", 2019),
-    ("iphone-11-pro-max", "iPhone 11 Pro Max", 2019),
+/// Every iPhone from 2018 on, in the order they came out: (key, name, year, identifiers). The
+/// identifiers are the ones Xcode's simulator profiles give, and the iPhone XS Max's second one.
+const IPHONES: &[(&str, &str, u16, &[&str])] = &[
+    ("iphone-xs", "iPhone XS", 2018, &["iPhone11,2"]),
+    (
+        "iphone-xs-max",
+        "iPhone XS Max",
+        2018,
+        &["iPhone11,4", "iPhone11,6"],
+    ),
+    ("iphone-xr", "iPhone XR", 2018, &["iPhone11,8"]),
+    ("iphone-11", "iPhone 11", 2019, &["iPhone12,1"]),
+    ("iphone-11-pro", "iPhone 11 Pro", 2019, &["iPhone12,3"]),
+    (
+        "iphone-11-pro-max",
+        "iPhone 11 Pro Max",
+        2019,
+        &["iPhone12,5"],
+    ),
     (
         "iphone-se-2nd-generation",
         "iPhone SE (2nd generation)",
         2020,
+        &["iPhone12,8"],
     ),
-    ("iphone-12-mini", "iPhone 12 mini", 2020),
-    ("iphone-12", "iPhone 12", 2020),
-    ("iphone-12-pro", "iPhone 12 Pro", 2020),
-    ("iphone-12-pro-max", "iPhone 12 Pro Max", 2020),
-    ("iphone-13-mini", "iPhone 13 mini", 2021),
-    ("iphone-13", "iPhone 13", 2021),
-    ("iphone-13-pro", "iPhone 13 Pro", 2021),
-    ("iphone-13-pro-max", "iPhone 13 Pro Max", 2021),
+    ("iphone-12-mini", "iPhone 12 mini", 2020, &["iPhone13,1"]),
+    ("iphone-12", "iPhone 12", 2020, &["iPhone13,2"]),
+    ("iphone-12-pro", "iPhone 12 Pro", 2020, &["iPhone13,3"]),
+    (
+        "iphone-12-pro-max",
+        "iPhone 12 Pro Max",
+        2020,
+        &["iPhone13,4"],
+    ),
+    ("iphone-13-mini", "iPhone 13 mini", 2021, &["iPhone14,4"]),
+    ("iphone-13", "iPhone 13", 2021, &["iPhone14,5"]),
+    ("iphone-13-pro", "iPhone 13 Pro", 2021, &["iPhone14,2"]),
+    (
+        "iphone-13-pro-max",
+        "iPhone 13 Pro Max",
+        2021,
+        &["iPhone14,3"],
+    ),
     (
         "iphone-se-3rd-generation",
         "iPhone SE (3rd generation)",
         2022,
+        &["iPhone14,6"],
     ),
-    ("iphone-14", "iPhone 14", 2022),
-    ("iphone-14-plus", "iPhone 14 Plus", 2022),
-    ("iphone-14-pro", "iPhone 14 Pro", 2022),
-    ("iphone-14-pro-max", "iPhone 14 Pro Max", 2022),
-    ("iphone-15", "iPhone 15", 2023),
-    ("iphone-15-plus", "iPhone 15 Plus", 2023),
-    ("iphone-15-pro", "iPhone 15 Pro", 2023),
-    ("iphone-15-pro-max", "iPhone 15 Pro Max", 2023),
-    ("iphone-16", "iPhone 16", 2024),
-    ("iphone-16-plus", "iPhone 16 Plus", 2024),
-    ("iphone-16-pro", "iPhone 16 Pro", 2024),
-    ("iphone-16-pro-max", "iPhone 16 Pro Max", 2024),
-    ("iphone-16e", "iPhone 16e", 2025),
-    ("iphone-17", "iPhone 17", 2025),
-    ("iphone-air", "iPhone Air", 2025),
-    ("iphone-17-pro", "iPhone 17 Pro", 2025),
-    ("iphone-17-pro-max", "iPhone 17 Pro Max", 2025),
+    ("iphone-14", "iPhone 14", 2022, &["iPhone14,7"]),
+    ("iphone-14-plus", "iPhone 14 Plus", 2022, &["iPhone14,8"]),
+    ("iphone-14-pro", "iPhone 14 Pro", 2022, &["iPhone15,2"]),
+    (
+        "iphone-14-pro-max",
+        "iPhone 14 Pro Max",
+        2022,
+        &["iPhone15,3"],
+    ),
+    ("iphone-15", "iPhone 15", 2023, &["iPhone15,4"]),
+    ("iphone-15-plus", "iPhone 15 Plus", 2023, &["iPhone15,5"]),
+    ("iphone-15-pro", "iPhone 15 Pro", 2023, &["iPhone16,1"]),
+    (
+        "iphone-15-pro-max",
+        "iPhone 15 Pro Max",
+        2023,
+        &["iPhone16,2"],
+    ),
+    ("iphone-16", "iPhone 16", 2024, &["iPhone17,3"]),
+    ("iphone-16-plus", "iPhone 16 Plus", 2024, &["iPhone17,4"]),
+    ("iphone-16-pro", "iPhone 16 Pro", 2024, &["iPhone17,1"]),
+    (
+        "iphone-16-pro-max",
+        "iPhone 16 Pro Max",
+        2024,
+        &["iPhone17,2"],
+    ),
+    ("iphone-16e", "iPhone 16e", 2025, &["iPhone17,5"]),
+    ("iphone-17", "iPhone 17", 2025, &["iPhone18,3"]),
+    ("iphone-air", "iPhone Air", 2025, &["iPhone18,4"]),
+    ("iphone-17-pro", "iPhone 17 Pro", 2025, &["iPhone18,1"]),
+    (
+        "iphone-17-pro-max",
+        "iPhone 17 Pro Max",
+        2025,
+        &["iPhone18,2"],
+    ),
+    ("iphone-17e", "iPhone 17e", 2026, &["iPhone18,5"]),
+    ("iphone-18-pro", "iPhone 18 Pro", 2026, &["iPhone19,2"]),
+    (
+        "iphone-18-pro-max",
+        "iPhone 18 Pro Max",
+        2026,
+        &["iPhone19,3"],
+    ),
 ];
 
 /// Every device in the catalogue, in the order they came out.
 pub fn devices() -> Vec<DeviceEntry> {
     IPHONES
         .iter()
-        .map(|&(key, name, year)| DeviceEntry {
+        .map(|&(key, name, year, identifiers)| DeviceEntry {
             key: key.to_owned(),
             name: name.to_owned(),
             vendor: APPLE.to_owned(),
             kind: DeviceKind::Phone,
             os_family: OsName::Ios,
             year,
+            identifiers: identifiers.iter().map(|&id| id.to_owned()).collect(),
         })
         .collect()
 }
@@ -91,6 +147,16 @@ pub fn devices() -> Vec<DeviceEntry> {
 /// The device with this key. None when the catalogue does not list it.
 pub fn find_device(key: &str) -> Option<DeviceEntry> {
     devices().into_iter().find(|device| device.key == key)
+}
+
+/// The model name of an Apple model identifier, such as "iPhone 14 Pro Max" for `iPhone15,3`.
+/// A model that the catalogue does not list is named by its identifier.
+pub fn model_name(identifier: &str) -> String {
+    let identifier = identifier.trim();
+    IPHONES
+        .iter()
+        .find(|(_, _, _, identifiers)| identifiers.contains(&identifier))
+        .map_or_else(|| identifier.to_owned(), |&(_, name, _, _)| name.to_owned())
 }
 
 /// A device's key: its model name in lower case, with one `-` for each run of characters that are
@@ -133,8 +199,8 @@ fn apple_kind(model: &str) -> DeviceKind {
 }
 
 impl EnvironmentDevice {
-    /// The device of a model that xctrace names, so one of Apple's, with the memory its trace
-    /// gives. The catalogue gives the kind of a model it lists. None for an empty name.
+    /// The device of one of Apple's models, by its name, with the memory a device run read. The
+    /// catalogue gives the kind of a model it lists. None for an empty name.
     pub fn of_apple_model(model: &str, memory_bytes: Option<u64>) -> Option<EnvironmentDevice> {
         let key = device_key(model);
         if key.is_empty() {
@@ -173,12 +239,31 @@ mod tests {
     }
 
     #[test]
-    fn the_catalogue_runs_from_the_iphone_xs_to_the_iphone_17_family() {
+    fn the_catalogue_runs_from_the_iphone_xs_to_the_iphone_18_pro() {
         let devices = devices();
         assert_eq!(devices.first().unwrap().key, "iphone-xs");
-        assert_eq!(devices.last().unwrap().key, "iphone-17-pro-max");
+        assert_eq!(devices.last().unwrap().key, "iphone-18-pro-max");
         assert!(devices.iter().map(|device| device.year).is_sorted());
         assert!(devices.iter().all(|device| device.year >= 2018));
+    }
+
+    #[test]
+    fn every_device_has_an_identifier_and_no_identifier_names_two() {
+        let mut seen = HashSet::new();
+        for device in devices() {
+            assert!(!device.identifiers.is_empty(), "{}", device.key);
+            for identifier in &device.identifiers {
+                assert!(seen.insert(identifier.clone()), "{identifier} repeats");
+            }
+        }
+    }
+
+    #[test]
+    fn an_identifier_gives_its_model_name_or_itself() {
+        assert_eq!(model_name("iPhone15,3"), "iPhone 14 Pro Max");
+        assert_eq!(model_name(" iPhone11,6 "), "iPhone XS Max");
+        assert_eq!(model_name("iPhone99,1"), "iPhone99,1");
+        assert_eq!(device_key(&model_name("iPhone99,1")), "iphone99-1");
     }
 
     #[test]

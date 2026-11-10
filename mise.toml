@@ -21,7 +21,7 @@ node = "26.13.0"
 # The formatter and the linter of the TypeScript, and the formatter of the JSON, Markdown, YAML,
 # TOML, CSS and HTML: each with its defaults (.oxfmtrc.json and .oxlintrc.json only leave files
 # out).
-"npm:oxfmt" = "0.76.0"
+"npm:oxfmt" = "0.77.0"
 "npm:oxlint" = "1.92.0"
 # The shell scripts' linter and formatter. actionlint also runs shellcheck on each `run:` script.
 shellcheck = "0.11.0"

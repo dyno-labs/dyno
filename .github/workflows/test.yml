@@ -25,6 +25,11 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # Where rustup and cargo keep their files: on GitHub's runners, where they always do. The self-hosted
+  # runners' image points RUSTUP_HOME, and ~/.rustup by a link, at a root-owned /opt/rust, where mise cannot
+  # install the pinned toolchain, so there rustup gets a folder of its own in the runner's home.
+  RUSTUP_HOME: ${{ vars.LINUX_RUNNER && '/home/runner/.local/rustup' || '/home/runner/.rustup' }}
+  CARGO_HOME: /home/runner/.cargo
   CARGO_INCREMENTAL: "0"
   CARGO_TERM_COLOR: always
   # Fail on a stale or missing snapshot instead of writing a new one.
@@ -118,12 +123,26 @@ jobs:
           version: 2026.10.17
           install_args: rust node github:taiki-e/cargo-llvm-cov
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      # The Chromium tests use the Chromium or Chrome on the runner's PATH. Ubuntu 24.04 lets no
-      # unprivileged process make a user namespace, so Chromium's sandbox could not start. This
-      # lets it on the job's machine, which goes when the job ends, and keeps the sandbox on.
-      - name: Let Chromium's sandbox start
+      # The Chromium tests use the Chromium or Chrome on the runner's PATH. On GitHub's Ubuntu 24.04
+      # no unprivileged process may make a user namespace, so Chromium's sandbox could not start: this
+      # allows it on the job's machine, which goes when the job ends, and keeps the sandbox on. The
+      # self-hosted runners are Docker containers with no Chromium, none of its libraries and no user
+      # namespaces at all, so there the job installs Playwright's Chromium with its libraries (apt, with
+      # the runners' passwordless sudo) and runs it without its sandbox
+      # (DYNO_CHROMIUM_SANDBOX=off): the tests load only this repo's fixtures.
+      - name: Get a Chromium the tests can start
         run: |
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          if [[ "$RUNNER_ENVIRONMENT" == github-hosted ]]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          else
+            # archive.ubuntu.com answers slowly or not at all from their network, and Australia's mirror at once.
+            sudo sed -i -E 's#http://(archive|security)\.ubuntu\.com#http://au.archive.ubuntu.com#g' /etc/apt/sources.list.d/*.sources /etc/apt/sources.list 2>/dev/null || true
+            npx --yes playwright-core@1.64.1 install --with-deps chromium
+            chromium="$(find "$HOME/.cache/ms-playwright" -path '*/chrome-linux*/chrome' -type f | head -n 1)"
+            echo "DYNO_CHROMIUM=$chromium" >>"$GITHUB_ENV"
+            echo "DYNO_CHROMIUM_SANDBOX=off" >>"$GITHUB_ENV"
+            echo "Playwright's Chromium: $("$chromium" --version)"
+          fi
           for browser in chromium chromium-browser google-chrome google-chrome-stable; do
             if command -v "$browser" >/dev/null; then echo "$browser: $("$browser" --version)"; fi
           done

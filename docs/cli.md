@@ -15,6 +15,8 @@ The check summary gives the status and why, the decoded memory and the build siz
 - A build gives the static scan: what dyno can tell from the files alone.
 - A launch URL adds a browser run: dyno loads the game in a harness page and waits for idle. `--browser` adds the same run of the build itself.
 
+A browser run starts Chromium with its sandbox. A container with no user namespaces has none to give it, so Chromium exits, and the error quotes Chromium's last lines. Set `DYNO_CHROMIUM_SANDBOX=off` to run Chromium without its sandbox there, only for games you trust, such as your own in your own CI.
+
 | Flag                                | Phase | What it does                                                                                                                                                                                                                                                            |
 | ----------------------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--budget <FILE>`                   | 1     | The budget file. TOML, or JSON when the name ends in `.json`. See [`examples/budget.toml`](../examples/budget.toml).                                                                                                                                                    |

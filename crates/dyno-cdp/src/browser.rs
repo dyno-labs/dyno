@@ -20,6 +20,14 @@ use crate::CdpError;
 /// The environment variable that names the Chromium binary to run.
 pub const CHROMIUM_ENV: &str = "DYNO_CHROMIUM";
 
+/// The environment variable that turns Chromium's sandbox off when it is `off`. The sandbox stays
+/// on otherwise, because a run loads code that dyno did not write. A container with no user
+/// namespaces, as Docker's default seccomp profile gives, has no sandbox for Chromium to start.
+pub const SANDBOX_ENV: &str = "DYNO_CHROMIUM_SANDBOX";
+
+/// How many of Chromium's last stderr lines an early exit quotes.
+const STDERR_TAIL: usize = 5;
+
 /// Where Chromium is found when `DYNO_CHROMIUM` is not set: names on the PATH, then the macOS
 /// apps.
 const CANDIDATES: &[&str] = &[
@@ -102,6 +110,7 @@ impl Browser {
                 profile_folder.path().display()
             ))
             .args(SOFTWARE_GPU_FLAGS)
+            .args(sandbox_flags(env::var_os(SANDBOX_ENV).as_deref()))
             .args(profile_flags(profile))
             .arg("about:blank")
             .stdin(Stdio::null())
@@ -168,20 +177,46 @@ fn profile_flags(profile: &HostProfile) -> Vec<String> {
     flags
 }
 
+/// The flag that turns the sandbox off when `DYNO_CHROMIUM_SANDBOX` is `off`, and none otherwise.
+fn sandbox_flags(value: Option<&std::ffi::OsStr>) -> &'static [&'static str] {
+    if value.is_some_and(|value| value == "off") {
+        &["--no-sandbox"]
+    } else {
+        &[]
+    }
+}
+
 /// The DevTools WebSocket URL from Chromium's stderr. The rest of stderr is drained in the
-/// background, so Chromium never blocks on a full pipe.
+/// background, so Chromium never blocks on a full pipe. A Chromium that exits first is a launch
+/// error that quotes its last lines, which say why.
 async fn devtools_url(stderr: tokio::process::ChildStderr) -> Result<String, CdpError> {
     let mut lines = BufReader::new(stderr).lines();
+    let mut tail: Vec<String> = Vec::new();
     while let Ok(Some(line)) = lines.next_line().await {
         if let Some(url) = line.split_once(LISTENING).map(|(_, url)| url.trim()) {
             let url = url.to_owned();
             tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
             return Ok(url);
         }
+        if !line.trim().is_empty() {
+            if tail.len() == STDERR_TAIL {
+                tail.remove(0);
+            }
+            tail.push(line.trim().to_owned());
+        }
     }
-    Err(CdpError::Launch(
-        "Chromium exited before its DevTools endpoint was ready".to_owned(),
-    ))
+    let mut message = "Chromium exited before its DevTools endpoint was ready".to_owned();
+    if !tail.is_empty() {
+        message.push_str(": ");
+        message.push_str(&tail.join(" / "));
+    }
+    if tail.iter().any(|line| line.contains("No usable sandbox")) {
+        message.push_str(&format!(
+            ". Chromium found no sandbox here, as in a container with no user namespaces: set \
+             {SANDBOX_ENV}=off to run it without one"
+        ));
+    }
+    Err(CdpError::Launch(message))
 }
 
 /// The Chromium to run: `DYNO_CHROMIUM`, else the first candidate found.
@@ -248,11 +283,46 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn a_browser_that_exits_before_it_listens_is_a_launch_error() {
+    async fn a_browser_that_exits_before_it_listens_is_a_launch_error_that_quotes_it() {
         let error = devtools_url_of("echo 'cannot open display' >&2")
             .await
             .unwrap_err();
         assert!(matches!(error, CdpError::Launch(_)), "{error}");
+        assert!(error.to_string().contains("cannot open display"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_early_exit_quotes_only_the_last_lines() {
+        let error = devtools_url_of("for n in 1 2 3 4 5 6 7; do echo \"line $n\" >&2; done")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("line 3 / line 4 / line 5 / line 6 / line 7"),
+            "{error}"
+        );
+        assert!(!error.contains("line 2"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_browser_with_no_sandbox_names_the_setting_that_turns_it_off() {
+        let error = devtools_url_of(
+            "echo 'FATAL:zygote_host_impl_linux.cc No usable sandbox! You can try --no-sandbox' >&2",
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("DYNO_CHROMIUM_SANDBOX=off"), "{error}");
+    }
+
+    #[test]
+    fn the_sandbox_goes_only_when_the_setting_is_off() {
+        assert_eq!(sandbox_flags(None), &[] as &[&str]);
+        assert_eq!(sandbox_flags(Some("on".as_ref())), &[] as &[&str]);
+        assert_eq!(sandbox_flags(Some("".as_ref())), &[] as &[&str]);
+        assert_eq!(sandbox_flags(Some("off".as_ref())), &["--no-sandbox"]);
     }
 
     fn launches_with_webgpu(webgpu: bool) -> bool {

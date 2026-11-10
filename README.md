@@ -29,7 +29,7 @@ DYNO_UPDATE_GENERATED=1 INSTA_UPDATE=always cargo test --workspace
 
 `DYNO_UPDATE_GENERATED=1` rewrites the JSON Schema in `packages/schema/json/`, the TypeScript types in `packages/schema/ts/` and the golden result hashes in `fixtures/golden-hashes.json`. `INSTA_UPDATE=always` rewrites the saved command output (the snapshots) in `crates/*/tests/snapshots/`.
 
-A browser run needs Chromium. dyno looks for `chromium`, `chromium-browser`, `google-chrome` and `google-chrome-stable` on the PATH, then Google Chrome and Chromium in `/Applications`. Set `DYNO_CHROMIUM` to the binary to use another. The tests that start Chromium, and the one that needs Node 22.18 or later to check the probe, are ignored by default:
+A browser run needs Chromium. dyno looks for `chromium`, `chromium-browser`, `google-chrome` and `google-chrome-stable` on the PATH, then Google Chrome and Chromium in `/Applications`. Set `DYNO_CHROMIUM` to the binary to use another. Chromium runs with its sandbox, because a run loads code that dyno did not write. In a container with no user namespaces, such as a self-hosted CI runner in Docker with the default seccomp profile, Chromium finds no sandbox and exits; set `DYNO_CHROMIUM_SANDBOX=off` there to run it without one. The tests that start Chromium, and the one that needs Node 22.18 or later to check the probe, are ignored by default:
 
 ```sh
 cargo test -p dyno-cdp -- --ignored

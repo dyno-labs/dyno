@@ -27,6 +27,11 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # Where rustup and cargo keep their files: on GitHub's runners, where they always do. The self-hosted
+  # runners' image points RUSTUP_HOME, and ~/.rustup by a link, at a root-owned /opt/rust, where mise cannot
+  # install the pinned toolchain, so there rustup gets a folder of its own in the runner's home.
+  RUSTUP_HOME: ${{ vars.LINUX_RUNNER && '/home/runner/.local/rustup' || '/home/runner/.rustup' }}
+  CARGO_HOME: /home/runner/.cargo
   CARGO_INCREMENTAL: "0"
   CARGO_TERM_COLOR: always
   MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}

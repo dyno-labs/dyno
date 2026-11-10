@@ -26,6 +26,12 @@ name = "prepare-release"
 [[workflows.steps]]
 type = "PrepareRelease"
 
+# knope writes package.json with no newline at its end, which oxfmt --check refuses. CHANGELOG.md
+# is not formatted (.oxfmtrc.json leaves it out).
+[[workflows.steps]]
+type = "Command"
+command = "oxfmt Cargo.toml packages/schema/package.json"
+
 # The version is in every result hash, so the saved output changes with it: the snapshots, the
 # golden hashes and Cargo.lock.
 [[workflows.steps]]

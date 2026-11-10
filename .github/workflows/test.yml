@@ -125,11 +125,11 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       # The Chromium tests use the Chromium or Chrome on the runner's PATH. On GitHub's Ubuntu 24.04
       # no unprivileged process may make a user namespace, so Chromium's sandbox could not start: this
-      # allows it on the job's machine, which goes when the job ends, and keeps the sandbox on. The
-      # self-hosted runners are Docker containers with no Chromium, none of its libraries and no user
-      # namespaces at all, so there the job installs Playwright's Chromium with its libraries (apt, with
-      # the runners' passwordless sudo) and runs it without its sandbox
-      # (DYNO_CHROMIUM_SANDBOX=off): the tests load only this repo's fixtures.
+      # allows it on the job's machine, which goes when the job ends, and keeps the sandbox on. Any other
+      # runner (Blacksmith's machines, or the self-hosted ones in ci-runners, which are Docker containers
+      # with no Chromium, none of its libraries and no user namespaces) installs Playwright's Chromium
+      # with its libraries (apt, with sudo) and runs it without its sandbox (DYNO_CHROMIUM_SANDBOX=off):
+      # the tests load only this repo's fixtures.
       - name: Get a Chromium the tests can start
         run: |
           if [[ "$RUNNER_ENVIRONMENT" == github-hosted ]]; then

@@ -83,6 +83,13 @@ and makes the GitHub Release. cargo-dist reads the release's title and notes fro
 `CHANGELOG.md` with the tag's version. A version with a pre-release part, such as `0.2.0-rc.1`, is
 marked as a pre-release. On a pull request, `release.yml` only checks the plan.
 
+One line of `release.yml` is not as cargo-dist writes it: `gh release create` has `--verify-tag`
+where cargo-dist puts `--target "$RELEASE_COMMIT"`. The tag is there already, because its push
+starts the run. When the call names a commit, and `main` has changed a workflow file since that
+commit, GitHub asks for the `workflows` permission, which a workflow's own token never has, and
+answers 403 "Resource not accessible by integration". That stopped the release of v0.1.2: a
+merge to `main` changed a workflow while the archives were building.
+
 To see the notes a release would carry, without releasing:
 
 ```sh
@@ -146,8 +153,10 @@ dist plan        # or: mise run build:dist-plan
 dist build --artifacts=local --target x86_64-unknown-linux-gnu
 ```
 
-After a change to `dist-workspace.toml`, run `dist generate` and commit the new workflow. Never
-edit `release.yml` by hand. The tools are cargo-deny 0.20.2, cargo-about 0.9.3, cargo-dist 0.34.0
+After a change to `dist-workspace.toml`, or with a new cargo-dist, run `mise run release:generate`
+and commit the new workflow. It runs `dist generate` and makes the one change above, which is why
+`dist-workspace.toml` has `allow-dirty = ["ci"]`: cargo-dist then does not refuse a workflow that
+differs from its own. Never edit `release.yml` by hand. The tools are cargo-deny 0.20.2, cargo-about 0.9.3, cargo-dist 0.34.0
 and knope 0.23.2. `mise install` installs them at these versions (`mise.toml`).
 
 ## The npm types

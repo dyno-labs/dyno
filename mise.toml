@@ -203,6 +203,27 @@ run = "knope prepare-release"
 description = "Show what the next release pull request would hold, and change nothing"
 run = "knope prepare-release --dry-run"
 
+[tasks."release:generate"]
+description = "Write release.yml again from dist-workspace.toml (dist generate), with the one change that is not dist's"
+shell = "bash -c"
+# dist writes the workflow only while allow-dirty does not name it. Then `gh release create` gets
+# --verify-tag in place of --target "$RELEASE_COMMIT" (docs/releasing.md, "The tag and the GitHub
+# Release").
+run = '''
+set -euo pipefail
+# sed -i with a backup suffix, which GNU sed and macOS sed both take.
+change() { sed -i.bak "$1" "$2" && rm -f "$2.bak"; }
+allow() { change "s/^allow-dirty = .*/allow-dirty = $1/" dist-workspace.toml; }
+allow '[]'
+trap "allow '[\"ci\"]'" EXIT
+dist generate
+change 's/ --target "\$RELEASE_COMMIT" / --verify-tag /' .github/workflows/release.yml
+if ! grep -q 'gh release create .* --verify-tag ' .github/workflows/release.yml; then
+  echo "release.yml has no gh release create line with --verify-tag: dist changed that step" >&2
+  exit 1
+fi
+'''
+
 [tasks."build:dist-plan"]
 description = "The release plan (cargo-dist), as release.yml checks it on a pull request"
 run = "dist plan"

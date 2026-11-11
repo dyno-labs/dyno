@@ -27,6 +27,7 @@ use crate::path::RelPath;
 use crate::profile::{ProfileRef, Scenario};
 use crate::rule::Finding;
 use crate::status::{RunCoverage, Status};
+use crate::timeline::Timeline;
 
 /// The output of `dyno check` for one target.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -152,6 +153,11 @@ pub struct RunInfo {
     /// finding's canonical JSON.
     pub findings: Vec<Finding>,
     pub tier: TierReport,
+    /// The memory of each browser process through the browser run, with the run's steps. Null
+    /// when the driver read none, such as on a machine without a sampler.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub timeline: Option<Timeline>,
 }
 
 /// The machine dyno ran on. No host name or user name.
@@ -334,6 +340,9 @@ impl RunInfo {
     pub fn sort_lists(&mut self) {
         sort_measures(&mut self.measures);
         sort_findings(&mut self.findings);
+        if let Some(timeline) = &mut self.timeline {
+            timeline.sort_lists();
+        }
     }
 }
 

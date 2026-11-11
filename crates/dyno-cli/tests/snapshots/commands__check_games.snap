@@ -705,6 +705,7 @@ expression: json(&outcome)
             "status": "unsupported",
             "tier": null
           },
+          "timeline": null,
           "tool_build": "[tool_build]"
         },
         "schema_version": 0
@@ -1785,6 +1786,7 @@ expression: json(&outcome)
             "status": "missing",
             "tier": null
           },
+          "timeline": null,
           "tool_build": "[tool_build]"
         },
         "schema_version": 0

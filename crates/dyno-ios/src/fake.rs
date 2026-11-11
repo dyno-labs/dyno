@@ -11,8 +11,9 @@
 //! - `launched=<file>`: where a launch writes the URL that Safari opens.
 //!
 //! The phone is an iPhone 14 Pro Max (`iPhone15,3`) on iOS 26.6.2 (23G90) with 6 GiB of memory,
-//! with the UDID [`FAKE_UDID`]. Its page process is pid 412. It sends a sample and a log line
-//! every 100 ms.
+//! with the UDID [`FAKE_UDID`]. Its page process is pid 412; Safari's GPU process (pid 90, 40 MiB)
+//! and the app (pid 88, 60 MiB) are in each sample too. It sends a sample and a log line every
+//! 100 ms.
 
 use std::fs;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -34,6 +35,11 @@ pub const FAKE_PHONE_VARIABLE: &str = "DYNO_FAKE_PHONE";
 pub const FAKE_UDID: &str = "00008120-000000000000001E";
 
 const PAGE_PID: u32 = 412;
+/// Safari's other processes in each sample: (pid, name, footprint).
+const OTHER_PROCESSES: [(u32, &str, u64); 2] = [
+    (90, "com.apple.WebKit.GPU", 40 * 1_048_576),
+    (88, "MobileSafari", 60 * 1_048_576),
+];
 const FOOTPRINT: u64 = 200 * 1_048_576;
 /// 6 GiB, in pages.
 const MEMORY_PAGES: u64 = 393_216;
@@ -177,8 +183,15 @@ impl SampleFeed for Samples {
             name: WEB_CONTENT.to_owned(),
             footprint_bytes: self.footprint,
         };
+        let others = OTHER_PROCESSES
+            .iter()
+            .map(|&(pid, name, footprint_bytes)| ProcessRow {
+                pid,
+                name: name.to_owned(),
+                footprint_bytes,
+            });
         Ok(Some(Reading {
-            processes: Some(alive.then_some(page).into_iter().collect()),
+            processes: Some(alive.then_some(page).into_iter().chain(others).collect()),
             memory_bytes: Some(MEMORY_PAGES * PAGE_BYTES),
         }))
     }

@@ -26,6 +26,8 @@ node = "26.13.0"
 # The shell scripts' linter and formatter. actionlint also runs shellcheck on each `run:` script.
 shellcheck = "0.11.0"
 shfmt = "3.14.1"
+# The Python scripts' linter and formatter (examples/webkit/open.py), with their defaults.
+ruff = "0.17.2"
 # The workflows' linter, and their security check (.github/zizmor.yml).
 actionlint = "1.7.12"
 zizmor = "1.32.0"
@@ -92,6 +94,13 @@ run = "git ls-files -z '*.sh' ':!:crates/*/tests/data/**' | xargs -0 shellcheck"
 [tasks."health:shell-format"]
 description = "Shell script formatting (shfmt)"
 run = "git ls-files -z '*.sh' ':!:crates/*/tests/data/**' | xargs -0 shfmt --diff"
+
+[tasks."health:python"]
+description = "Python lint and formatting (ruff)"
+run = [
+  "git ls-files -z '*.py' | xargs -0 ruff check",
+  "git ls-files -z '*.py' | xargs -0 ruff format --check",
+]
 
 [tasks."ts:install"]
 description = "Install TypeScript and the types it checks against (npm ci), when package-lock.json changed"

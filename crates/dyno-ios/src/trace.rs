@@ -1,7 +1,7 @@
 //! An Activity Monitor trace, read from what `xcrun xctrace export` gives: the table of contents,
 //! for when the recording started and on which device, and the `activity-monitor-process-live`
 //! table, for each process's physical footprint over time. [`device_measures`] turns a trace and
-//! a run's times into the device measures.
+//! a run's times into the device measures, and [`trace_timeline`] into a run's timeline.
 //!
 //! `--device` no longer records with xctrace: it reads the phone itself ([`crate::recorder`]).
 //! This reader stays for traces that other hosts record, such as a device cloud's phone, where
@@ -19,11 +19,13 @@ use dyno_schema::ids::MeasureId;
 use dyno_schema::measure::{
     Evidence, Measure, MeasureItem, MeasureStatus, MeasureValue, Method, Uncertainty,
 };
+use dyno_schema::timeline::{Timeline, TimelineMethod};
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::{Reader, XmlVersion};
 
 use crate::{
-    PEAK_ITEM, RunWindow, SLACK_MS, WEB_CONTENT, missing_device_measures, required, saturating,
+    Footprint, KernelEvent, PEAK_ITEM, RunWindow, SLACK_MS, WEB_CONTENT, missing_device_measures,
+    required, saturating,
 };
 
 /// The table that holds each process's footprint over time.
@@ -404,6 +406,28 @@ pub fn device_measures(trace: &Trace, run: &RunWindow) -> Vec<Measure> {
     vec![footprint, footprint_peak, kills]
 }
 
+/// About how often the Activity Monitor template samples each process.
+pub const XCTRACE_EVERY_MS: u32 = 1_000;
+
+/// The timeline of Safari's processes during the run, from a trace, as
+/// [`crate::device_timeline`] gives it from a recording. A trace has no kernel log, so the marks
+/// are the run's steps only.
+pub fn trace_timeline(trace: &Trace, run: &RunWindow) -> Option<Timeline> {
+    let footprints = trace.samples.iter().map(|sample| Footprint {
+        epoch_ms: trace.started_epoch_ms + sample.ms,
+        pid: sample.pid,
+        process: &sample.process,
+        bytes: sample.footprint_bytes,
+    });
+    crate::safari_timeline(
+        footprints,
+        std::iter::empty::<KernelEvent>(),
+        run,
+        TimelineMethod::Xctrace,
+        XCTRACE_EVERY_MS,
+    )
+}
+
 /// The OS and the device that a trace recorded: the model, its OS version and its memory, never
 /// the device's own name. Both are None when the trace does not name the model.
 pub fn trace_environment(
@@ -425,6 +449,8 @@ pub fn trace_environment(
 #[cfg(test)]
 pub(crate) mod tests {
     use dyno_schema::environment::OsName;
+    use dyno_schema::runner::RunMark;
+    use dyno_schema::timeline::ProcessRole;
 
     use super::*;
 
@@ -589,13 +615,45 @@ pub(crate) mod tests {
         }
     }
 
-    /// The game loads from 1 s, goes idle at 10.4 s, and the run ends at 13 s.
+    /// The game loads from 1 s, goes idle at 10.4 s, and the run ends at 13 s. The trace's tests
+    /// have no activation.
     fn run() -> RunWindow {
         RunWindow {
             navigated_epoch_ms: START + 1_000.0,
             idle_epoch_ms: Some(START + 10_400.0),
+            activated_epoch_ms: None,
             ended_epoch_ms: START + 13_000.0,
         }
+    }
+
+    #[test]
+    fn a_trace_gives_the_same_timeline_with_the_runs_steps_only() {
+        let samples = [
+            (1_000, GAME, 80),
+            (1_000, "com.apple.WebKit.GPU (90)", 20),
+            (1_000, "MobileSafari (88)", 30),
+            (5_000, GAME, 400),
+            (5_000, OTHER_TAB, 50),
+        ];
+        let timeline = trace_timeline(&trace(&samples), &run()).unwrap();
+        assert_eq!(timeline.method, TimelineMethod::Xctrace);
+        assert_eq!(timeline.every_ms, XCTRACE_EVERY_MS);
+        let marks: Vec<RunMark> = timeline.marks.iter().map(|mark| mark.mark).collect();
+        assert_eq!(marks, [RunMark::Navigated, RunMark::Idle]);
+        let roles: Vec<(u32, ProcessRole)> = timeline
+            .processes
+            .iter()
+            .map(|process| (process.pid, process.role))
+            .collect();
+        assert_eq!(
+            roles,
+            [
+                (88, ProcessRole::Browser),
+                (90, ProcessRole::Gpu),
+                (377, ProcessRole::Other),
+                (412, ProcessRole::Game),
+            ]
+        );
     }
 
     fn value(measure: &Measure) -> Option<i64> {

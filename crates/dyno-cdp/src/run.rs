@@ -4,16 +4,23 @@
 //! The order: launch, attach to the page, navigate to the harness, and on the game frame's
 //! attach, set it up before its first script (the probe, its binding, its network). The frame is
 //! idle when it has no request in flight and none started for `idle_after_ms`. Then the run
-//! reads the heap and the self-checks, makes the game active, watches it for a short while, and
-//! ends with `done`. Any failure after `hello` ends the run with `error`.
+//! reads the heap and the self-checks, finds which processes run the game frame and the page,
+//! makes the game active, watches it for a short while, purges the garbage and the caches, and
+//! ends with `done`. Any failure after `hello` ends the run with `error`. From the launch to the end, a sampler reads the memory of
+//! every browser process (`dyno_run::memory`); its readings go in as `memory` messages, with a
+//! `roles` message, just before the last one.
 
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use dyno_run::memory::{self, Reading, Sampler};
 use dyno_schema::probe::{MessageDirection, ProbeEvent};
 use dyno_schema::profile::HostProfile;
 use dyno_schema::result::DriverInfo;
-use dyno_schema::runner::{DriverMessage, RUNNER_PROTOCOL_VERSION, RunMark, RunRequest};
+use dyno_schema::runner::{
+    AssignedRole, DriverMessage, RUNNER_PROTOCOL_VERSION, RunMark, RunRequest,
+};
+use dyno_schema::timeline::ProcessRole;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
@@ -33,6 +40,16 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// How long the run watches the game after it makes it active.
 const ACTIVE_WATCH: Duration = Duration::from_secs(2);
+
+/// How long the run watches after the purge, so the sampler reads the memory left: 6 samples.
+const PURGE_WATCH: Duration = Duration::from_millis(1_500);
+
+/// The trace category whose `TracingStartedInBrowser` event lists each frame of the page with its
+/// process id.
+const FRAMES_CATEGORY: &str = "disabled-by-default-devtools.timeline";
+
+/// How long the trace that finds the frames' processes may take. It takes about 50 ms.
+const FRAMES_TRACE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The name of the isolated world the self-checks run in, apart from the game's wrapped
 /// prototypes.
@@ -80,6 +97,13 @@ struct GameFrame {
     target_id: String,
 }
 
+/// The processes that run the game frame and the harness page, as the trace at idle names them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct FrameProcesses {
+    game: Option<u32>,
+    page: Option<u32>,
+}
+
 /// Everything the run tracks while events arrive.
 struct Run {
     started: Instant,
@@ -102,6 +126,7 @@ struct Run {
     /// in a same-process frame inside it, which numbers its canvases and textures from 0 too, so
     /// its events are left out.
     game_contexts: HashSet<i64>,
+    frame_processes: FrameProcesses,
 }
 
 /// URL schemes whose bytes never cross the network.
@@ -113,7 +138,8 @@ pub async fn run(request: &RunRequest) -> Result<Vec<DriverMessage>, CdpError> {
     let launch_url = Url::parse(&request.launch_url).map_err(|_| CdpError::LaunchUrl)?;
     let harness = Harness::serve(&launch_url).await?;
     let browser = Browser::launch(&request.host_profile).await?;
-    let outcome = run_in(&browser, &harness, request).await;
+    let sampler = browser.pid().map(Sampler::start);
+    let outcome = run_in(&browser, &harness, request, sampler).await;
     browser.close().await;
     outcome
 }
@@ -122,6 +148,7 @@ async fn run_in(
     browser: &Browser,
     harness: &Harness,
     request: &RunRequest,
+    sampler: Option<Sampler>,
 ) -> Result<Vec<DriverMessage>, CdpError> {
     let (connection, mut events) = Connection::open(browser.web_socket_url(), CALL_TIMEOUT).await?;
     let browser_session = Session::browser(&connection);
@@ -151,6 +178,7 @@ async fn run_in(
         navigated_at_epoch_ms: 0.0,
         game_family: HashSet::new(),
         game_contexts: HashSet::new(),
+        frame_processes: FrameProcesses::default(),
     };
     let deadline = run.started + Duration::from_millis(u64::from(request.timeout_ms));
     // The deadline bounds every call too, not only the waits between events.
@@ -158,6 +186,9 @@ async fn run_in(
         tokio::time::timeout_at(deadline, run.drive(&mut events, harness, request, deadline))
             .await
             .unwrap_or(Err(CdpError::Timeout));
+    if let (Some(sampler), Some(browser_pid)) = (sampler, browser.pid()) {
+        run.add_memory(sampler.stop(), browser_pid);
+    }
     match outcome {
         Ok(()) => run.end(DriverMessage::Done { t_ms: 0.0 }),
         Err(error) => run.end(DriverMessage::Error {
@@ -281,6 +312,7 @@ impl Run {
             }
         }
         self.at_idle(deadline).await?;
+        self.find_frame_processes(events, deadline).await?;
         let active = &request.host_profile.active_message;
         self.page
             .call(
@@ -291,6 +323,29 @@ impl Run {
         self.mark(RunMark::Activated);
         // A deadline inside the watch ends the run as a timeout, not as a shorter watch.
         let watch_until = Instant::now() + ACTIVE_WATCH;
+        while let Ok(Some(event)) = tokio::time::timeout_at(watch_until, events.recv()).await {
+            self.on_event(event).await?;
+        }
+        self.purge(events).await
+    }
+
+    /// Sends a critical memory pressure signal to the game frame's renderer and the page's, and
+    /// forces a garbage collection in the game frame, then watches for a moment, so the timeline
+    /// shows the memory the game holds once garbage and caches go. It comes after the active
+    /// watch, so no lab measure sees it. A call that fails changes nothing.
+    async fn purge(&mut self, events: &mut mpsc::UnboundedReceiver<Event>) -> Result<(), CdpError> {
+        let critical = json!({ "level": "critical" });
+        let game = self.game.as_ref().map(|game| game.session.clone());
+        for session in game.iter().chain([&self.page]) {
+            let _ = session
+                .call("Memory.simulatePressureNotification", critical.clone())
+                .await;
+        }
+        if let Some(game) = &game {
+            let _ = game.call("HeapProfiler.collectGarbage", json!({})).await;
+        }
+        self.mark(RunMark::Purged);
+        let watch_until = Instant::now() + PURGE_WATCH;
         while let Ok(Some(event)) = tokio::time::timeout_at(watch_until, events.recv()).await {
             self.on_event(event).await?;
         }
@@ -524,6 +579,74 @@ impl Run {
         Ok(())
     }
 
+    /// Finds the processes of the game frame and of the harness page with a short trace on the
+    /// page's session. CDP gives no process ids otherwise. A trace that cannot start or end
+    /// leaves them unknown, and the run goes on; other events that arrive meanwhile are handled
+    /// as usual.
+    async fn find_frame_processes(
+        &mut self,
+        events: &mut mpsc::UnboundedReceiver<Event>,
+        deadline: Instant,
+    ) -> Result<(), CdpError> {
+        let Some(game_frame) = self.game.as_ref().map(|game| game.target_id.clone()) else {
+            return Ok(());
+        };
+        let config = json!({
+            "traceConfig": { "includedCategories": [FRAMES_CATEGORY] },
+            "transferMode": "ReportEvents",
+        });
+        if self.page.call("Tracing.start", config).await.is_err()
+            || self.page.call("Tracing.end", json!({})).await.is_err()
+        {
+            return Ok(());
+        }
+        let until = (Instant::now() + FRAMES_TRACE_TIMEOUT).min(deadline);
+        // A trace that does not complete in time leaves the processes unknown.
+        while let Ok(event) = tokio::time::timeout_at(until, events.recv()).await {
+            let event = event.ok_or_else(|| CdpError::Gone("the browser".to_owned()))?;
+            let on_page =
+                event.session_id.is_some() && event.session_id.as_deref() == self.page.id();
+            match event.method.as_str() {
+                "Tracing.dataCollected" if on_page => {
+                    if let Some(found) = frame_processes(&event.params["value"], &game_frame) {
+                        self.frame_processes = found;
+                    }
+                }
+                "Tracing.tracingComplete" if on_page => break,
+                _ => self.on_event(event).await?,
+            }
+        }
+        Ok(())
+    }
+
+    /// Adds the sampler's readings since the navigation as `memory` messages, and the roles of the
+    /// browser, the GPU process, the game frame's process and the page's.
+    fn add_memory(&mut self, readings: Vec<Reading>, browser_pid: u32) {
+        let mut roles = vec![AssignedRole {
+            pid: browser_pid,
+            role: ProcessRole::Browser,
+        }];
+        roles.extend(
+            memory::pids_of_kind(&readings, memory::GPU_KIND)
+                .into_iter()
+                .map(|pid| AssignedRole {
+                    pid,
+                    role: ProcessRole::Gpu,
+                }),
+        );
+        let FrameProcesses { game, page } = self.frame_processes;
+        // The game's role comes last, so it wins if the page and the game share a process.
+        for (pid, role) in [(page, ProcessRole::Page), (game, ProcessRole::Game)] {
+            if let Some(pid) = pid {
+                roles.push(AssignedRole { pid, role });
+            }
+        }
+        self.messages
+            .extend(memory::memory_messages(readings, self.started.into_std()));
+        let t_ms = self.t_ms();
+        self.messages.push(DriverMessage::Roles { roles, t_ms });
+    }
+
     /// Each message to the host as a probe event on the frame's clock, once that clock is known.
     fn send_host_messages(&mut self) {
         let Some(time_origin) = self.frame_time_origin else {
@@ -548,6 +671,28 @@ fn epoch_ms() -> f64 {
         .map_or(0.0, |since| since.as_secs_f64() * 1_000.0)
 }
 
+/// The processes of the game frame and of the page's main frame from a chunk of trace events:
+/// `TracingStartedInBrowser` lists each frame of the page with its `processId`, and the game
+/// frame's id is its target's id. None when the chunk does not hold that event.
+fn frame_processes(events: &Value, game_frame: &str) -> Option<FrameProcesses> {
+    let started = events
+        .as_array()?
+        .iter()
+        .find(|event| event["name"] == "TracingStartedInBrowser")?;
+    let frames = started["args"]["data"]["frames"].as_array()?;
+    let process_of = |is_it: &dyn Fn(&Value) -> bool| {
+        frames
+            .iter()
+            .find(|frame| is_it(frame))
+            .and_then(|frame| frame["processId"].as_u64())
+            .and_then(|pid| u32::try_from(pid).ok())
+    };
+    Some(FrameProcesses {
+        game: process_of(&|frame| frame["frame"] == game_frame),
+        page: process_of(&|frame| frame["isOutermostMainFrame"] == true),
+    })
+}
+
 fn request_id(params: &Value) -> String {
     params["requestId"].as_str().unwrap_or_default().to_owned()
 }
@@ -555,6 +700,35 @@ fn request_id(params: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_trace_names_the_game_frames_process_and_the_pages() {
+        let events = json!([
+            { "name": "thread_name", "args": {} },
+            {
+                "name": "TracingStartedInBrowser",
+                "args": { "data": { "frames": [
+                    { "frame": "PAGE", "isOutermostMainFrame": true, "processId": 11 },
+                    { "frame": "GAME", "isOutermostMainFrame": false, "parent": "PAGE", "processId": 22 },
+                ] } },
+            },
+        ]);
+        assert_eq!(
+            frame_processes(&events, "GAME"),
+            Some(FrameProcesses {
+                game: Some(22),
+                page: Some(11)
+            })
+        );
+        assert_eq!(
+            frame_processes(&events, "OTHER"),
+            Some(FrameProcesses {
+                game: None,
+                page: Some(11)
+            })
+        );
+        assert_eq!(frame_processes(&json!([{ "name": "x" }]), "GAME"), None);
+    }
 
     #[test]
     fn the_browser_is_named_by_its_version() {

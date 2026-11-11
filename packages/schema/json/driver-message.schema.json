@@ -165,6 +165,67 @@
       ]
     },
     {
+      "description": "The memory of every browser process at one moment, read from the OS. A driver that cannot\nread it sends none.",
+      "type": "object",
+      "properties": {
+        "every_ms": {
+          "description": "The time between samples that the driver asked for.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "method": {
+          "$ref": "#/$defs/TimelineMethod"
+        },
+        "processes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProcessMemory"
+          }
+        },
+        "t_ms": {
+          "type": "number",
+          "format": "double"
+        },
+        "type": {
+          "type": "string",
+          "const": "memory"
+        }
+      },
+      "required": [
+        "type",
+        "method",
+        "every_ms",
+        "processes",
+        "t_ms"
+      ]
+    },
+    {
+      "description": "The part that each named process plays in the run, as far as the driver knows. A later\n`roles` message overrides an earlier one for the same process. A process that no message\nnames is `other`.",
+      "type": "object",
+      "properties": {
+        "roles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AssignedRole"
+          }
+        },
+        "t_ms": {
+          "type": "number",
+          "format": "double"
+        },
+        "type": {
+          "type": "string",
+          "const": "roles"
+        }
+      },
+      "required": [
+        "type",
+        "roles",
+        "t_ms"
+      ]
+    },
+    {
       "description": "The last line of a run that finished.",
       "type": "object",
       "properties": {
@@ -206,6 +267,24 @@
     }
   ],
   "$defs": {
+    "AssignedRole": {
+      "description": "One process's part in a `roles` message.",
+      "type": "object",
+      "properties": {
+        "pid": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "role": {
+          "$ref": "#/$defs/ProcessRole"
+        }
+      },
+      "required": [
+        "pid",
+        "role"
+      ]
+    },
     "AudioState": {
       "description": "An audio context's state.",
       "type": "string",
@@ -675,8 +754,82 @@
         }
       ]
     },
+    "ProcessMemory": {
+      "description": "One process's memory in a `memory` message.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "description": "What the browser calls the process, such as \"renderer\" or \"gpu-process\".",
+          "type": "string"
+        },
+        "pid": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "private_bytes": {
+          "description": "The memory that only this process holds (see `TimelineMethod`).",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "resident_bytes": {
+          "description": "Resident memory, shared pages included. Null when not read.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "shared_bytes": {
+          "description": "Resident shared memory. Null when not read.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "pid",
+        "kind",
+        "private_bytes"
+      ]
+    },
+    "ProcessRole": {
+      "description": "The part a process plays in the run, as far as the driver can tell.",
+      "oneOf": [
+        {
+          "description": "It runs the game frame.",
+          "type": "string",
+          "const": "game"
+        },
+        {
+          "description": "It runs the harness page.",
+          "type": "string",
+          "const": "page"
+        },
+        {
+          "description": "The GPU process.",
+          "type": "string",
+          "const": "gpu"
+        },
+        {
+          "description": "The browser's main process.",
+          "type": "string",
+          "const": "browser"
+        },
+        {
+          "description": "Any other process, such as a spare renderer or the network service.",
+          "type": "string",
+          "const": "other"
+        }
+      ]
+    },
     "RunMark": {
-      "description": "The steps of a run.",
+      "description": "The steps of a run. They sort in the order they are declared.",
       "oneOf": [
         {
           "description": "The harness page started loading the game frame.",
@@ -702,6 +855,21 @@
           "description": "The game frame committed a new document, as a script redirect does. Probe events after\nit are on the new document's clock.",
           "type": "string",
           "const": "frame_document"
+        },
+        {
+          "description": "The driver forced a garbage collection and sent a critical memory pressure signal, after\nthe active watch. The memory after it is what the game holds once garbage and caches go.",
+          "type": "string",
+          "const": "purged"
+        },
+        {
+          "description": "The phone's kernel killed the game's process: jetsam did, or it went over a fatal memory\nlimit.",
+          "type": "string",
+          "const": "killed"
+        },
+        {
+          "description": "The game's process went over a memory limit that does not kill it, such as iOS's soft\nlimit.",
+          "type": "string",
+          "const": "over_memory_limit"
         }
       ]
     },
@@ -717,6 +885,26 @@
           "description": "A canvas the game drew, such as text.",
           "type": "string",
           "const": "canvas"
+        }
+      ]
+    },
+    "TimelineMethod": {
+      "description": "How a timeline's samples were read.",
+      "oneOf": [
+        {
+          "description": "Linux's `/proc/<pid>/status`: `private_bytes` is `RssAnon` plus `VmSwap`, the private\nmemory footprint that Chromium reports on Linux.",
+          "type": "string",
+          "const": "proc"
+        },
+        {
+          "description": "An Activity Monitor trace that xctrace exported, such as a device cloud's: `private_bytes`\nis the physical footprint that jetsam reads.",
+          "type": "string",
+          "const": "xctrace"
+        },
+        {
+          "description": "The iPhone's sysmontap service, which `--device` reads: `private_bytes` is the physical\nfootprint that jetsam reads.",
+          "type": "string",
+          "const": "sysmontap"
         }
       ]
     }

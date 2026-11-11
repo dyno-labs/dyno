@@ -152,6 +152,16 @@ pub struct CheckArgs {
     #[arg(long, value_name = "QUERY")]
     pub serve_query: Option<String>,
 
+    /// [phase 1] With --driver serve, start this program with the harness page's URL as its only
+    /// argument, read the memory of its processes through the run (Linux), and stop it when the
+    /// run ends. A script can set the browser up first, such as examples/webkit/open.sh
+    #[arg(
+        long,
+        value_name = "PROGRAM",
+        conflicts_with_all = ["device", "device_id", "device_ip"]
+    )]
+    pub open_with: Option<PathBuf>,
+
     /// [phase 2] The harness scenario of the browser run. Any scenario but `alone` needs a
     /// launch URL
     #[arg(long, value_enum, default_value_t = ScenarioArg::Alone)]

@@ -9,6 +9,7 @@ use std::thread;
 use dyno_schema::probe::{AudioState, ContextKind, MessageDirection, ProbeEvent, SourceKind};
 use dyno_schema::profile::{HostProfile, Scenario};
 use dyno_schema::runner::{DriverMessage, RUNNER_PROTOCOL_VERSION, RunMark, RunRequest};
+use dyno_schema::timeline::ProcessRole;
 
 const PAGE: &str = r#"<!doctype html>
 <canvas id="c" width="402" height="874"></canvas>
@@ -242,7 +243,8 @@ fn a_run_sees_the_frame_from_its_first_script_to_its_activation() {
             RunMark::Navigated,
             RunMark::FrameDocument,
             RunMark::Idle,
-            RunMark::Activated
+            RunMark::Activated,
+            RunMark::Purged
         ]
     );
 
@@ -469,6 +471,31 @@ fn a_run_sees_the_frame_from_its_first_script_to_its_activation() {
     assert!(messages.iter().any(
         |message| matches!(message, DriverMessage::Heap { used_bytes, .. } if *used_bytes > 0)
     ));
+
+    // On Linux, the timeline has the game frame's own renderer, apart from the page's.
+    if cfg!(target_os = "linux") {
+        let timeline = dyno_run::timeline::read(&messages).expect("a timeline");
+        assert!(
+            timeline
+                .processes
+                .iter()
+                .all(|process| !process.samples.is_empty())
+        );
+        let role_of = |role: ProcessRole| {
+            timeline
+                .processes
+                .iter()
+                .find(|process| process.role == role)
+                .unwrap_or_else(|| panic!("no {role:?} process in {timeline:?}"))
+        };
+        let game = role_of(ProcessRole::Game);
+        let page = role_of(ProcessRole::Page);
+        assert_ne!(game.pid, page.pid);
+        assert_eq!(game.kind, "renderer");
+        assert!(game.samples.iter().all(|sample| sample.private_bytes > 0));
+        assert!(!role_of(ProcessRole::Browser).kind.is_empty());
+        assert_eq!(role_of(ProcessRole::Gpu).kind, "gpu-process");
+    }
 }
 
 #[test]

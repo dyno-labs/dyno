@@ -12,6 +12,7 @@ use ts_rs::TS;
 use crate::probe::ProbeEvent;
 use crate::profile::{HostProfile, Scenario};
 use crate::result::DriverInfo;
+use crate::timeline::{ProcessRole, TimelineMethod};
 
 /// What dyno asks a driver to run.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -68,14 +69,50 @@ pub enum DriverMessage {
     },
     /// A step in the run.
     Mark { mark: RunMark, t_ms: f64 },
+    /// The memory of every browser process at one moment, read from the OS. A driver that cannot
+    /// read it sends none.
+    Memory {
+        method: TimelineMethod,
+        /// The time between samples that the driver asked for.
+        every_ms: u32,
+        processes: Vec<ProcessMemory>,
+        t_ms: f64,
+    },
+    /// The part that each named process plays in the run, as far as the driver knows. A later
+    /// `roles` message overrides an earlier one for the same process. A process that no message
+    /// names is `other`.
+    Roles { roles: Vec<AssignedRole>, t_ms: f64 },
     /// The last line of a run that finished.
     Done { t_ms: f64 },
     /// The last line of a run that failed.
     Error { message: String, t_ms: f64 },
 }
 
-/// The steps of a run.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema, TS)]
+/// One process's memory in a `memory` message.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ProcessMemory {
+    pub pid: u32,
+    /// What the browser calls the process, such as "renderer" or "gpu-process".
+    pub kind: String,
+    /// The memory that only this process holds (see `TimelineMethod`).
+    pub private_bytes: u64,
+    /// Resident memory, shared pages included. Null when not read.
+    pub resident_bytes: Option<u64>,
+    /// Resident shared memory. Null when not read.
+    pub shared_bytes: Option<u64>,
+}
+
+/// One process's part in a `roles` message.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct AssignedRole {
+    pub pid: u32,
+    pub role: ProcessRole,
+}
+
+/// The steps of a run. They sort in the order they are declared.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema, TS,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum RunMark {
     /// The harness page started loading the game frame.
@@ -89,6 +126,15 @@ pub enum RunMark {
     /// The game frame committed a new document, as a script redirect does. Probe events after
     /// it are on the new document's clock.
     FrameDocument,
+    /// The driver forced a garbage collection and sent a critical memory pressure signal, after
+    /// the active watch. The memory after it is what the game holds once garbage and caches go.
+    Purged,
+    /// The phone's kernel killed the game's process: jetsam did, or it went over a fatal memory
+    /// limit.
+    Killed,
+    /// The game's process went over a memory limit that does not kill it, such as iOS's soft
+    /// limit.
+    OverMemoryLimit,
 }
 
 /// The runner protocol version. It bumps on any change a driver must handle.

@@ -76,6 +76,7 @@ fn a_browser_that_opens_the_harness_page_gives_a_full_run() {
         host: Some("127.0.0.1".to_owned()),
         port: 0,
         wait_for_browser: Duration::from_secs(30),
+        open_with: None,
     };
     let mut driver = ServeDriver::bind(build.path(), &options).unwrap();
     let harness = driver.harness_url().to_owned();
@@ -274,6 +275,7 @@ fn a_run_that_no_browser_opens_fails_with_a_reason() {
         host: Some("127.0.0.1".to_owned()),
         port: 0,
         wait_for_browser: Duration::from_millis(200),
+        open_with: None,
     };
     let mut driver = ServeDriver::bind(build.path(), &options).unwrap();
     let request = RunRequest {
@@ -301,6 +303,7 @@ fn a_run_that_never_goes_idle_ends_with_an_error_and_bad_requests_are_refused() 
         host: Some("127.0.0.1".to_owned()),
         port: 0,
         wait_for_browser: Duration::from_secs(30),
+        open_with: None,
     };
     let mut driver = ServeDriver::bind(build.path(), &options).unwrap();
     let harness = driver.harness_url().to_owned();
@@ -358,6 +361,7 @@ fn a_page_that_does_not_send_what_it_held_ends_the_run_with_an_error() {
         host: Some("127.0.0.1".to_owned()),
         port: 0,
         wait_for_browser: Duration::from_secs(30),
+        open_with: None,
     };
     let mut driver = ServeDriver::bind(build.path(), &options).unwrap();
     let harness = driver.harness_url().to_owned();
@@ -399,4 +403,64 @@ fn a_page_that_does_not_send_what_it_held_ends_the_run_with_an_error() {
         panic!("the run did not end with an error: {messages:?}");
     };
     assert_eq!(message, "the harness page did not send the events it held");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_browser_that_dyno_starts_gives_its_memory_before_the_last_message_and_is_stopped() {
+    use dyno_schema::timeline::ProcessRole;
+
+    let build = tempfile::tempdir().unwrap();
+    fs::write(build.path().join("index.html"), "<head>").unwrap();
+    // The program stands in for a browser: this test opens the page itself. Only this test in
+    // the file starts a program, so no other fork can hold the script open while it runs.
+    let program = build.path().join("browser.sh");
+    fs::write(&program, "#!/bin/sh\nexec sleep 30\n").unwrap();
+    let mut permissions = fs::metadata(&program).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+    fs::set_permissions(&program, permissions).unwrap();
+    let options = ServeOptions {
+        host: Some("127.0.0.1".to_owned()),
+        port: 0,
+        wait_for_browser: Duration::from_secs(30),
+        open_with: Some(program),
+    };
+    let mut driver = ServeDriver::bind(build.path(), &options).unwrap();
+    let harness = driver.harness_url().to_owned();
+    let request = RunRequest {
+        protocol_version: RUNNER_PROTOCOL_VERSION,
+        launch_url: driver.launch_url(None),
+        host_profile: HostProfile::reels(),
+        scenario: Scenario::Alone,
+        spins: None,
+        idle_after_ms: 300,
+        timeout_ms: 800,
+    };
+    let run = thread::spawn(move || driver.run(&request));
+
+    post(&harness, "/__dyno/hello", r#"{"user_agent":"curl/8.0"}"#);
+    // No document with the probe loads, so the run times out and ends with an error.
+    assert_eq!(next_command(&harness), r#"{"command":"done"}"#);
+
+    let messages = run.join().unwrap().unwrap();
+    assert!(
+        matches!(messages.last(), Some(DriverMessage::Error { .. })),
+        "{messages:?}"
+    );
+    let last = messages.len() - 1;
+    let memory = messages
+        .iter()
+        .position(|message| matches!(message, DriverMessage::Memory { .. }));
+    assert!(memory.is_some_and(|at| at < last), "{messages:?}");
+    let Some(DriverMessage::Roles { roles, .. }) = messages.get(last - 1) else {
+        panic!("no roles before the last message: {messages:?}");
+    };
+    let browser = roles
+        .iter()
+        .find(|role| role.role == ProcessRole::Browser)
+        .expect("the program is the browser")
+        .pid;
+    // The program's process group is gone once the run is over.
+    let group = rustix::process::Pid::from_raw(i32::try_from(browser).unwrap()).unwrap();
+    assert!(rustix::process::test_kill_process_group(group).is_err());
 }

@@ -97,6 +97,9 @@ tokio-tungstenite = { version = "0.30.0", default-features = false, features = [
 # the network. Both crates are already in the tree through tungstenite and url.
 httparse = "1.10.1"
 percent-encoding = "2.3.2"
+# `--open-with` stops the browser it started with its whole process group, with no unsafe code.
+# Already in the tree through tempfile; this adds its process feature.
+rustix = { version = "1.1.6", features = ["process"] }
 
 # `dyno mcp`, the MCP server: the official MCP Rust SDK. Only the server, its
 # tool macros and the stdio transport.

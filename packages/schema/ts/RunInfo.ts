@@ -8,6 +8,7 @@ import type { Measure } from "./Measure";
 import type { Release } from "./Release";
 import type { Target } from "./Target";
 import type { TierReport } from "./TierReport";
+import type { Timeline } from "./Timeline";
 import type { ToolBuild } from "./ToolBuild";
 
 /**
@@ -47,4 +48,9 @@ measures: Array<Measure>,
  * Lab rule findings, such as the host contract checks. Sorted by rule id, then by the
  * finding's canonical JSON.
  */
-findings: Array<Finding>, tier: TierReport, };
+findings: Array<Finding>, tier: TierReport, 
+/**
+ * The memory of each browser process through the browser run, with the run's steps. Null
+ * when the driver read none, such as on a machine without a sampler.
+ */
+timeline?: Timeline | null, };

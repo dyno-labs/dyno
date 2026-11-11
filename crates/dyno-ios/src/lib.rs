@@ -11,8 +11,12 @@
 //! during the run. With `--runs`, [`runs`] reads the runs of the game and of the empty build into
 //! one set of device measures.
 //!
+//! [`device_timeline`] keeps every sample of Safari's processes through the run for `run.timeline`,
+//! with the kernel's kills and memory limits as marks.
+//!
 //! [`trace`] reads an Activity Monitor trace that xctrace exported, and gives the same measures
-//! from it. `--device` does not use it: it is for traces that a device cloud's host records.
+//! and timeline from it. `--device` does not use it: it is for traces that a device cloud's host
+//! records.
 //!
 //! `doctor` is still a stub: it runs no command and touches no device.
 
@@ -34,7 +38,11 @@ use dyno_schema::ids::{MeasureId, Phase};
 use dyno_schema::measure::{
     Evidence, Measure, MeasureItem, MeasureStatus, MeasureValue, Method, NOT_BUILT_YET, Uncertainty,
 };
+use dyno_schema::runner::RunMark;
 use dyno_schema::status::{Status, Verdict};
+use dyno_schema::timeline::{
+    MemorySample, ProcessRole, Timeline, TimelineMark, TimelineMethod, TimelineProcess,
+};
 
 pub use crate::recorder::{Address, DeviceError, OpenedWith, Recorder};
 use crate::recording::Recording;
@@ -82,6 +90,15 @@ pub(crate) const PEAK_ITEM: &str = "peak during the run";
 /// The name of Safari's process that runs a page.
 pub const WEB_CONTENT: &str = "com.apple.WebKit.WebContent";
 
+/// Safari's own processes, which a recording and a timeline keep, with the role each plays when
+/// it is not the game's: its page processes, its GPU and network processes, and the app.
+pub const SAFARI_PROCESSES: &[(&str, ProcessRole)] = &[
+    (WEB_CONTENT, ProcessRole::Other),
+    ("com.apple.WebKit.GPU", ProcessRole::Gpu),
+    ("com.apple.WebKit.Networking", ProcessRole::Other),
+    ("MobileSafari", ProcessRole::Browser),
+];
+
 /// How far outside the run a sample may be and still count: a sample comes about once a second.
 pub(crate) const SLACK_MS: f64 = 1_500.0;
 
@@ -96,6 +113,8 @@ pub struct RunWindow {
     pub navigated_epoch_ms: f64,
     /// When the game frame went idle. None when it never did.
     pub idle_epoch_ms: Option<f64>,
+    /// When the harness made the game active. None when it never did.
+    pub activated_epoch_ms: Option<f64>,
     /// When the run ended.
     pub ended_epoch_ms: f64,
 }
@@ -114,7 +133,7 @@ pub fn device_measures(recording: &Recording, run: &RunWindow) -> Vec<Measure> {
     let pages: Vec<&recording::Sample> = recording
         .samples
         .iter()
-        .filter(|sample| in_run(sample.epoch_ms))
+        .filter(|sample| sample.process == WEB_CONTENT && in_run(sample.epoch_ms))
         .collect();
     // The game's process is the one with the largest sample, so that sample is its peak.
     let Some((game_pid, peak)) = pages
@@ -203,6 +222,150 @@ pub fn device_measures(recording: &Recording, run: &RunWindow) -> Vec<Measure> {
         footprint_peak,
         kills(recording, run, game_pid, &phone),
     ]
+}
+
+/// The timeline of Safari's processes during the run, from its recording: every sample of each
+/// of [`SAFARI_PROCESSES`] from the navigation to the end of the run, on the run's clock. The
+/// game's process is the WebContent process with the largest footprint, as in
+/// [`device_measures`]; a page and its game frame share it, since Safari keeps a cross-site frame
+/// in its page's process. The marks are the navigation, the idle and the activation, and the
+/// kernel's kill of the game's process or its going over a memory limit. None when the recording
+/// has no page process during the run.
+pub fn device_timeline(recording: &Recording, run: &RunWindow) -> Option<Timeline> {
+    let samples = recording.samples.iter().map(|sample| Footprint {
+        epoch_ms: sample.epoch_ms,
+        pid: sample.pid,
+        process: &sample.process,
+        bytes: sample.footprint_bytes,
+    });
+    let events = recording.memory_lines.iter().map(|logged| KernelEvent {
+        epoch_ms: logged.epoch_ms,
+        pid: logged.line.pid,
+        mark: if logged.line.is_kill() {
+            RunMark::Killed
+        } else {
+            RunMark::OverMemoryLimit
+        },
+    });
+    safari_timeline(
+        samples,
+        events,
+        run,
+        TimelineMethod::Sysmontap,
+        sysmon::INTERVAL_MS,
+    )
+}
+
+/// One process's footprint at one moment, from a recording or a trace.
+pub(crate) struct Footprint<'a> {
+    pub epoch_ms: f64,
+    pub pid: u32,
+    pub process: &'a str,
+    pub bytes: u64,
+}
+
+/// What the kernel did to a process, and when.
+pub(crate) struct KernelEvent {
+    pub epoch_ms: f64,
+    pub pid: u32,
+    pub mark: RunMark,
+}
+
+/// The timeline of Safari's processes from their footprints, for [`device_timeline`] and
+/// [`trace::trace_timeline`]. A footprint from before the navigation or after the run is left
+/// out. The kernel's events about the game's process during the run are marks.
+pub(crate) fn safari_timeline<'a>(
+    footprints: impl IntoIterator<Item = Footprint<'a>>,
+    events: impl IntoIterator<Item = KernelEvent>,
+    run: &RunWindow,
+    method: TimelineMethod,
+    every_ms: u32,
+) -> Option<Timeline> {
+    let run_ms = |epoch_ms: f64| (epoch_ms - run.navigated_epoch_ms).max(0.0).round() as u64;
+    // The harness drops the game when the run ends, so later samples and lines are not the run's.
+    let in_run =
+        |epoch_ms: f64| epoch_ms >= run.navigated_epoch_ms && epoch_ms <= run.ended_epoch_ms;
+    let mut processes: Vec<TimelineProcess> = Vec::new();
+    for footprint in footprints {
+        let Some(&(_, role)) = SAFARI_PROCESSES
+            .iter()
+            .find(|(name, _)| *name == footprint.process)
+        else {
+            continue;
+        };
+        if !in_run(footprint.epoch_ms) {
+            continue;
+        }
+        let index = match processes
+            .iter()
+            .position(|process| process.pid == footprint.pid)
+        {
+            Some(index) => index,
+            None => {
+                processes.push(TimelineProcess {
+                    pid: footprint.pid,
+                    role,
+                    kind: footprint.process.to_owned(),
+                    samples: Vec::new(),
+                });
+                processes.len() - 1
+            }
+        };
+        processes[index].samples.push(MemorySample {
+            t_ms: run_ms(footprint.epoch_ms),
+            private_bytes: footprint.bytes,
+            resident_bytes: None,
+            shared_bytes: None,
+        });
+    }
+    let game = processes
+        .iter()
+        .filter(|process| process.kind == WEB_CONTENT)
+        .max_by_key(|process| {
+            process
+                .samples
+                .iter()
+                .map(|sample| sample.private_bytes)
+                .max()
+        })
+        .map(|process| process.pid)?;
+    for process in &mut processes {
+        if process.pid == game {
+            process.role = ProcessRole::Game;
+        }
+    }
+    let mut marks = vec![TimelineMark {
+        mark: RunMark::Navigated,
+        t_ms: 0,
+    }];
+    for (mark, at) in [
+        (RunMark::Idle, run.idle_epoch_ms),
+        (RunMark::Activated, run.activated_epoch_ms),
+    ] {
+        if let Some(at) = at {
+            marks.push(TimelineMark {
+                mark,
+                t_ms: run_ms(at),
+            });
+        }
+    }
+    marks.extend(
+        events
+            .into_iter()
+            .filter(|event| event.pid == game && in_run(event.epoch_ms))
+            .map(|event| TimelineMark {
+                mark: event.mark,
+                t_ms: run_ms(event.epoch_ms),
+            }),
+    );
+    let mut timeline = Timeline {
+        method,
+        every_ms,
+        marks,
+        processes,
+    };
+    timeline.sort_lists();
+    Some(timeline)
 }
 
 /// `device.kills`: 1 when the kernel killed the game's process during the run, 0 when the log
@@ -366,6 +529,7 @@ mod tests {
                 .map(|&(ms, pid, footprint_bytes)| Sample {
                     epoch_ms: at(ms),
                     pid,
+                    process: WEB_CONTENT.to_owned(),
                     footprint_bytes,
                 })
                 .collect(),
@@ -381,12 +545,24 @@ mod tests {
         }
     }
 
-    /// The game loads from 1 s, goes idle at 10.4 s, and the run ends at 13 s.
+    /// The game loads from 1 s, goes idle at 10.4 s, is made active at 10.6 s, and the run ends
+    /// at 13 s.
     fn run() -> RunWindow {
         RunWindow {
             navigated_epoch_ms: START + 1_000.0,
             idle_epoch_ms: Some(START + 10_400.0),
+            activated_epoch_ms: Some(START + 10_600.0),
             ended_epoch_ms: START + 13_000.0,
+        }
+    }
+
+    /// A sample of one of Safari's other processes, at ms since START.
+    fn other_process(ms: u64, pid: u32, process: &str, bytes: u64) -> Sample {
+        Sample {
+            epoch_ms: START + ms as f64,
+            pid,
+            process: process.to_owned(),
+            footprint_bytes: bytes,
         }
     }
 
@@ -437,6 +613,100 @@ mod tests {
         assert_eq!(value(&kills), Some(0));
         assert!(kills.items.is_empty());
         assert_eq!(kills.evidence[0].method, Method::Syslog);
+    }
+
+    #[test]
+    fn the_game_is_a_page_process_even_when_another_of_safaris_processes_is_larger() {
+        let mut recording = recording(&[(5_000, GAME, 400), (11_000, GAME, 300)], &[]);
+        recording
+            .samples
+            .push(other_process(5_000, 90, "com.apple.WebKit.GPU", 900));
+        let [footprint, peak, _] = device_measures(&recording, &run()).try_into().unwrap();
+        assert_eq!(value(&footprint), Some(300));
+        assert_eq!(value(&peak), Some(400));
+    }
+
+    #[test]
+    fn the_timeline_keeps_safaris_processes_from_the_navigation_with_roles_and_marks() {
+        const SOFT_LIMIT: &str = "memorystatus: com.apple.WebKit.WebContent [412] exceeded mem \
+            limit: ActiveSoft 1536 MB (non-fatal)";
+        const OTHER_KILL: &str = "memorystatus: killing process 377 [com.apple.WebKit.WebContent] \
+            in high band FOREGROUND (100) - memorystatus_available_pages: 53907";
+        let mut recording = recording(
+            &[
+                (500, GAME, 10),
+                (1_000, GAME, 80),
+                (1_000, OTHER_TAB, 50),
+                (5_000, GAME, 400),
+                (30_000, GAME, 300),
+            ],
+            &[
+                (6_000, SOFT_LIMIT),
+                (8_000, OTHER_KILL),
+                (12_000, KILL),
+                (13_500, KILL),
+            ],
+        );
+        // The run ends at 13 s: a sample and a kill just after it are the harness dropping the
+        // game, not the run.
+        recording
+            .samples
+            .push(other_process(13_500, GAME, WEB_CONTENT, 5));
+        recording.samples.extend([
+            other_process(1_000, 90, "com.apple.WebKit.GPU", 20),
+            other_process(1_000, 88, "MobileSafari", 30),
+            other_process(1_000, 12, "SpringBoard", 99),
+        ]);
+        let timeline = device_timeline(&recording, &run()).unwrap();
+        assert_eq!(timeline.method, TimelineMethod::Sysmontap);
+        assert_eq!(timeline.every_ms, sysmon::INTERVAL_MS);
+        let marks: Vec<(RunMark, u64)> = timeline
+            .marks
+            .iter()
+            .map(|mark| (mark.mark, mark.t_ms))
+            .collect();
+        // The kill of another tab is not the game's.
+        assert_eq!(
+            marks,
+            [
+                (RunMark::Navigated, 0),
+                (RunMark::OverMemoryLimit, 5_000),
+                (RunMark::Idle, 9_400),
+                (RunMark::Activated, 9_600),
+                (RunMark::Killed, 11_000),
+            ]
+        );
+        let processes: Vec<(u32, ProcessRole, &str)> = timeline
+            .processes
+            .iter()
+            .map(|process| (process.pid, process.role, process.kind.as_str()))
+            .collect();
+        assert_eq!(
+            processes,
+            [
+                (88, ProcessRole::Browser, "MobileSafari"),
+                (90, ProcessRole::Gpu, "com.apple.WebKit.GPU"),
+                (OTHER_TAB, ProcessRole::Other, WEB_CONTENT),
+                (GAME, ProcessRole::Game, WEB_CONTENT),
+            ]
+        );
+        // The sample before the navigation and the one long after the run are left out.
+        let game: Vec<(u64, u64)> = timeline.processes[3]
+            .samples
+            .iter()
+            .map(|sample| (sample.t_ms, sample.private_bytes))
+            .collect();
+        assert_eq!(game, [(0, 80), (4_000, 400)]);
+        assert_eq!(timeline.processes[3].samples[0].resident_bytes, None);
+    }
+
+    #[test]
+    fn a_recording_with_no_page_process_in_the_run_has_no_timeline() {
+        let mut recording = recording(&[(30_000, GAME, 300)], &[]);
+        recording
+            .samples
+            .push(other_process(2_000, 88, "MobileSafari", 30));
+        assert_eq!(device_timeline(&recording, &run()), None);
     }
 
     #[test]

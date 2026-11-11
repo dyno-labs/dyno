@@ -154,6 +154,7 @@ struct Run {
     started_epoch_ms: f64,
     /// When the frame went idle.
     idle_at: Option<Instant>,
+    activated_at: Option<Instant>,
     messages: Vec<DriverMessage>,
     in_flight: u32,
     last_started: Instant,
@@ -214,6 +215,7 @@ pub(crate) async fn run(driver: &ServeDriver, request: &RunRequest) -> Result<Se
         started,
         started_epoch_ms,
         idle_at: None,
+        activated_at: None,
         messages: vec![DriverMessage::Hello {
             protocol_version: RUNNER_PROTOCOL_VERSION,
             driver: DriverInfo {
@@ -243,6 +245,9 @@ pub(crate) async fn run(driver: &ServeDriver, request: &RunRequest) -> Result<Se
         idle_epoch_ms: run
             .idle_at
             .map(|idle| run.started_epoch_ms + run.t_ms(idle)),
+        activated_epoch_ms: run
+            .activated_at
+            .map(|activated| run.started_epoch_ms + run.t_ms(activated)),
         ended_epoch_ms,
     };
     Ok(Served {
@@ -357,8 +362,10 @@ impl Run {
     }
 
     fn mark(&mut self, mark: RunMark, at: Instant) {
-        if mark == RunMark::Idle {
-            self.idle_at = Some(at);
+        match mark {
+            RunMark::Idle => self.idle_at = Some(at),
+            RunMark::Activated => self.activated_at = Some(at),
+            _ => {}
         }
         let t_ms = self.t_ms(at);
         self.messages.push(DriverMessage::Mark { mark, t_ms });

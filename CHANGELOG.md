@@ -5,6 +5,28 @@ share one version. The release pull request writes each section from the change 
 `.changeset/`, and the section becomes the notes of the GitHub Release. See
 [`docs/releasing.md`](docs/releasing.md).
 
+## 0.1.3 (2026-11-11)
+
+### Features
+
+#### Install dyno with one command
+
+Each release now has an install script, `dyno-cli-installer.sh`. It gets the release's archive for your machine, a Mac or Linux on x86-64, and puts `dyno` in `~/.local/bin`, or in `$XDG_BIN_HOME` when that is set:
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/dyno-labs/dyno/releases/latest/download/dyno-cli-installer.sh | sh
+```
+
+#### `run.timeline`: the memory of every browser process through the run
+
+A browser run now records the memory of each of the browser's processes through the run, with the run's steps on the same clock, in `run.timeline`. Each process has its `pid`, its `kind`, its `role` (`game`, `page`, `gpu`, `browser` or `other`) and its samples. The CDP driver on Linux reads every Chromium process from `/proc` 4 times a second: `private_bytes` is the private memory footprint that Chromium reports on Linux, with `resident_bytes` and `shared_bytes`. A short trace at idle finds the game frame's renderer and the page's. `--device` fills the timeline from the phone's sysmontap samples: Safari's page, GPU and network processes and the app, with the game's WebContent process as `game`, and with the kernel's kill of the game's process (`killed`) or its going over a memory limit (`over_memory_limit`) as marks. The recording that `--out` saves beside the result keeps the same processes. An Activity Monitor trace from a device cloud gives the same timeline through `dyno_ios::trace::trace_timeline`. After the active watch, the CDP driver sends Chromium a critical memory pressure signal and forces a garbage collection, with the new `purged` mark, so the timeline shows the memory the game holds once garbage and caches go. No lab measure sees it. The runner protocol has two new messages for a driver that reads memory: `memory` and `roles`.
+
+The CDP driver's Chromium now runs with no extensions. A launcher such as Arch's `chromium` adds the desktop's own, and each one adds a renderer and can put scripts in the game's page.
+
+#### `--open-with`: a served run in a browser that dyno starts and measures
+
+`dyno check <build> --driver serve --open-with PROGRAM` starts the program with the harness page's URL, reads the memory of each of its processes into `run.timeline` (Linux), and stops it, and everything it started, when the run ends. The game's process is the web process with the largest footprint at idle. `examples/webkit/open.sh` runs WebKitGTK on a virtual display at the reference phone's viewport and pixel ratio, for a lab copy of Safari's engine. A served run now names WebKitGTK as itself, with no version, not as Safari.
+
 ## 0.1.2 (2026-11-11)
 
 ### Fixes

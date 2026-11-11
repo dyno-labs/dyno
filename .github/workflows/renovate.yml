@@ -1,0 +1,81 @@
+# Renovate: opens the dependency update pull requests for this repository, and merges the safe ones
+# once the required checks pass. The rules are in .github/renovate.json5. It runs on our own runner
+# as the dyno-bot GitHub App.
+#
+# It needs the dyno-bot app: the variable DYNO_BOT_CLIENT_ID and the secret DYNO_BOT_PRIVATE_KEY.
+# Until both exist, the Renovate job is skipped with a notice.
+name: renovate
+
+on:
+  schedule:
+    # Every 4 hours. New PRs come on Mondays only (.github/renovate.json5); the other runs rebase
+    # open PRs, act on the dependency dashboard and open security fixes.
+    - cron: "17 */4 * * *"
+  workflow_dispatch:
+    inputs:
+      log-level:
+        description: Renovate's log level
+        type: choice
+        options: [info, debug]
+        default: info
+
+permissions:
+  contents: read
+
+# One run at a time: two runs would work on the same branches.
+concurrency:
+  group: renovate
+  cancel-in-progress: false
+
+jobs:
+  app:
+    name: Check for the bot app
+    runs-on: ${{ vars.LINUX_RUNNER || 'ubuntu-latest' }}
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - id: check
+        env:
+          CLIENT_ID: ${{ vars.DYNO_BOT_CLIENT_ID }}
+          HAS_KEY: ${{ secrets.DYNO_BOT_PRIVATE_KEY != '' }}
+        run: |
+          if [[ -n "$CLIENT_ID" && "$HAS_KEY" == true ]]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice title=Renovate skipped::The dyno-bot app is not set up: set the variable DYNO_BOT_CLIENT_ID and the secret DYNO_BOT_PRIVATE_KEY."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  renovate:
+    name: Renovate
+    needs: app
+    if: needs.app.outputs.ready == 'true'
+    runs-on: ${{ vars.LINUX_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.DYNO_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.DYNO_BOT_PRIVATE_KEY }}
+          # This repository only, with only what Renovate needs, though the app may have more.
+          repositories: ${{ github.event.repository.name }}
+          permission-checks: write
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+          permission-statuses: write
+          permission-workflows: write
+      - uses: renovatebot/github-action@1c0cf989c02653fba0efe7ca5772338860ca71dc # v46.3.12
+        with:
+          token: ${{ steps.token.outputs.token }}
+          configurationFile: .github/renovate/global.json5
+          # The Renovate image, pinned by digest. Renovate updates it: it reads the version and the
+          # digest from a full image name, and not from renovate-version.
+          renovate-image: ghcr.io/renovatebot/renovate:44.212.1@sha256:b9e1611c0698d7e196cd7d77be9fbb40862e4c11d9b9f9bd0865cef6f6f7f810
+        env:
+          LOG_LEVEL: ${{ inputs.log-level || 'info' }}
+          RENOVATE_REPOSITORIES: ${{ github.repository }}

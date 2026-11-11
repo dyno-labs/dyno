@@ -1,0 +1,14 @@
+// The options of the self-hosted Renovate in .github/workflows/renovate.yml that a repository's
+// own config cannot set. The repository config is .github/renovate.json5.
+{
+  platform: "github",
+  // The workflow names the one repository (RENOVATE_REPOSITORIES), so Renovate never looks for
+  // others that the app is installed on.
+  autodiscover: false,
+  onboarding: false,
+  requireConfig: "required",
+  // Install each tool, such as Rust, when an update needs it.
+  binarySource: "install",
+  // The only command that postUpgradeTasks may run: the script in this folder.
+  allowedCommands: ["^bash \\.github/renovate/third-party-notices\\.sh$"],
+}

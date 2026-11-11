@@ -5,6 +5,14 @@ share one version. The release pull request writes each section from the change 
 `.changeset/`, and the section becomes the notes of the GitHub Release. See
 [`docs/releasing.md`](docs/releasing.md).
 
+## 0.1.2 (2026-11-11)
+
+### Fixes
+
+#### The types' npm package is `@dyno-cloud/schema`
+
+The npm package of the JSON Schema and the TypeScript types is named `@dyno-cloud/schema`. Earlier releases named it `@dyno-labs/schema`, but no version of it was published under that name.
+
 ## 0.1.1 (2026-11-10)
 
 ### Features

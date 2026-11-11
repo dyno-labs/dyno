@@ -630,10 +630,10 @@ expression: json(&outcome)
             "model": null,
             "schema": 0,
             "scoring": 1,
-            "tool": "0.1.1"
+            "tool": "0.1.2"
           }
         },
-        "result_hash": "0abdef4707b102ba694fd977ada8d5bebf4b88cb86845d273371d536e0f801ff",
+        "result_hash": "715af478f5fa40d87a284faa2842e95481351f6e7b0ad2c5bb780e40d30bbf06",
         "run": {
           "build_link": "scanned",
           "driver": null,
@@ -1207,10 +1207,10 @@ expression: json(&outcome)
             "model": null,
             "schema": 0,
             "scoring": 1,
-            "tool": "0.1.1"
+            "tool": "0.1.2"
           }
         },
-        "result_hash": "f86ae73e643bbfc038afc51b166d23e1023f802be635d650c8d9fa1f32cfd3d3",
+        "result_hash": "90566fc8f1230156ede1d6fb99a7b88d00768bdf26b3a21d81bf075f56e62d55",
         "run": {
           "build_link": "none",
           "driver": null,

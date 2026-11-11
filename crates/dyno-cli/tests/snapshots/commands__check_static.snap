@@ -626,10 +626,10 @@ expression: json(&outcome)
       "model": null,
       "schema": 0,
       "scoring": 1,
-      "tool": "0.1.1"
+      "tool": "0.1.2"
     }
   },
-  "result_hash": "0abdef4707b102ba694fd977ada8d5bebf4b88cb86845d273371d536e0f801ff",
+  "result_hash": "715af478f5fa40d87a284faa2842e95481351f6e7b0ad2c5bb780e40d30bbf06",
   "run": {
     "build_link": "scanned",
     "driver": null,

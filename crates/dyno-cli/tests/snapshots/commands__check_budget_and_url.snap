@@ -672,10 +672,10 @@ expression: json(&outcome)
       "model": null,
       "schema": 0,
       "scoring": 1,
-      "tool": "0.1.1"
+      "tool": "0.1.2"
     }
   },
-  "result_hash": "dec58c6ce80685ed1cdddb2a84b363df01aac7c66d1a61c8705e48dc860b217a",
+  "result_hash": "4961d6a7a470abfb07aff1ed18c3efb83930e6293355e83d0554ff03bc81b0d9",
   "run": {
     "build_link": "asserted",
     "driver": null,

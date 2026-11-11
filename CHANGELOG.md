@@ -1,6 +1,6 @@
 # Changelog
 
-The changes in each release of dyno: the `dyno` binary and the `@dyno-labs/schema` types, which
+The changes in each release of dyno: the `dyno` binary and the `@dyno-cloud/schema` types, which
 share one version. The release pull request writes each section from the change files in
 `.changeset/`, and the section becomes the notes of the GitHub Release. See
 [`docs/releasing.md`](docs/releasing.md).
@@ -57,7 +57,7 @@ An optional `[build]` table, with one `command`, says how CI makes the build fol
 
 #### The schema package lists every measure and every known device
 
-`@dyno-labs/schema` now has `json/measures.json`, every measure id with its source, phase, unit and scope, and what it counts (`quantity`) and which reading it is (`statistic`), and `json/devices.json`, every iPhone from the iPhone XS and XR to the iPhone 17 family, by the key a device run gives its phone. It also has `json/dyno-toml.schema.json`, the shape of `dyno.toml`.
+`@dyno-cloud/schema` now has `json/measures.json`, every measure id with its source, phase, unit and scope, and what it counts (`quantity`) and which reading it is (`statistic`), and `json/devices.json`, every iPhone from the iPhone XS and XR to the iPhone 17 family, by the key a device run gives its phone. It also has `json/dyno-toml.schema.json`, the shape of `dyno.toml`.
 
 #### Results say which run made them, what ran it, and which game they are about
 
@@ -117,4 +117,4 @@ The first release.
   `--driver exec:<program>` runs it through an outside program instead.
 - `dyno compare <base> <head>` gives the difference between two results.
 - `dyno mcp` lets an AI coding tool check, compare and read results, over stdio.
-- The JSON Schema and the TypeScript types of each result, as the npm package `@dyno-labs/schema`.
+- The JSON Schema and the TypeScript types of each result, as the npm package `@dyno-cloud/schema`.

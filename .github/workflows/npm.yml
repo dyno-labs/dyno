@@ -1,5 +1,5 @@
 # Publishes packages/schema (the TypeScript types and the JSON Schema) to npm as
-# @dyno-labs/schema, from the same tag as the binary release. Off until the repository variable
+# @dyno-cloud/schema, from the same tag as the binary release. Off until the repository variable
 # NPM_PUBLISH is "true" and npm trusts this workflow (trusted publishing, so no npm token is
 # stored). See docs/releasing.md.
 #
@@ -20,7 +20,7 @@ permissions:
 
 jobs:
   publish:
-    name: Publish @dyno-labs/schema
+    name: Publish @dyno-cloud/schema
     # Only a release from a tag that succeeded: release.yml also runs on pull requests.
     if: >-
       vars.NPM_PUBLISH == 'true' && (github.event_name == 'workflow_dispatch' ||

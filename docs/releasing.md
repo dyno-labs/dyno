@@ -152,7 +152,7 @@ and knope 0.23.2. `mise install` installs them at these versions (`mise.toml`).
 
 ## The npm types
 
-`.github/workflows/npm.yml` publishes `packages/schema/` as `@dyno-labs/schema` after `release.yml`
+`.github/workflows/npm.yml` publishes `packages/schema/` as `@dyno-cloud/schema` after `release.yml`
 finishes the release of a tag: the TypeScript types in `ts/` and the JSON Schema in `json/`. It
 does not wait for the "release published" event: `release.yml` makes the release with
 `GITHUB_TOKEN`, and an event made that way starts no workflow. It does nothing until the

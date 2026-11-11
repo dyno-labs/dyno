@@ -1,6 +1,6 @@
 //! The generated files: JSON Schema and the measure and device catalogues in
 //! `packages/schema/json/`, and TypeScript types in `packages/schema/ts/`, the two halves of the
-//! npm package `@dyno-labs/schema`.
+//! npm package `@dyno-cloud/schema`.
 //!
 //! Tests compare these with the committed files and fail when they are stale. To update the
 //! committed files, run `DYNO_UPDATE_GENERATED=1 INSTA_UPDATE=always cargo test --workspace`.

@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use dyno_schema::generate::{self, UPDATE_GENERATED_VARIABLE};
 
-/// The npm package `@dyno-labs/schema`: the JSON Schema in `json/` and the TypeScript types in
+/// The npm package `@dyno-cloud/schema`: the JSON Schema in `json/` and the TypeScript types in
 /// `ts/`, next to its `package.json`.
 fn package_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/schema")
@@ -23,7 +23,7 @@ fn updating_generated_files() -> bool {
 const GENERATED_EXTENSIONS: &[&str] = &["json", "ts"];
 
 /// The npm package of the JSON Schema and the TypeScript types.
-const NPM_PACKAGE_NAME: &str = "@dyno-labs/schema";
+const NPM_PACKAGE_NAME: &str = "@dyno-cloud/schema";
 
 fn is_generated_file(path: &Path) -> bool {
     let file_name = path.file_name().map(|name| name.to_string_lossy());

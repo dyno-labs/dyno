@@ -3,7 +3,7 @@
 # .github/workflows/release.yml when a version tag such as v0.1.0 is pushed (release-pr.yml pushes
 # it when the release pull request merges). The release's title and notes are the section of
 # CHANGELOG.md for that version. It is as public as the repository. After a change here, run
-# `dist generate` to update the workflow, and `dist plan` to check it.
+# `mise run release:generate` to update the workflow, and `dist plan` to check it.
 [workspace]
 members = ["cargo:."]
 
@@ -16,6 +16,10 @@ installers = []
 install-updater = false
 source-tarball = false
 publish-jobs = []
+# release.yml has one change that dist did not make: `gh release create` gets --verify-tag in
+# place of --target "$RELEASE_COMMIT" (docs/releasing.md says why). So dist must not check the
+# workflow against what it would write. `mise run release:generate` writes it and makes the change.
+allow-dirty = ["ci"]
 # The notices for the open source code in the binary go in every archive.
 include = ["THIRD_PARTY_NOTICES.md"]
 # A pull request only checks the plan; it builds nothing.

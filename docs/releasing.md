@@ -3,7 +3,7 @@
 A release is binary archives on this repository's GitHub Releases, plus the TypeScript types on
 npm. Both come from one version tag, and they share one version: `[workspace.package] version` in
 `Cargo.toml`, which every crate uses, and `version` in `packages/schema/package.json` (a test
-checks that they match). No source tarball, installer or crates.io package: every crate has `publish = false`.
+checks that they match). No source tarball or crates.io package: every crate has `publish = false`.
 
 The flow is the one changesets gives JavaScript projects, with [knope](https://knope.tech) 0.23.2
 as the tool:
@@ -121,6 +121,11 @@ One archive per target, each with the `dyno` binary, `README.md`, `LICENSE-MIT`,
 
 - `aarch64-apple-darwin` and `x86_64-apple-darwin`: Macs;
 - `x86_64-unknown-linux-gnu`: Linux, such as CI runners and hosted runners.
+
+`dyno-cli-installer.sh`, which cargo-dist writes, is the script of the one-command install in
+`README.md`: it gets this release's archive for the machine it runs on, and puts `dyno` in
+`$XDG_BIN_HOME`, or else `$XDG_DATA_HOME/../bin`, or else `~/.local/bin`. The address
+`releases/latest/download/dyno-cli-installer.sh` always gives the newest full release's script.
 
 `fixtures/golden-hashes.json` at the tag gives the status and `result_hash` that this release's
 binary gives for each fixture. Anyone who runs a copy of the release, such as a hosted runner, can

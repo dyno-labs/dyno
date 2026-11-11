@@ -7,27 +7,27 @@ expression: json(&outcome)
     "base": {
       "build_id": "54bc36cfde26ce4949a736033d9f3d251b6f2ba547725ab7e19779f77be911c5",
       "hash_matches": true,
-      "result_hash": "8dcd677612b35c5153c2a579e43bd007dcd229869026ee530ea2e52cfa1de80d",
+      "result_hash": "0abdef4707b102ba694fd977ada8d5bebf4b88cb86845d273371d536e0f801ff",
       "status": "incomplete",
-      "tool": "0.1.0"
+      "tool": "0.1.1"
     },
     "budget": null,
     "head": {
       "build_id": "54bc36cfde26ce4949a736033d9f3d251b6f2ba547725ab7e19779f77be911c5",
       "hash_matches": true,
-      "result_hash": "8dcd677612b35c5153c2a579e43bd007dcd229869026ee530ea2e52cfa1de80d",
+      "result_hash": "0abdef4707b102ba694fd977ada8d5bebf4b88cb86845d273371d536e0f801ff",
       "status": "incomplete",
-      "tool": "0.1.0"
+      "tool": "0.1.1"
     },
     "measures": [],
     "reason": "incomplete: base, head",
     "scoring": 1,
     "status": "incomplete",
     "suspect_assets": [],
-    "tool": "0.1.0",
+    "tool": "0.1.1",
     "verdicts": []
   },
-  "result_hash": "88f4f52d8830ba73b494edecbd79efda691a455d1f045511a4dbda8eb8ac2dc1",
+  "result_hash": "2f74b4d44e91debeb77273044e7ce68e8bc54354f461ab1363518a544dcfce62",
   "run": {
     "base_release": {
       "game": null,

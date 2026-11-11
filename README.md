@@ -9,6 +9,16 @@ A Rust command-line tool for casino games that run in iframes. Its first job is 
 
 **Status:** early, and the result shape may still change before 1.0. `dyno check ./dist` scans a build and gives the static measures, rules and fixes. `dyno check <launch-url>` runs the game in Chromium and gives the lab measures, and `dyno check ./dist --browser` serves the build to Chromium for the same run. `dyno compare` diffs two results. `dyno mcp` lets an AI coding tool run the same checks. The phone calibration, and so the memory model, comes next.
 
+## Install
+
+On a Mac, or on Linux on x86-64:
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/dyno-labs/dyno/releases/latest/download/dyno-cli-installer.sh | sh
+```
+
+The script gets the newest release's archive for your machine and puts `dyno` in the first of `$XDG_BIN_HOME`, `$XDG_DATA_HOME/../bin` and `~/.local/bin` that your machine has a value for. It adds that folder to your `PATH` in your shell's profile; end the command with `| sh -s -- --no-modify-path` to leave the profile alone. Run the command again to get a newer release. To install by hand, download an archive from the [releases](https://github.com/dyno-labs/dyno/releases) and check it against its `.sha256` file.
+
 ## Build
 
 Needs Rust 1.97 or later. CI uses 1.99.1.

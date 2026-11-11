@@ -1256,6 +1256,46 @@
         }
       ]
     },
+    "MemorySample": {
+      "description": "One process's memory at one moment.",
+      "type": "object",
+      "properties": {
+        "private_bytes": {
+          "description": "The memory that only this process holds, as the OS counts it for the process (see\n[`TimelineMethod`]).",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "resident_bytes": {
+          "description": "Resident memory, shared pages included. Null when the method does not read it.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "shared_bytes": {
+          "description": "Resident shared memory, such as the buffers the GPU process and the renderers share. Null\nwhen the method does not read it.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "t_ms": {
+          "description": "Since the navigation, on the driver's clock.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "t_ms",
+        "private_bytes"
+      ]
+    },
     "Method": {
       "description": "How a value was found. Declared in alphabetical order, so evidence sorts by name.",
       "oneOf": [
@@ -1341,6 +1381,36 @@
         "ios",
         "ipados",
         "android"
+      ]
+    },
+    "ProcessRole": {
+      "description": "The part a process plays in the run, as far as the driver can tell.",
+      "oneOf": [
+        {
+          "description": "It runs the game frame.",
+          "type": "string",
+          "const": "game"
+        },
+        {
+          "description": "It runs the harness page.",
+          "type": "string",
+          "const": "page"
+        },
+        {
+          "description": "The GPU process.",
+          "type": "string",
+          "const": "gpu"
+        },
+        {
+          "description": "The browser's main process.",
+          "type": "string",
+          "const": "browser"
+        },
+        {
+          "description": "Any other process, such as a spare renderer or the network service.",
+          "type": "string",
+          "const": "other"
+        }
       ]
     },
     "ProfileRef": {
@@ -1558,6 +1628,18 @@
         "tier": {
           "$ref": "#/$defs/TierReport"
         },
+        "timeline": {
+          "description": "The memory of each browser process through the browser run, with the run's steps. Null\nwhen the driver read none, such as on a machine without a sampler.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Timeline"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "tool_build": {
           "$ref": "#/$defs/ToolBuild"
         }
@@ -1572,6 +1654,51 @@
         "measures",
         "findings",
         "tier"
+      ]
+    },
+    "RunMark": {
+      "description": "The steps of a run. They sort in the order they are declared.",
+      "oneOf": [
+        {
+          "description": "The harness page started loading the game frame.",
+          "type": "string",
+          "const": "navigated"
+        },
+        {
+          "description": "The game frame went idle.",
+          "type": "string",
+          "const": "idle"
+        },
+        {
+          "description": "The harness made the game active, such as by sending `reels:active` `true`.",
+          "type": "string",
+          "const": "activated"
+        },
+        {
+          "description": "The harness made the game inactive.",
+          "type": "string",
+          "const": "deactivated"
+        },
+        {
+          "description": "The game frame committed a new document, as a script redirect does. Probe events after\nit are on the new document's clock.",
+          "type": "string",
+          "const": "frame_document"
+        },
+        {
+          "description": "The driver forced a garbage collection and sent a critical memory pressure signal, after\nthe active watch. The memory after it is what the game holds once garbage and caches go.",
+          "type": "string",
+          "const": "purged"
+        },
+        {
+          "description": "The phone's kernel killed the game's process: jetsam did, or it went over a fatal memory\nlimit.",
+          "type": "string",
+          "const": "killed"
+        },
+        {
+          "description": "The game's process went over a memory limit that does not kill it, such as iOS's soft\nlimit.",
+          "type": "string",
+          "const": "over_memory_limit"
+        }
       ]
     },
     "Scenario": {
@@ -1787,6 +1914,112 @@
         "status",
         "device_class",
         "phase"
+      ]
+    },
+    "Timeline": {
+      "description": "The memory of each browser process through one run.",
+      "type": "object",
+      "properties": {
+        "every_ms": {
+          "description": "The time between samples that the sampler asked for. A busy machine can make it longer.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "marks": {
+          "description": "The run's steps, on the samples' clock. Sorted by time, then step.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TimelineMark"
+          }
+        },
+        "method": {
+          "$ref": "#/$defs/TimelineMethod"
+        },
+        "processes": {
+          "description": "Every process the sampler saw. Sorted by pid.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TimelineProcess"
+          }
+        }
+      },
+      "required": [
+        "method",
+        "every_ms",
+        "marks",
+        "processes"
+      ]
+    },
+    "TimelineMark": {
+      "description": "One step of the run, on the timeline's clock.",
+      "type": "object",
+      "properties": {
+        "mark": {
+          "$ref": "#/$defs/RunMark"
+        },
+        "t_ms": {
+          "description": "Since the navigation, on the driver's clock.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "mark",
+        "t_ms"
+      ]
+    },
+    "TimelineMethod": {
+      "description": "How a timeline's samples were read.",
+      "oneOf": [
+        {
+          "description": "Linux's `/proc/<pid>/status`: `private_bytes` is `RssAnon` plus `VmSwap`, the private\nmemory footprint that Chromium reports on Linux.",
+          "type": "string",
+          "const": "proc"
+        },
+        {
+          "description": "An Activity Monitor trace that xctrace exported, such as a device cloud's: `private_bytes`\nis the physical footprint that jetsam reads.",
+          "type": "string",
+          "const": "xctrace"
+        },
+        {
+          "description": "The iPhone's sysmontap service, which `--device` reads: `private_bytes` is the physical\nfootprint that jetsam reads.",
+          "type": "string",
+          "const": "sysmontap"
+        }
+      ]
+    },
+    "TimelineProcess": {
+      "description": "One process of the browser, and its memory through the run.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "description": "What the browser calls the process, such as \"renderer\", \"gpu-process\" or\n\"utility:network.mojom.NetworkService\", or its name, such as\n\"com.apple.WebKit.WebContent\".",
+          "type": "string"
+        },
+        "pid": {
+          "description": "The OS process id. It only tells processes apart within this run.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "role": {
+          "$ref": "#/$defs/ProcessRole"
+        },
+        "samples": {
+          "description": "Sorted by time.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MemorySample"
+          }
+        }
+      },
+      "required": [
+        "pid",
+        "role",
+        "kind",
+        "samples"
       ]
     },
     "ToolBuild": {

@@ -106,7 +106,7 @@ jobs:
       - run: mise run health:fixtures-types
 
   shell:
-    name: Shell lint and formatting
+    name: Shell and Python lint and formatting
     runs-on: ${{ (github.event.pull_request.head.repo.fork && 'ubuntu-latest') || vars.LINUX_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -115,9 +115,10 @@ jobs:
       - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
         with:
           version: 2026.10.17
-          install_args: shellcheck shfmt
+          install_args: shellcheck shfmt ruff
       - run: mise run health:shell-lint
       - run: mise run health:shell-format
+      - run: mise run health:python
 
   # The required check. It runs even when a job it needs failed, and fails unless every one passed
   # or was skipped.

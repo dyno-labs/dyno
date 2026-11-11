@@ -583,6 +583,7 @@ dependencies = [
  "httparse",
  "memchr",
  "percent-encoding",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",

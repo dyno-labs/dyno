@@ -17,10 +17,13 @@ use dyno_schema::result::DriverInfo;
 use dyno_schema::rule::{Finding, incomplete_findings};
 use dyno_schema::runner::{DriverMessage, RunRequest};
 use dyno_schema::scrub::scrub;
+use dyno_schema::timeline::Timeline;
 
 pub mod exec;
 pub mod lab;
+pub mod memory;
 pub mod protocol;
+pub mod timeline;
 
 /// Runs one browser load and reports what it saw.
 pub trait Driver {
@@ -81,6 +84,9 @@ pub struct LabRun {
     pub measures: Vec<Measure>,
     /// One finding per lab rule.
     pub findings: Vec<Finding>,
+    /// The memory of each browser process through the run. None when the driver read none. A run
+    /// that failed after its driver's `hello` keeps it, since it shows how the run ended.
+    pub timeline: Option<Timeline>,
 }
 
 /// The measures of a load-and-idle run (Phase 1). All are required.
@@ -172,17 +178,18 @@ impl fmt::Display for DriverErrorCode {
 pub fn run_lab(driver: &mut dyn Driver, request: &RunRequest) -> LabRun {
     let messages = match driver.run(request) {
         Ok(messages) => messages,
-        Err(error) => return failed_run(driver.name(), request, &error, None),
+        Err(error) => return failed_run(driver.name(), request, &error, None, None),
     };
     // A run that fails after its `hello`, as one whose page iOS killed, still says what ran.
     let hello = hello_driver(&messages);
     let environment = hello.as_ref().map(|hello| driver.environment(hello));
+    let timeline = timeline::read(&messages);
     if let Some(error) = final_error(&messages) {
-        return failed_run(driver.name(), request, &error, environment);
+        return failed_run(driver.name(), request, &error, environment, timeline);
     }
     let Some((mut measures, findings)) = lab::read(&messages, request) else {
         let error = DriverError::new(DriverErrorCode::Protocol, NEVER_IDLE);
-        return failed_run(driver.name(), request, &error, environment);
+        return failed_run(driver.name(), request, &error, environment, timeline);
     };
     if !driver.reads_heap() {
         heap_unsupported(&mut measures);
@@ -193,6 +200,7 @@ pub fn run_lab(driver: &mut dyn Driver, request: &RunRequest) -> LabRun {
         environment,
         measures,
         findings,
+        timeline,
     }
 }
 
@@ -221,6 +229,7 @@ fn failed_run(
     request: &RunRequest,
     error: &DriverError,
     environment: Option<Environment>,
+    timeline: Option<Timeline>,
 ) -> LabRun {
     let reason = match error.code() {
         DriverErrorCode::NotBuilt => NOT_BUILT_YET.to_owned(),
@@ -233,6 +242,7 @@ fn failed_run(
         environment,
         measures,
         findings: incomplete_findings(LAB_RULES, &reason),
+        timeline,
     }
 }
 

@@ -190,6 +190,7 @@ fn run_info(started_at: &str, os: &str) -> RunInfo {
             phase: 1,
             reason: None,
         },
+        timeline: None,
     }
 }
 

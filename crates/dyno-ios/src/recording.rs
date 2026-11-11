@@ -1,5 +1,5 @@
-//! A recording of the phone: the footprint of each of Safari's page processes about once a
-//! second, from sysmontap, and the kernel's memory lines, from the log. Each is stamped with this
+//! A recording of the phone: the footprint of each of Safari's processes about once a second,
+//! from sysmontap, and the kernel's memory lines, from the log. Each is stamped with this
 //! machine's clock as it arrives, which is the clock the served run keeps too.
 //!
 //! [`record`] reads the two sources at once until it is told to stop. A source that fails, or
@@ -16,7 +16,7 @@ use dyno_schema::devices::model_name;
 use serde::Serialize;
 use tokio::sync::oneshot;
 
-use crate::WEB_CONTENT;
+use crate::SAFARI_PROCESSES;
 use crate::syslog::{MemoryLine, memory_line};
 use crate::sysmon::Reading;
 
@@ -56,12 +56,14 @@ impl Phone {
     }
 }
 
-/// One page process's footprint in one sample.
+/// One of Safari's processes in one sample.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Sample {
     /// When the sample arrived, in ms since the Unix epoch.
     pub epoch_ms: f64,
     pub pid: u32,
+    /// The process's name, one of [`SAFARI_PROCESSES`], such as `com.apple.WebKit.WebContent`.
+    pub process: String,
     pub footprint_bytes: u64,
 }
 
@@ -90,7 +92,8 @@ pub struct Recording {
     pub memory_bytes: Option<u64>,
     pub started_epoch_ms: f64,
     pub stopped_epoch_ms: f64,
-    /// Every sample of every page process (`com.apple.WebKit.WebContent`).
+    /// Every sample of each of Safari's processes ([`SAFARI_PROCESSES`]): its page processes
+    /// (`com.apple.WebKit.WebContent`), its GPU and network processes and the app.
     pub samples: Vec<Sample>,
     pub samples_cover: Coverage,
     /// Every kernel memory line, about any process.
@@ -188,10 +191,11 @@ impl Taken {
         let pages = reading.processes.into_iter().flatten();
         self.samples.extend(
             pages
-                .filter(|row| row.name == WEB_CONTENT)
+                .filter(|row| SAFARI_PROCESSES.iter().any(|(name, _)| *name == row.name))
                 .map(|row| Sample {
                     epoch_ms: now,
                     pid: row.pid,
+                    process: row.name,
                     footprint_bytes: row.footprint_bytes,
                 }),
         );
@@ -267,6 +271,7 @@ pub(crate) mod tests {
     use std::time::Duration;
 
     use super::*;
+    use crate::WEB_CONTENT;
     use crate::sysmon::ProcessRow;
 
     pub(crate) fn phone() -> Phone {
@@ -321,7 +326,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_recording_keeps_the_page_processes_the_memory_and_the_kernel_memory_lines() {
+    fn a_recording_keeps_safaris_processes_the_memory_and_the_kernel_memory_lines() {
         let readings = Readings(
             VecDeque::from([
                 None,
@@ -332,6 +337,11 @@ pub(crate) mod tests {
                             pid: 60,
                             name: "SpringBoard".to_owned(),
                             footprint_bytes: 9,
+                        },
+                        ProcessRow {
+                            pid: 88,
+                            name: "MobileSafari".to_owned(),
+                            footprint_bytes: 40,
                         },
                     ]),
                     memory_bytes: Some(6_000),
@@ -353,9 +363,13 @@ pub(crate) mod tests {
         );
         let (_stop, stop) = oneshot::channel();
         let recording = run(record(phone(), readings, lines, async {}, stop));
-        assert_eq!(recording.samples.len(), 1);
-        assert_eq!(recording.samples[0].pid, 412);
-        assert_eq!(recording.samples[0].footprint_bytes, 300);
+        // Safari's processes stay, with their names; SpringBoard is not Safari's.
+        let kept: Vec<(u32, &str, u64)> = recording
+            .samples
+            .iter()
+            .map(|sample| (sample.pid, sample.process.as_str(), sample.footprint_bytes))
+            .collect();
+        assert_eq!(kept, [(412, WEB_CONTENT, 300), (88, "MobileSafari", 40)]);
         assert_eq!(recording.memory_bytes, Some(6_000));
         assert_eq!(recording.memory_lines.len(), 1);
         assert_eq!(recording.memory_lines[0].line.pid, 412);
@@ -416,6 +430,7 @@ pub(crate) mod tests {
             samples: vec![Sample {
                 epoch_ms: 0.5,
                 pid: 412,
+                process: crate::WEB_CONTENT.to_owned(),
                 footprint_bytes: 300,
             }],
             samples_cover: coverage("sample", None, None, 0.0, 1.0),

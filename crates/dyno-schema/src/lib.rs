@@ -32,6 +32,7 @@ pub mod rule;
 pub mod runner;
 pub mod scrub;
 pub mod status;
+pub mod timeline;
 
 /// The version of every shape in this crate. It bumps only on a breaking change.
 pub const SCHEMA_VERSION: u32 = 0;

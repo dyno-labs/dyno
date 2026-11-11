@@ -7,6 +7,7 @@ use dyno_ios::recording::Link;
 use dyno_ios::{Address, DeviceError, OpenedWith, Recorder, RunWindow};
 use dyno_schema::environment::{EnvironmentDevice, EnvironmentOs};
 use dyno_schema::measure::Measure;
+use dyno_schema::timeline::Timeline;
 use dyno_serve::RunTimes;
 
 use crate::exit::CliError;
@@ -87,17 +88,17 @@ impl DeviceRun {
             );
         };
         let (os, device) = dyno_ios::phone_environment(&recording);
+        let window = RunWindow {
+            navigated_epoch_ms: run.navigated_epoch_ms,
+            idle_epoch_ms: run.idle_epoch_ms,
+            activated_epoch_ms: run.activated_epoch_ms,
+            ended_epoch_ms: run.ended_epoch_ms,
+        };
         FinishedDeviceRun {
-            measures: dyno_ios::device_measures(
-                &recording,
-                &RunWindow {
-                    navigated_epoch_ms: run.navigated_epoch_ms,
-                    idle_epoch_ms: run.idle_epoch_ms,
-                    ended_epoch_ms: run.ended_epoch_ms,
-                },
-            ),
+            measures: dyno_ios::device_measures(&recording, &window),
             os,
             device,
+            timeline: dyno_ios::device_timeline(&recording, &window),
         }
     }
 }
@@ -109,6 +110,8 @@ pub struct FinishedDeviceRun {
     pub os: Option<EnvironmentOs>,
     /// The phone: its model and memory.
     pub device: Option<EnvironmentDevice>,
+    /// Safari's processes through the run, from the recording.
+    pub timeline: Option<Timeline>,
 }
 
 impl FinishedDeviceRun {
@@ -118,6 +121,7 @@ impl FinishedDeviceRun {
             measures: dyno_ios::missing_device_measures(reason),
             os: None,
             device: None,
+            timeline: None,
         }
     }
 }

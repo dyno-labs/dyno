@@ -46,7 +46,9 @@ const LISTENING: &str = "DevTools listening on ";
 const START_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The flags of every run, from the CDP feasibility test. A fresh profile, no first-run pages and
-/// no background traffic, so the only requests are the run's own.
+/// no background traffic, so the only requests are the run's own. No extensions: a launcher can
+/// load the desktop's own, as Arch's `chromium` does from `chromium-flags.conf`, and each one
+/// adds a renderer and can put scripts in the game's page.
 const FLAGS: &[&str] = &[
     "--headless=new",
     "--remote-debugging-port=0",
@@ -59,6 +61,7 @@ const FLAGS: &[&str] = &[
     "--disable-component-update",
     "--disable-sync",
     "--disable-default-apps",
+    "--disable-extensions",
     "--mute-audio",
 ];
 
@@ -135,6 +138,12 @@ impl Browser {
 
     pub fn web_socket_url(&self) -> &str {
         &self.web_socket_url
+    }
+
+    /// The browser's process id. A launcher that runs Chromium with `exec` keeps it. None once
+    /// the process has exited.
+    pub fn pid(&self) -> Option<u32> {
+        self.process.id()
     }
 
     /// Waits for the process to exit after `Browser.close`, kills it when it does not, and

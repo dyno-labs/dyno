@@ -25,6 +25,7 @@ use dyno_schema::result::{
 use dyno_schema::rule::Finding;
 use dyno_schema::runner::{RUNNER_PROTOCOL_VERSION, RunRequest};
 use dyno_schema::status::Status;
+use dyno_schema::timeline::Timeline;
 use dyno_schema::{SCHEMA_VERSION, TOOL_VERSION};
 use dyno_score::SCORING_VERSION;
 use dyno_score::budget::budget_verdicts;
@@ -94,11 +95,13 @@ pub fn run(args: CheckArgs) -> Result<Status, CliError> {
             "--browser loads the build in dyno's own Chromium, so it takes no --driver but cdp",
         ));
     }
-    let serve_flags =
-        args.serve_host.is_some() || args.serve_port.is_some() || args.serve_query.is_some();
+    let serve_flags = args.serve_host.is_some()
+        || args.serve_port.is_some()
+        || args.serve_query.is_some()
+        || args.open_with.is_some();
     if serve_flags && args.driver != DriverArg::Serve {
         return Err(CliError::usage(
-            "--serve-host, --serve-port and --serve-query need --driver serve",
+            "--serve-host, --serve-port, --serve-query and --open-with need --driver serve",
         ));
     }
     let device = args.device || args.device_id.is_some() || args.device_ip.is_some();
@@ -131,6 +134,7 @@ pub fn run(args: CheckArgs) -> Result<Status, CliError> {
             host: args.serve_host,
             port: args.serve_port.unwrap_or(DEFAULT_PORT),
             wait_for_browser: DEFAULT_WAIT_FOR_BROWSER,
+            open_with: args.open_with,
         },
         serve_query: args.serve_query,
         ..CheckOptions::new(args.host_profile, args.budget.as_deref())?
@@ -288,6 +292,7 @@ impl CheckOptions {
                 host: None,
                 port: DEFAULT_PORT,
                 wait_for_browser: DEFAULT_WAIT_FOR_BROWSER,
+                open_with: None,
             },
             serve_query: None,
         })
@@ -550,6 +555,7 @@ fn check_one(
         measures: run_measures,
         findings: browser.findings,
         tier: provisional_tier(has_launch_url),
+        timeline: browser.timeline,
     };
     CheckResult::new(deterministic, run).map_err(CliError::internal)
 }
@@ -561,6 +567,7 @@ struct BrowserRun {
     findings: Vec<Finding>,
     driver: Option<DriverInfo>,
     environment: Option<Environment>,
+    timeline: Option<Timeline>,
 }
 
 /// The browser run of a check with a launch URL, and with `--device` the device run around it.
@@ -597,10 +604,13 @@ fn browser_run(
         browser.findings = lab.findings;
         browser.driver = lab.driver;
         browser.environment = lab.environment;
+        browser.timeline = lab.timeline;
     }
     if let Some(device_run) = device_run {
         let finished = device_run.finish(served.as_ref().and_then(ServeDriver::last_run));
         browser.environment = with_phone(browser.environment, finished.os, finished.device);
+        // Safari on the phone reads no memory itself, so the phone's timeline is the run's.
+        browser.timeline = browser.timeline.or(finished.timeline);
         browser.measures.extend(finished.measures);
         browser.measures.push(over_baseline_unsupported());
     }
@@ -615,9 +625,10 @@ enum RunOf {
 }
 
 /// `--runs`: N runs of the empty build and N of the game, in turn, each served on its own and
-/// opened in a fresh Safari with its own recording. The lab measures, the driver and the browser
-/// come from the first game run that completed, or else the first game run, and the phone from
-/// the first game run whose recording named it. The device measures come from every run.
+/// opened in a fresh Safari with its own recording. The lab measures, the driver, the browser and
+/// the timeline come from the first game run that completed, or else the first game run, and the
+/// phone from the first game run whose recording named it. The device measures come from every
+/// run.
 fn device_runs_run(
     build: &Path,
     runs: u32,
@@ -627,6 +638,7 @@ fn device_runs_run(
     let mut game_device = Vec::new();
     let mut empty_device = Vec::new();
     let mut game_labs = Vec::new();
+    let mut game_timelines = Vec::new();
     let mut phone = None;
     for run in 1..=runs {
         for of in [RunOf::EmptyBuild, RunOf::Game] {
@@ -655,6 +667,7 @@ fn device_runs_run(
                         phone = Some((finished.os, finished.device));
                     }
                     game_device.push(finished.measures);
+                    game_timelines.push(finished.timeline);
                     game_labs.push(lab);
                 }
             }
@@ -666,6 +679,7 @@ fn device_runs_run(
         .position(|lab| lab.driver.is_some())
         .unwrap_or(0);
     let lab = game_labs.swap_remove(first_completed);
+    let phone_timeline = game_timelines.swap_remove(first_completed);
     let environment = match phone {
         Some((os, device)) => with_phone(lab.environment, os, device),
         None => lab.environment,
@@ -677,6 +691,7 @@ fn device_runs_run(
         findings: lab.findings,
         driver: lab.driver,
         environment,
+        timeline: lab.timeline.or(phone_timeline),
     })
 }
 

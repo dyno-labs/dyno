@@ -58,6 +58,9 @@ Options:
       --serve-query <QUERY>
           [phase 1] With --driver serve, the query string the game loads with, such as a demo session's sessionID and rgs_url. No result records it
 
+      --open-with <PROGRAM>
+          [phase 1] With --driver serve, start this program with the harness page's URL as its only argument, read the memory of its processes through the run (Linux), and stop it when the run ends. A script can set the browser up first, such as examples/webkit/open.sh
+
       --scenario <SCENARIO>
           [phase 2] The harness scenario of the browser run. Any scenario but `alone` needs a launch URL
 

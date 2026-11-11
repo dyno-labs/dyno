@@ -16,8 +16,8 @@
 //! Chromium (`dyno check <build> --browser`).
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, TcpListener, UdpSocket};
-use std::path::Path;
-use std::time::Duration;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use dyno_run::{Driver, DriverError, DriverErrorCode};
 use dyno_schema::devices::APPLE;
@@ -30,6 +30,7 @@ use dyno_schema::runner::{DriverMessage, RunRequest};
 use dyno_schema::scrub::scrub;
 
 use crate::files::Build;
+use crate::local::LocalBrowser;
 
 pub use crate::build_server::BuildServer;
 
@@ -37,6 +38,7 @@ mod build_server;
 pub mod files;
 mod harness;
 mod http;
+pub mod local;
 mod run;
 
 /// The driver's name in `hello` and in errors.
@@ -59,6 +61,9 @@ pub struct ServeOptions {
     pub port: u16,
     /// How long the run waits for a browser to open the harness page.
     pub wait_for_browser: Duration,
+    /// A program that dyno starts on the harness page for each run, reads the memory of, and
+    /// stops when the run ends (module `local`). None waits for a browser on the network.
+    pub open_with: Option<PathBuf>,
 }
 
 /// Why a served run failed.
@@ -72,6 +77,8 @@ pub enum ServeError {
     NoBrowser(u64),
     #[error("no async runtime: {0}")]
     Runtime(String),
+    #[error("cannot start the browser to open the page with: {0}")]
+    OpenWith(String),
 }
 
 /// The served-run driver, with its two servers bound.
@@ -83,6 +90,7 @@ pub struct ServeDriver {
     harness_url: String,
     game_url: String,
     wait_for_browser: Duration,
+    open_with: Option<PathBuf>,
     last_run: Option<RunTimes>,
     /// The user agent of the browser that opened the page in the last run.
     last_user_agent: Option<String>,
@@ -96,6 +104,8 @@ pub struct RunTimes {
     pub navigated_epoch_ms: f64,
     /// When the game frame went idle. None when it never did.
     pub idle_epoch_ms: Option<f64>,
+    /// When the harness made the game active. None when it never did.
+    pub activated_epoch_ms: Option<f64>,
     /// When the run ended, before the page dropped the game.
     pub ended_epoch_ms: f64,
 }
@@ -128,6 +138,7 @@ impl ServeDriver {
             harness,
             game,
             wait_for_browser: options.wait_for_browser,
+            open_with: options.open_with.clone(),
             last_run: None,
             last_user_agent: None,
         })
@@ -164,17 +175,38 @@ impl Driver for ServeDriver {
         DRIVER_NAME
     }
 
+    /// With `open_with`, the browser starts before the run waits for it, and its processes'
+    /// memory goes in just before the run's last message.
     fn run(&mut self, request: &RunRequest) -> Result<Vec<DriverMessage>, DriverError> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .map_err(|error| driver_error(&ServeError::Runtime(error.to_string())))?;
+        let local = self
+            .open_with
+            .as_deref()
+            .map(|program| LocalBrowser::open(program, &self.harness_url))
+            .transpose()
+            .map_err(|error| driver_error(&error))?;
+        // An error drops the local browser, which stops it.
         let served = runtime
             .block_on(run::run(self, request))
             .map_err(|error| driver_error(&error))?;
+        let mut messages = served.messages;
+        if let Some(local) = local {
+            let times = served.times;
+            let last = messages.pop();
+            messages.extend(local.close(
+                instant_at(times.navigated_epoch_ms),
+                times.idle_epoch_ms.map(instant_at),
+                instant_at(times.ended_epoch_ms),
+                times.ended_epoch_ms - times.navigated_epoch_ms,
+            ));
+            messages.extend(last);
+        }
         self.last_run = Some(served.times);
         self.last_user_agent = Some(served.user_agent);
-        Ok(served.messages)
+        Ok(messages)
     }
 
     /// Safari gives the page no heap reading, and the harness page has no other way to read it.
@@ -186,6 +218,17 @@ impl Driver for ServeDriver {
     fn environment(&self, _hello: &DriverInfo) -> Environment {
         user_agent_environment(self.last_user_agent.as_deref().unwrap_or_default())
     }
+}
+
+/// The monotonic instant of a time in ms since the Unix epoch on this machine's clock, which the
+/// served run's times use. A time in the future is now.
+fn instant_at(epoch_ms: f64) -> Instant {
+    let now = Instant::now();
+    let now_epoch_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0.0, |since| since.as_secs_f64() * 1_000.0);
+    let ago = Duration::from_secs_f64(((now_epoch_ms - epoch_ms) / 1_000.0).max(0.0));
+    now.checked_sub(ago).unwrap_or(now)
 }
 
 fn driver_error(error: &ServeError) -> DriverError {
@@ -238,7 +281,10 @@ pub fn local_network_address() -> IpAddr {
 /// for a browser it does not know. The iOS Simulator says iPhone too.
 pub fn browser_name(user_agent: &str) -> Option<String> {
     let (name, version) = browser_and_version(user_agent)?;
-    let browser = format!("{name} {version}");
+    let browser = match version {
+        Some(version) => format!("{name} {version}"),
+        None => name.to_owned(),
+    };
     let device = [
         ("iPhone", "iPhone"),
         ("iPad", "iPad"),
@@ -255,18 +301,24 @@ pub fn browser_name(user_agent: &str) -> Option<String> {
 }
 
 /// The browser's name and version in a user agent. None for a browser it does not know.
-fn browser_and_version(user_agent: &str) -> Option<(&'static str, String)> {
+///
+/// WebKitGTK and WPE on Linux say they are Safari, with a made-up `Version/`, so a Safari on a
+/// Linux desktop is WebKitGTK with no version.
+fn browser_and_version(user_agent: &str) -> Option<(&'static str, Option<String>)> {
     let version_after = |marker: &str| {
         let rest = user_agent.split(marker).nth(1)?;
         let version = rest.split([' ', ')', ';']).next().unwrap_or_default();
         (!version.is_empty()).then(|| scrub(version))
     };
+    let linux_desktop = user_agent.contains("Linux") && !user_agent.contains("Android");
     if let Some(version) = version_after("CriOS/").or_else(|| version_after("Chrome/")) {
-        Some(("Chrome", version))
+        Some(("Chrome", Some(version)))
     } else if let Some(version) = version_after("FxiOS/").or_else(|| version_after("Firefox/")) {
-        Some(("Firefox", version))
+        Some(("Firefox", Some(version)))
+    } else if user_agent.contains("Safari/") && linux_desktop {
+        Some(("WebKitGTK", None))
     } else if user_agent.contains("Safari/") {
-        version_after("Version/").map(|version| ("Safari", version))
+        version_after("Version/").map(|version| ("Safari", Some(version)))
     } else {
         None
     }
@@ -306,7 +358,7 @@ pub fn user_agent_environment(user_agent: &str) -> Environment {
         };
         EnvironmentBrowser {
             name: name.to_owned(),
-            version: Some(version),
+            version,
             engine: Some(engine),
             headless,
         }
@@ -370,6 +422,17 @@ mod tests {
         );
         let linux = "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0";
         assert_eq!(browser_name(linux).as_deref(), Some("Firefox 140.0"));
+    }
+
+    #[test]
+    fn a_safari_on_a_linux_desktop_is_webkitgtk_with_no_version() {
+        let gtk = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) \
+            Version/60.5 Safari/605.1.15";
+        assert_eq!(browser_name(gtk).as_deref(), Some("WebKitGTK"));
+        let browser = user_agent_environment(gtk).browser.unwrap();
+        assert_eq!(browser.name, "WebKitGTK");
+        assert_eq!(browser.version, None);
+        assert_eq!(browser.engine, Some(BrowserEngine::Webkit));
     }
 
     #[test]
@@ -477,6 +540,7 @@ mod tests {
             host: None,
             port: 0,
             wait_for_browser: Duration::from_secs(1),
+            open_with: None,
         };
         let driver = ServeDriver::bind(folder.path(), &options).unwrap();
         let address = local_network_address().to_string();
@@ -496,6 +560,7 @@ mod tests {
             host: Some("127.0.0.1".to_owned()),
             port: taken.local_addr().unwrap().port(),
             wait_for_browser: Duration::from_secs(1),
+            open_with: None,
         };
         let error = ServeDriver::bind(folder.path(), &options).unwrap_err();
         assert!(matches!(error, ServeError::Bind { .. }), "{error}");
@@ -508,6 +573,7 @@ mod tests {
             host: Some("127.0.0.1".to_owned()),
             port: 0,
             wait_for_browser: Duration::from_secs(1),
+            open_with: None,
         };
         let driver = ServeDriver::bind(folder.path(), &options).unwrap();
         assert!(driver.harness_url().starts_with("http://127.0.0.1:"));
@@ -522,6 +588,7 @@ mod tests {
             host: Some("127.0.0.1".to_owned()),
             port: 0,
             wait_for_browser: Duration::from_secs(1),
+            open_with: None,
         };
         let driver = ServeDriver::bind(folder.path(), &options).unwrap();
         let game = driver.game_url().to_owned();
@@ -540,6 +607,7 @@ mod tests {
             host: Some("::1".to_owned()),
             port: 0,
             wait_for_browser: Duration::from_secs(1),
+            open_with: None,
         };
         // A machine with no IPv6 loopback cannot bind it; the URL shape is what is tested.
         if let Ok(driver) = ServeDriver::bind(folder.path(), &options) {
@@ -554,6 +622,7 @@ mod tests {
             host: Some("127.0.0.1".to_owned()),
             port: u16::MAX,
             wait_for_browser: Duration::from_secs(1),
+            open_with: None,
         };
         assert!(matches!(
             ServeDriver::bind(folder.path(), &options),

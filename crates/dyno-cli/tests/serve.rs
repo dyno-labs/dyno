@@ -280,6 +280,30 @@ fn a_device_check_records_the_phone_and_reads_its_footprint_at_idle() {
         serde_json::from_str(&std::fs::read_to_string(&saved).unwrap()).unwrap();
     assert_eq!(saved["phone"]["identifier"], "iPhone15,3");
     assert!(!saved["samples"].as_array().unwrap().is_empty());
+    // The timeline holds Safari's processes from the phone's samples, with the run's steps.
+    let timeline = &result["run"]["timeline"];
+    assert_eq!(timeline["method"], "sysmontap", "{timeline}");
+    let roles: Vec<(u64, &str)> = timeline["processes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|process| {
+            (
+                process["pid"].as_u64().unwrap(),
+                process["role"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(roles, [(88, "browser"), (90, "gpu"), (412, "game")]);
+    let marks: Vec<&str> = timeline["marks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|mark| mark["mark"].as_str().unwrap())
+        .collect();
+    for step in ["navigated", "idle", "activated"] {
+        assert!(marks.contains(&step), "{marks:?}");
+    }
 }
 
 #[test]
@@ -491,6 +515,12 @@ fn a_kill_in_the_phone_s_log_is_a_kill() {
     // A process killed before idle has no footprint at idle.
     let footprint = run_measure(&result, "device.phys_footprint");
     assert_eq!(footprint["status"], "missing", "{footprint}");
+    // The timeline marks the kill.
+    let marks = result["run"]["timeline"]["marks"].as_array().unwrap();
+    assert!(
+        marks.iter().any(|mark| mark["mark"] == "killed"),
+        "{marks:?}"
+    );
 }
 
 #[test]

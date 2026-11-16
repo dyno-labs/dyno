@@ -40,7 +40,7 @@ cargo-deny = "0.20.2"
 cargo-dist = "0.34.0"
 # Change files and the release pull request (knope.toml, docs/releasing.md). knope tags its own
 # releases knope/v<version>.
-"github:knope-dev/knope" = { version = "0.23.2", version_prefix = "knope/v" }
+"github:knope-dev/knope" = { version = "0.24.0", version_prefix = "knope/v" }
 # The toolchain CI uses. The minimum version is rust-version in Cargo.toml (see test:msrv). It is
 # last, so that the tools above come before ~/.cargo/bin on the PATH.
 rust = { version = "1.99.1", components = "clippy,rustfmt", profile = "minimal" }

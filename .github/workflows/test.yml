@@ -137,7 +137,7 @@ jobs:
           else
             # archive.ubuntu.com answers slowly or not at all from their network, and Australia's mirror at once.
             sudo sed -i -E 's#http://(archive|security)\.ubuntu\.com#http://au.archive.ubuntu.com#g' /etc/apt/sources.list.d/*.sources /etc/apt/sources.list 2>/dev/null || true
-            npx --yes playwright-core@1.64.1 install --with-deps chromium
+            npx --yes playwright-core@1.65.1 install --with-deps chromium
             chromium="$(find "$HOME/.cache/ms-playwright" -path '*/chrome-linux*/chrome' -type f | head -n 1)"
             echo "DYNO_CHROMIUM=$chromium" >>"$GITHUB_ENV"
             echo "DYNO_CHROMIUM_SANDBOX=off" >>"$GITHUB_ENV"

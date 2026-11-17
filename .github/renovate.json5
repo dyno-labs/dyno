@@ -50,7 +50,7 @@
   osvVulnerabilityAlerts: true,
   vulnerabilityAlerts: { addLabels: ["security"] },
   // The Rust that Renovate's container uses for Cargo.lock and the notices: the CI toolchain.
-  constraints: { rust: "1.99.1" },
+  constraints: { rust: "1.100.0" },
 
   customManagers: [
     {

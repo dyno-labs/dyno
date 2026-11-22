@@ -4402,7 +4402,7 @@ Used by:
 - errno 0.3.14: https://github.com/lambda-fairy/rust-errno
 - fastrand 2.5.0: https://github.com/smol-rs/fastrand
 - flate2 1.1.11: https://github.com/rust-lang/flate2-rs
-- form_urlencoded 1.2.2: https://github.com/servo/rust-url
+- form_urlencoded 1.2.3: https://github.com/servo/rust-url
 - hashbrown 0.17.1: https://github.com/rust-lang/hashbrown
 - heck 0.5.0: https://github.com/withoutboats/heck
 - httparse 1.10.1: https://github.com/seanmonstar/httparse
@@ -4436,7 +4436,7 @@ Used by:
 - tungstenite 0.30.0: https://github.com/snapview/tungstenite-rs
 - unicode-segmentation 1.13.3: https://github.com/unicode-rs/unicode-segmentation
 - unicode-width 0.2.3: https://github.com/unicode-rs/unicode-width
-- url 2.5.8: https://github.com/servo/rust-url
+- url 2.5.9: https://github.com/servo/rust-url
 - uuid 1.29.1: https://github.com/uuid-rs/uuid
 - wasi 0.11.1+wasi-snapshot-preview1: https://github.com/bytecodealliance/wasi
 - wasip2 1.0.4+wasi-0.2.12: https://github.com/bytecodealliance/wasi-rs

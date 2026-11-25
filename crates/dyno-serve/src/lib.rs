@@ -27,9 +27,11 @@
 //! shared network another device, or the game of another check, can neither start or end a run
 //! nor add to it.
 //!
-//! A driver serves one run. The game server is on a free port, new for each driver and never one
-//! that an earlier driver of this process had, so a game frame left from an earlier run, in a
-//! tab that missed its end, reaches no later run's game server.
+//! A driver serves one run, and its game server is on a port that no earlier run of this
+//! process had, so a game frame left from an earlier run, in a tab that missed its end, reaches no
+//! later run's game server. The port is in a fixed range after the harness page's, so a firewall
+//! can let the runs through: with the harness page at port P, the game of the process's k-th run
+//! is at P + 1 + k, up to P + [`GAME_PORTS`].
 //!
 //! What a served run cannot see: requests to other hosts, such as a CDN or the game's server,
 //! and the JS heap, which Safari does not expose. The phone's memory comes from the device tools
@@ -72,8 +74,14 @@ mod run;
 pub const DRIVER_NAME: &str = "serve";
 
 /// The harness page's port when none is given. A fixed port gives the same address on every run,
-/// though each run's URL has a key of its own. The game's port is a free one, new for each run.
+/// though each run's URL has a key of its own. The game's port is one of the [`GAME_PORTS`] after
+/// it, new for each run.
 pub const DEFAULT_PORT: u16 = 7370;
+
+/// How many ports after the harness page's the games of one process's runs can take: one for
+/// each run, so enough for any sensible `--runs`, the empty build's runs and the game's together.
+/// docs/cli.md, the help of `--serve-port` and the change file give this number.
+pub const GAME_PORTS: u16 = 64;
 
 /// How long a run waits for a browser to open the harness page when no time is given.
 pub const DEFAULT_WAIT_FOR_BROWSER: Duration = Duration::from_secs(10 * 60);
@@ -99,8 +107,9 @@ pub struct ServeOptions {
     /// address too. When they cannot be bound there, they are at the local network address
     /// alone, as with no tunnel address.
     pub tunnel_host: Option<IpAddr>,
-    /// The harness page's port. 0 takes a free port. The game's port is always a free one, new
-    /// for each driver.
+    /// The harness page's port. The game's is the first of the [`GAME_PORTS`] after it that is
+    /// free and that no earlier run of this process had. 0, as the tests use, takes a free port
+    /// for each, one that no earlier run of this process had for the game.
     pub port: u16,
     /// How long the run waits for a browser to open the harness page.
     pub wait_for_browser: Duration,
@@ -182,17 +191,17 @@ impl ServeDriver {
         check_probe_path(&build)?;
         let mut tunnel_refused = None;
         let places = match (&options.host, options.tunnel_host) {
-            (Some(host), _) => vec![Place::bind(host, options.port, ServePath::Given)?],
+            (Some(host), _) => vec![HarnessAt::bind(host, options.port, ServePath::Given)?],
             (None, tunnel) => {
                 let at_tunnel = tunnel.and_then(|tunnel| {
                     // The tunnel can go between the moment its address was read and now, and
                     // then the address is no longer this machine's.
-                    Place::bind(&tunnel.to_string(), options.port, ServePath::Tunnel)
+                    HarnessAt::bind(&tunnel.to_string(), options.port, ServePath::Tunnel)
                         .map_err(|error| tunnel_refused = Some(error.to_string()))
                         .ok()
                 });
                 let local = local_network_address();
-                let at_local = |path| Place::bind(&local.to_string(), options.port, path);
+                let at_local = |path| HarnessAt::bind(&local.to_string(), options.port, path);
                 match at_tunnel {
                     // A phone cannot reach the loopback address, so it is no second path. A
                     // local network address that cannot be bound leaves the tunnel alone.
@@ -205,6 +214,7 @@ impl ServeDriver {
                 }
             }
         };
+        let places = with_games(places, options.port)?;
         let key = RunKey::new()?;
         Ok(ServeDriver {
             build,
@@ -409,36 +419,105 @@ struct Place {
     path: ServePath,
 }
 
-impl Place {
-    /// Binds the harness page's server on `port` of `host`, and the game's on a free port that no
-    /// earlier place of this process had. Port 0 takes a free port for the harness page too.
-    fn bind(host: &str, port: u16, path: ServePath) -> Result<Place, ServeError> {
+/// The harness page's server, bound at one address of this machine, before the game's.
+struct HarnessAt {
+    listener: TcpListener,
+    /// The address bound, and the host a browser reaches it at.
+    bind_to: IpAddr,
+    host: String,
+    path: ServePath,
+}
+
+impl HarnessAt {
+    /// Binds the harness page's server on `port` of `host`. Port 0 takes a free port.
+    fn bind(host: &str, port: u16, path: ServePath) -> Result<HarnessAt, ServeError> {
         // An address is bound as it is. A name could be any of this machine's addresses.
         let bind_to = host
             .parse::<IpAddr>()
             .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
-        let harness = listen(bind_to, port)?;
-        let game = listen_on_a_new_port(bind_to)?;
-        Ok(Place {
-            harness_base: url(host, &harness)?,
-            game_url: url(host, &game)?,
-            harness,
-            game,
+        Ok(HarnessAt {
+            listener: listen(bind_to, port)?,
+            bind_to,
+            host: host.to_owned(),
             path,
         })
     }
 }
 
-/// The game ports that this process has served on. The system can give a port again once it is
-/// free, and a game frame left from an earlier run would reach the next run's game server there.
-static GAME_PORTS: Mutex<Vec<u16>> = Mutex::new(Vec::new());
+/// The places of a run: each harness page's server, with a game server at the same address. The
+/// game servers of one run share one port, so the game's port is the same at every address.
+fn with_games(harnesses: Vec<HarnessAt>, harness_port: u16) -> Result<Vec<Place>, ServeError> {
+    let addresses: Vec<IpAddr> = harnesses.iter().map(|harness| harness.bind_to).collect();
+    let mut used = USED_GAME_PORTS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    let games = match harness_port {
+        0 => addresses
+            .iter()
+            .map(|address| listen_on_a_new_port(*address, &mut used))
+            .collect::<Result<Vec<_>, _>>()?,
+        port => game_ports_after(&addresses, port, &mut used)?,
+    };
+    harnesses
+        .into_iter()
+        .zip(games)
+        .map(|(harness, game)| {
+            Ok(Place {
+                harness_base: url(&harness.host, &harness.listener)?,
+                game_url: url(&harness.host, &game)?,
+                harness: harness.listener,
+                game,
+                path: harness.path,
+            })
+        })
+        .collect()
+}
+
+/// The game ports that this process has served on. A game frame left from an earlier run would
+/// reach a later run's game server at the same port.
+static USED_GAME_PORTS: Mutex<Vec<u16>> = Mutex::new(Vec::new());
+
+/// The game servers of a run whose harness page is at `port`, one at each address: at the first
+/// port from `port` + 1 to `port` + [`GAME_PORTS`] that is not in `used` and is free at every
+/// address. A port that another program has is skipped, and taken by a later run once it is free.
+/// The port is added to `used`. With every port of the range used or busy, the run is an error:
+/// it neither starts the range again nor takes a port outside it, which a firewall would stop.
+fn game_ports_after(
+    addresses: &[IpAddr],
+    port: u16,
+    used: &mut Vec<u16>,
+) -> Result<Vec<TcpListener>, ServeError> {
+    let first = u32::from(port) + 1;
+    let last = (u32::from(port) + u32::from(GAME_PORTS)).min(u32::from(u16::MAX));
+    for candidate in (first..=last).filter_map(|candidate| u16::try_from(candidate).ok()) {
+        if used.contains(&candidate) {
+            continue;
+        }
+        let Ok(games) = addresses
+            .iter()
+            .map(|address| listen(*address, candidate))
+            .collect::<Result<Vec<_>, _>>()
+        else {
+            continue;
+        };
+        used.push(candidate);
+        return Ok(games);
+    }
+    Err(ServeError::Bind {
+        address: format!("ports {first} to {last}"),
+        detail: format!(
+            "every game port after the harness page's port {port} is busy, or an earlier run of \
+             this dyno had it, and each run's game needs a port of its own: run dyno again, or \
+             give another --serve-port"
+        ),
+    })
+}
 
 /// How many ports the system may give that this process has served on, before it gives up.
 const PORT_TRIES: usize = 64;
 
-/// A listener on a free port of this address that no earlier game server of this process had.
-fn listen_on_a_new_port(address: IpAddr) -> Result<TcpListener, ServeError> {
-    let mut used = GAME_PORTS.lock().unwrap_or_else(PoisonError::into_inner);
+/// A listener on a free port of this address that is not in `used`, which it is added to.
+fn listen_on_a_new_port(address: IpAddr, used: &mut Vec<u16>) -> Result<TcpListener, ServeError> {
     // A port that was used before is held, not closed, so the system gives another.
     let mut held = Vec::new();
     while held.len() < PORT_TRIES {
@@ -972,6 +1051,160 @@ mod tests {
         }
     }
 
+    /// Loopback addresses that no other test binds, so the ports there are this test's alone.
+    /// Linux routes the whole of 127.0.0.0/8 to loopback.
+    #[cfg(target_os = "linux")]
+    const OWN: [IpAddr; 2] = [
+        IpAddr::V4(Ipv4Addr::new(127, 0, 0, 3)),
+        IpAddr::V4(Ipv4Addr::new(127, 0, 0, 4)),
+    ];
+
+    /// A harness page's port whose range of game ports is free at `OWN`: one the system gives,
+    /// with the whole range under the last port.
+    #[cfg(target_os = "linux")]
+    fn free_range_at(address: IpAddr) -> u16 {
+        loop {
+            let port = listen(address, 0).unwrap().local_addr().unwrap().port();
+            if port.checked_add(GAME_PORTS).is_some() {
+                return port;
+            }
+        }
+    }
+
+    /// The port of each game listener.
+    #[cfg(target_os = "linux")]
+    fn ports(listeners: &[TcpListener]) -> Vec<u16> {
+        listeners
+            .iter()
+            .map(|listener| listener.local_addr().unwrap().port())
+            .collect()
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_games_of_a_process_s_runs_take_the_ports_after_the_harness_s_in_turn_and_then_stop() {
+        let port = free_range_at(OWN[0]);
+        let mut used = Vec::new();
+        for k in 0..GAME_PORTS {
+            // Each game server is gone before the next run, and its port is not taken again.
+            let games = game_ports_after(&OWN[..1], port, &mut used).unwrap();
+            assert_eq!(ports(&games), [port + 1 + k]);
+        }
+        let error = game_ports_after(&OWN[..1], port, &mut used).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "cannot serve on ports {} to {}: every game port after the harness page's port \
+                 {port} is busy, or an earlier run of this dyno had it, and each run's game needs \
+                 a port of its own: run dyno again, or give another --serve-port",
+                port + 1,
+                port + GAME_PORTS
+            )
+        );
+        assert_eq!(
+            GAME_PORTS, 64,
+            "docs/cli.md, the help and the change file say 64"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_busy_port_in_the_range_is_skipped_and_taken_once_it_is_free() {
+        let port = free_range_at(OWN[0]);
+        let mut used = Vec::new();
+        let busy = listen(OWN[0], port + 1).unwrap();
+        assert_eq!(
+            ports(&game_ports_after(&OWN[..1], port, &mut used).unwrap()),
+            [port + 2]
+        );
+        drop(busy);
+        assert_eq!(
+            ports(&game_ports_after(&OWN[..1], port, &mut used).unwrap()),
+            [port + 1]
+        );
+        assert_eq!(
+            ports(&game_ports_after(&OWN[..1], port, &mut used).unwrap()),
+            [port + 3]
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_run_s_game_has_one_port_at_every_address() {
+        let port = free_range_at(OWN[1]);
+        let mut used = Vec::new();
+        // Busy at one of the two addresses only: the run takes the next port at both.
+        let _busy = listen(OWN[1], port + 1).unwrap();
+        let games = game_ports_after(&OWN, port, &mut used).unwrap();
+        assert_eq!(ports(&games), [port + 2, port + 2]);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn with_the_default_port_the_games_take_the_ports_the_docs_name() {
+        // docs/cli.md and the change file tell a firewall to let 7370 to 7434 through.
+        assert_eq!((DEFAULT_PORT, DEFAULT_PORT + GAME_PORTS), (7370, 7434));
+        let mut used = Vec::new();
+        let games = game_ports_after(&OWN[..1], DEFAULT_PORT, &mut used).unwrap();
+        let game = ports(&games)[0];
+        assert!((7371..=7434).contains(&game), "{game}");
+    }
+
+    #[test]
+    fn the_range_of_game_ports_ends_at_the_last_port() {
+        let address = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        let mut used = Vec::new();
+        let error = game_ports_after(&[address], u16::MAX, &mut used).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .starts_with("cannot serve on ports 65536 to 65535: "),
+            "{error}"
+        );
+        // With every port used up to the last, nothing past it is tried.
+        let mut used: Vec<u16> = (65_500..=u16::MAX).collect();
+        assert!(game_ports_after(&[address], 65_499, &mut used).is_err());
+    }
+
+    #[test]
+    fn a_driver_s_game_is_in_the_range_after_its_harness_page() {
+        let folder = tempfile::tempdir().unwrap();
+        let port = loop {
+            let port = listen(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)
+                .unwrap()
+                .local_addr()
+                .unwrap()
+                .port();
+            if port.checked_add(GAME_PORTS).is_some() {
+                break port;
+            }
+        };
+        let options = ServeOptions {
+            host: Some("127.0.0.1".to_owned()),
+            tunnel_host: None,
+            port,
+            wait_for_browser: Duration::from_secs(1),
+            open_with: None,
+        };
+        let driver = ServeDriver::bind(folder.path(), &options).unwrap();
+        assert_eq!(
+            driver.harness_url().split("/?").next().unwrap(),
+            format!("http://127.0.0.1:{port}")
+        );
+        let game: u16 = driver
+            .game_url()
+            .rsplit(':')
+            .next()
+            .unwrap()
+            .trim_end_matches('/')
+            .parse()
+            .unwrap();
+        assert!(
+            (port + 1..=port + GAME_PORTS).contains(&game),
+            "{game} after {port}"
+        );
+    }
+
     #[test]
     fn each_driver_s_game_is_on_a_port_that_no_earlier_driver_had() {
         let folder = tempfile::tempdir().unwrap();
@@ -997,6 +1230,6 @@ mod tests {
             assert!(!seen.contains(&game), "{game} again");
             seen.push(game);
         }
-        assert!(GAME_PORTS.lock().unwrap().len() >= 20);
+        assert!(USED_GAME_PORTS.lock().unwrap().len() >= 20);
     }
 }

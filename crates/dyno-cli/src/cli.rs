@@ -160,8 +160,8 @@ pub struct CheckArgs {
     #[arg(long, value_name = "HOST")]
     pub serve_host: Option<String>,
 
-    /// [phase 1] With --driver serve, the harness page's port. The game is on a free port, new
-    /// for each run [default: 7370]
+    /// [phase 1] With --driver serve, the harness page's port. Each run's game takes a port of its
+    /// own from the 64 after it, so open PORT to PORT + 64 on a firewall [default: 7370]
     #[arg(long, value_name = "PORT")]
     pub serve_port: Option<u16>,
 

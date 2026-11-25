@@ -4,6 +4,7 @@
 //! Every key is Ed25519. A public key is its raw 32 bytes, and a receipt names it by its key id.
 //! A private key is the 32-byte seed of RFC 8032, kept in a private key file.
 
+use std::collections::HashSet;
 use std::fmt;
 
 use dyno_schema::canonical::sha256_hex;
@@ -58,6 +59,11 @@ pub enum KeyError {
         field: &'static str,
         text: String,
     },
+    #[error(
+        "the keys document has key id {0} twice: a key has one entry, so that it has one \
+         retirement time"
+    )]
+    KeyIdTwice(String),
     #[error("it is not a private key file that dyno receipt keygen wrote: {0}")]
     NotAPrivateKey(&'static str),
     #[error("the system gave no random bytes for a new key")]
@@ -151,6 +157,19 @@ impl TrustedKey {
             .is_some_and(|retired| retired.time <= time)
     }
 
+    /// Whether the two are the same public key, whatever times each has.
+    pub(crate) fn is_same_key(&self, other: &TrustedKey) -> bool {
+        self.public_key == other.public_key
+    }
+
+    /// Where this entry stands among entries of the same key: the lowest is the one whose times
+    /// count. An entry that says the key is retired comes before one that does not, the earliest
+    /// retirement first, and then an entry of a keys document before a key given alone.
+    pub(crate) fn precedence(&self) -> (bool, Option<OffsetDateTime>, bool) {
+        let retired = self.retired_at.as_ref().map(|retired| retired.time);
+        (retired.is_none(), retired, self.created_at.is_none())
+    }
+
     /// Whether `signature` is this key's Ed25519 signature of `message`.
     pub fn signed(&self, message: &[u8], signature: &[u8; SIGNATURE_BYTES]) -> bool {
         UnparsedPublicKey::new(&signature::ED25519, &self.public_key)
@@ -161,8 +180,17 @@ impl TrustedKey {
 
 /// The keys of a lab's keys document that this dyno can verify with. A key of an algorithm that
 /// this dyno does not know is left out, so a lab can add one later. A key that is not what its
-/// entry says makes the whole document an error.
+/// entry says makes the whole document an error, and so does a key id with two entries: two
+/// entries could give one key two retirement times.
 pub fn trusted_keys(document: &PublicKeys) -> Result<Vec<TrustedKey>, KeyError> {
+    let mut key_ids = HashSet::new();
+    if let Some(twice) = document
+        .keys
+        .iter()
+        .find(|entry| !key_ids.insert(entry.key_id.as_str()))
+    {
+        return Err(KeyError::KeyIdTwice(twice.key_id.clone()));
+    }
     document
         .keys
         .iter()
@@ -428,6 +456,53 @@ mod tests {
         assert!(retired.was_retired_at(at("2026-12-01T00:00:01Z")));
         let in_use = TrustedKey::from_base64url(PUBLIC_KEY).unwrap();
         assert!(!in_use.was_retired_at(at("2999-01-01T00:00:00Z")));
+    }
+
+    #[test]
+    fn a_keys_document_with_a_key_id_twice_is_an_error() {
+        let key = rfc_key();
+        // The second entry would make the key look in use again.
+        let twice = PublicKeys {
+            keys: vec![entry(&key, Some("2026-12-01T00:00:00Z")), entry(&key, None)],
+        };
+        assert_eq!(
+            trusted_keys(&twice),
+            Err(KeyError::KeyIdTwice(KEY_ID.to_owned()))
+        );
+        // An entry of another algorithm counts too: it claims the same id.
+        let mut newer = entry(&key, None);
+        newer.algorithm = "ml-dsa-65".to_owned();
+        let mixed = PublicKeys {
+            keys: vec![newer, entry(&key, None)],
+        };
+        assert_eq!(
+            trusted_keys(&mixed),
+            Err(KeyError::KeyIdTwice(KEY_ID.to_owned()))
+        );
+    }
+
+    #[test]
+    fn of_two_entries_of_one_key_the_retired_one_counts_then_the_document_s() {
+        let key = rfc_key();
+        let alone = TrustedKey::from_base64url(PUBLIC_KEY).unwrap();
+        let in_use = TrustedKey::from_document(&entry(&key, None)).unwrap();
+        let retired =
+            TrustedKey::from_document(&entry(&key, Some("2026-12-01T00:00:00Z"))).unwrap();
+        let earlier =
+            TrustedKey::from_document(&entry(&key, Some("2026-11-15T00:00:00Z"))).unwrap();
+        assert!(alone.is_same_key(&retired));
+        assert!(
+            !alone.is_same_key(
+                &TrustedKey::from_document(&entry(
+                    &SigningKey::from_seed(bytes(RFC_8032[1].0)),
+                    None
+                ))
+                .unwrap()
+            )
+        );
+        assert!(earlier.precedence() < retired.precedence());
+        assert!(retired.precedence() < in_use.precedence());
+        assert!(in_use.precedence() < alone.precedence());
     }
 
     #[test]

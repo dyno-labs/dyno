@@ -403,6 +403,123 @@ fn the_lab_s_key_among_other_keys_and_given_twice_still_verifies() {
 }
 
 #[test]
+fn a_key_given_alone_and_in_the_keys_document_is_retired_as_the_document_says() {
+    // The receipt is issued after the lab retired the key. The key alone has no times, and it
+    // must not hide the document's, in either order.
+    let file = receipt_file_issued(&device_result(), "2026-12-02T00:00:00Z");
+    let document = trusted_keys(&keys_document(Some("2026-12-01T00:00:00Z"))).unwrap();
+    let alone = trusted_lab_key();
+    let orders = [
+        vec![alone.clone(), document[0].clone()],
+        vec![document[0].clone(), alone.clone()],
+    ];
+    for keys in orders {
+        let verdict = verify(&file, &keys, Evidence::default()).unwrap();
+        assert!(!verdict.verified);
+        assert_eq!(check(&verdict, Signature).outcome, Match);
+        assert_eq!(check(&verdict, KeyNotRetired).outcome, Mismatch);
+        let key = verdict.key.unwrap();
+        assert!(key.retired);
+        assert_eq!(key.retired_at.as_deref(), Some("2026-12-01T00:00:00Z"));
+    }
+    // The key alone, with no document, is never retired.
+    assert!(
+        verify(&file, &[alone], Evidence::default())
+            .unwrap()
+            .verified
+    );
+}
+
+#[test]
+fn a_key_given_alone_and_in_the_keys_document_shows_the_document_s_times() {
+    let document = trusted_keys(&keys_document(None)).unwrap();
+    let keys = [trusted_lab_key(), document[0].clone()];
+    let verdict = verify(&receipt_file(&device_result()), &keys, Evidence::default()).unwrap();
+    assert!(verdict.verified);
+    let key = verdict.key.unwrap();
+    assert_eq!(key.created_at.as_deref(), Some("2026-11-01T00:00:00Z"));
+    assert!(!key.retired);
+}
+
+#[test]
+fn version_1_is_known_by_its_value_whatever_its_spelling() {
+    // `1.0` and `1e0` are the number 1, and the signed bytes say `1` for each.
+    for spelling in ["1.0", "1e0", "1.000", "10e-1"] {
+        let mut receipt = receipt_json();
+        receipt["receipt_version"] = serde_json::from_str(spelling).unwrap();
+        assert!(receipt["receipt_version"].is_f64(), "{spelling}");
+        let file = signed_by(&lab_key(), receipt);
+        let verdict = verify_signature(&file);
+        assert!(verdict.verified, "{spelling}");
+        assert_eq!(verdict.receipt.unwrap().receipt_version, 1);
+    }
+    // The receipt that dyno signed, with its version spelled another way, has the same bytes.
+    let mut file = receipt_file(&device_result());
+    file["receipt"]["receipt_version"] = serde_json::from_str("1.0").unwrap();
+    assert!(verify_signature(&file).verified);
+}
+
+#[test]
+fn a_version_that_is_not_1_is_refused_whatever_its_spelling() {
+    for (spelling, shown) in [("2.0", "2.0"), ("1.5", "1.5"), ("0", "0"), ("-1", "-1")] {
+        let mut receipt = receipt_json();
+        receipt["receipt_version"] = serde_json::from_str(spelling).unwrap();
+        let error = refused(&signed_by(&lab_key(), receipt)).to_string();
+        assert!(
+            error.starts_with(&format!(
+                "it has receipt_version {shown}, but this dyno reads"
+            )),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn a_result_hash_that_is_not_text_never_matches_even_a_receipt_that_states_none() {
+    let mut receipt = receipt_json();
+    receipt["result_hash"] = Value::Null;
+    let file = signed_by(&lab_key(), receipt);
+    for not_text in [json!(0), json!(false), json!(["a hash"]), json!({})] {
+        let result = json!({ "result_hash": not_text });
+        let evidence = Evidence {
+            result: Some(&result),
+            build_id: None,
+        };
+        let verdict = verify(&file, &[trusted_lab_key()], evidence).unwrap();
+        let hash = check(&verdict, ResultHash);
+        assert_eq!(hash.outcome, Mismatch, "{not_text}");
+        assert_eq!(hash.actual, None);
+        assert!(
+            hash.reason.as_ref().unwrap().contains("is not text"),
+            "{:?}",
+            hash.reason
+        );
+        assert!(!verdict.verified);
+    }
+    // A result with no result_hash, or a null one, states none, as the receipt does.
+    for states_none in [json!({}), json!({ "result_hash": null })] {
+        let evidence = Evidence {
+            result: Some(&states_none),
+            build_id: None,
+        };
+        let verdict = verify(&file, &[trusted_lab_key()], evidence).unwrap();
+        assert_eq!(check(&verdict, ResultHash).outcome, Match, "{states_none}");
+    }
+}
+
+#[test]
+fn a_result_hash_that_is_not_text_is_not_checked_when_no_key_signed_the_receipt() {
+    let forged = signed_by(&other_key(), receipt_json());
+    let result = json!({ "result_hash": 0 });
+    let evidence = Evidence {
+        result: Some(&result),
+        build_id: None,
+    };
+    let verdict = verify(&forged, &[trusted_lab_key()], evidence).unwrap();
+    assert_eq!(check(&verdict, ResultHash).outcome, NotChecked);
+}
+
+#[test]
 fn a_result_file_that_is_not_the_one_signed_does_not_match() {
     let result = device_result();
     let file = receipt_file(&result);

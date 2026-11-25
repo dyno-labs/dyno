@@ -1,8 +1,20 @@
 //! The build's files, as the game server serves them: a URL path to a file inside the build
 //! folder, its content type, and each HTML page with the probe's script tag added, or as it is.
+//!
+//! The server gives the files that the static scan's inventory lists, and no others, so a page
+//! under test loads only what the build id covers. The rule for what a build's files are is the
+//! scan's own (`dyno_static::inventory`), not a copy of it: no operating system litter, no
+//! version control folder, and nothing through a symbolic link. A build that was scanned serves
+//! only the files of that scan ([`Build::only_the_files_of`]), so a file that came after the scan
+//! is not served either.
 
-use std::path::{Component, Path, PathBuf};
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use dyno_schema::manifest::BuildManifest;
+use dyno_schema::path::RelPath;
+use dyno_static::inventory::listed_file;
 use percent_encoding::percent_decode_str;
 
 use crate::ServeError;
@@ -37,6 +49,9 @@ pub enum Pages {
 pub struct Build {
     /// The folder, with every link resolved.
     root: PathBuf,
+    /// The files of the scan that the build was listed by, when it was. None serves every file
+    /// that a scan of the folder would list now.
+    scanned: Option<Arc<BTreeSet<RelPath>>>,
 }
 
 impl Build {
@@ -51,32 +66,50 @@ impl Build {
         let root = path
             .canonicalize()
             .map_err(|error| ServeError::Build(format!("{}: {error}", path.display())))?;
-        Ok(Build { root })
+        Ok(Build {
+            root,
+            scanned: None,
+        })
     }
 
-    /// The file a URL path names, inside the build. None for a path that leaves the build, such
-    /// as through `..` or a link, and for a file that is not there. A folder serves its
+    /// The build with only the files of this manifest, which a scan of the folder gave. The
+    /// build id covers exactly these, so the server then gives exactly what the id names: a file
+    /// that was added to the folder after the scan is not served.
+    #[must_use]
+    pub fn only_the_files_of(mut self, manifest: &BuildManifest) -> Build {
+        let files = manifest.files.iter().map(|file| file.path.clone());
+        self.scanned = Some(Arc::new(files.collect()));
+        self
+    }
+
+    /// The file a URL path names, when it is a file of the build. A folder serves its
     /// `index.html`.
+    ///
+    /// None for a file that the scan's inventory does not list: one with a skipped name in its
+    /// path, such as `.git` or `__MACOSX`, and one reached through a symbolic link. None too for
+    /// a path that leaves the build, such as through `..`, and for a file that is not there.
     pub fn file(&self, url_path: &str) -> Option<PathBuf> {
-        let mut path = self.root.clone();
+        let mut relative = PathBuf::new();
         for segment in url_path.split('/') {
             let segment = percent_decode_str(segment).decode_utf8().ok()?;
             match segment.as_ref() {
                 "" | "." => {}
                 ".." => return None,
                 name if name.contains(['/', '\\', '\0']) => return None,
-                name => path.push(name),
+                name => relative.push(name),
             }
         }
-        if path.is_dir() {
-            path.push(INDEX);
+        if self.root.join(&relative).is_dir() {
+            relative.push(INDEX);
         }
-        let path = path.canonicalize().ok()?;
-        let inside = path.starts_with(&self.root)
-            && path
-                .components()
-                .all(|component| !matches!(component, Component::ParentDir));
-        (inside && path.is_file()).then_some(path)
+        // The path as the inventory writes it, by the same rule.
+        let path = RelPath::from_path(&relative).ok()?;
+        if let Some(scanned) = &self.scanned
+            && !scanned.contains(&path)
+        {
+            return None;
+        }
+        listed_file(&self.root, &path)
     }
 }
 
@@ -283,6 +316,103 @@ mod tests {
         .unwrap();
         let build = Build::open(&outer.path().join("build")).unwrap();
         assert_eq!(build.file("/link.txt"), None);
+    }
+
+    /// Operating system litter and version control, which the scan's inventory leaves out.
+    const SKIPPED: [&str; 5] = [".DS_Store", "Thumbs.db", "desktop.ini", "__MACOSX", ".git"];
+
+    #[test]
+    fn a_file_or_folder_that_the_scan_skips_names_nothing() {
+        let folder = tempfile::tempdir().unwrap();
+        fs::create_dir(folder.path().join("assets")).unwrap();
+        fs::write(folder.path().join("assets/a.png"), "png").unwrap();
+        for name in SKIPPED {
+            fs::write(folder.path().join("assets").join(name), "litter").unwrap();
+            fs::create_dir(folder.path().join(name)).unwrap();
+            fs::write(folder.path().join(name).join("inside.js"), "litter").unwrap();
+            fs::write(folder.path().join(name).join("index.html"), "litter").unwrap();
+        }
+        let build = Build::open(folder.path()).unwrap();
+        for name in SKIPPED {
+            for path in [
+                format!("/assets/{name}"),
+                format!("/{name}/inside.js"),
+                // A folder's own page is not served from a skipped folder either.
+                format!("/{name}/"),
+                format!("/{name}"),
+            ] {
+                assert_eq!(build.file(&path), None, "{path}");
+            }
+        }
+        // A file beside them is still served.
+        assert!(build.file("/assets/a.png").is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_inside_the_build_names_nothing_and_its_target_does() {
+        let folder = tempfile::tempdir().unwrap();
+        let root = folder.path().canonicalize().unwrap();
+        fs::create_dir(root.join("js")).unwrap();
+        fs::write(root.join("js/main.js"), "1").unwrap();
+        std::os::unix::fs::symlink(root.join("js/main.js"), root.join("same.js")).unwrap();
+        std::os::unix::fs::symlink(root.join("js"), root.join("same-js")).unwrap();
+        let build = Build::open(&root).unwrap();
+        // The scan lists the file once, by its own path, so that is its only URL.
+        assert_eq!(build.file("/js/main.js"), Some(root.join("js/main.js")));
+        assert_eq!(build.file("/same.js"), None);
+        assert_eq!(build.file("/same-js/main.js"), None);
+    }
+
+    fn manifest_of(paths: &[&str]) -> BuildManifest {
+        BuildManifest {
+            build_id: None,
+            files: paths
+                .iter()
+                .map(|path| dyno_schema::manifest::ManifestFile {
+                    path: RelPath::new(path).unwrap(),
+                    bytes: 0,
+                    sha256: String::new(),
+                    kind: dyno_schema::manifest::FileKind::Other,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn a_scanned_build_serves_the_files_of_its_scan_and_no_file_that_came_after() {
+        let folder = tempfile::tempdir().unwrap();
+        fs::create_dir(folder.path().join("js")).unwrap();
+        fs::write(folder.path().join("index.html"), "page").unwrap();
+        fs::write(folder.path().join("js/main.js"), "1").unwrap();
+        let root = folder.path().canonicalize().unwrap();
+        let scanned = manifest_of(&["index.html", "js/main.js"]);
+        let build = Build::open(folder.path())
+            .unwrap()
+            .only_the_files_of(&scanned);
+        fs::write(folder.path().join("js/late.js"), "2").unwrap();
+        fs::write(folder.path().join("js/index.html"), "late page").unwrap();
+        assert_eq!(build.file("/"), Some(root.join("index.html")));
+        assert_eq!(build.file("/js/main.js"), Some(root.join("js/main.js")));
+        assert_eq!(build.file("/js/late.js"), None);
+        assert_eq!(build.file("/js/"), None);
+        // With no scan, the folder as it is now is the build.
+        let unscanned = Build::open(folder.path()).unwrap();
+        assert_eq!(unscanned.file("/js/late.js"), Some(root.join("js/late.js")));
+    }
+
+    #[test]
+    fn a_file_of_the_scan_that_has_gone_or_became_a_skipped_one_names_nothing() {
+        let folder = tempfile::tempdir().unwrap();
+        fs::create_dir(folder.path().join(".git")).unwrap();
+        fs::write(folder.path().join(".git/config"), "secret").unwrap();
+        // A manifest that a scan would never give: the skip rule holds for it all the same.
+        let scanned = manifest_of(&["gone.js", ".git/config"]);
+        let build = Build::open(folder.path())
+            .unwrap()
+            .only_the_files_of(&scanned);
+        assert_eq!(build.file("/gone.js"), None);
+        assert_eq!(build.file("/.git/config"), None);
     }
 
     #[test]

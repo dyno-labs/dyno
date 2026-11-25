@@ -595,6 +595,7 @@ dependencies = [
  "dyno-cdp",
  "dyno-run",
  "dyno-schema",
+ "dyno-static",
  "httparse",
  "memchr",
  "percent-encoding",

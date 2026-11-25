@@ -3,12 +3,17 @@
 //! A folder and a .zip of it give the same inventory, so the other families never know which one
 //! they read. The build id covers every file's path and SHA-256, so a rename changes it (design
 //! section 3, decision R3). It does not cover external URLs, so `bundle` lists them.
+//!
+//! The inventory is the build: what it leaves out is not part of the build, and the build id does
+//! not cover it. A server that gives a build to a browser must give the same files and no others,
+//! so the rule is here for it too: [`is_skipped_name`] for the names, and [`listed_file`] for one
+//! path of a build folder.
 
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use dyno_schema::canonical::sha256_hex;
 use dyno_schema::ids::MeasureId;
@@ -217,9 +222,28 @@ fn read_zip_within(
     Ok(files)
 }
 
-fn is_skipped_name(name: impl AsRef<OsStr>) -> bool {
+/// Whether a file or folder of this name is left out of a build, anywhere in it: operating
+/// system litter and version control. A folder of such a name is left out with all it holds.
+pub fn is_skipped_name(name: impl AsRef<OsStr>) -> bool {
     let name = name.as_ref();
     SKIPPED_NAMES.iter().any(|skipped| name == *skipped)
+}
+
+/// The file that `path` names in the build folder `build`, when the inventory of that folder
+/// lists it. `build` must have its own links resolved, as `Path::canonicalize` gives it.
+///
+/// None for a path the inventory leaves out: one with a skipped name in it, one that reaches
+/// its file through a symbolic link, and one that names no file. The walk does not follow links,
+/// so a listed file is reached by its own path, and resolving that path's links changes nothing.
+pub fn listed_file(build: &Path, path: &RelPath) -> Option<PathBuf> {
+    if path.as_str().split('/').any(is_skipped_name) {
+        return None;
+    }
+    let file: PathBuf = std::iter::once(build.as_os_str())
+        .chain(path.as_str().split('/').map(OsStr::new))
+        .collect();
+    let resolved = file.canonicalize().ok()?;
+    (resolved == file && resolved.is_file()).then_some(file)
 }
 
 /// Strips the one folder every entry sits under, as zipping a build folder makes it. With an
@@ -274,6 +298,28 @@ mod tests {
     use zip::write::SimpleFileOptions;
 
     use super::*;
+
+    #[test]
+    fn the_words_for_what_is_not_listed_name_every_skipped_name() {
+        for name in SKIPPED_NAMES {
+            assert!(NOT_LISTED.contains(name), "{name}");
+            assert!(is_skipped_name(name), "{name}");
+        }
+        assert!(NOT_LISTED.contains("symbolic links"));
+    }
+
+    #[test]
+    fn a_name_is_skipped_only_when_it_is_the_whole_name() {
+        for name in [
+            ".gitignore",
+            "git",
+            "my.DS_Store",
+            "__MACOSX__",
+            "index.html",
+        ] {
+            assert!(!is_skipped_name(name), "{name}");
+        }
+    }
 
     fn zip_with(files: &[(&str, &[u8])]) -> tempfile::NamedTempFile {
         let zip = tempfile::Builder::new().suffix(".zip").tempfile().unwrap();

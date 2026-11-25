@@ -3,8 +3,12 @@
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::path::Path;
 
+use dyno_schema::manifest::BuildManifest;
+use dyno_serve::files::Build;
 use dyno_serve::{BuildServer, ServeError};
+use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 
 /// One HTTP exchange: the head and the body.
 fn exchange(url: &str, request: &str) -> (String, Vec<u8>) {
@@ -110,4 +114,119 @@ fn a_zip_is_not_a_build_folder_to_serve() {
         BuildServer::start(&zip),
         Err(ServeError::Build(_))
     ));
+}
+
+/// Operating system litter and version control, which the scan's inventory leaves out.
+const SKIPPED: [&str; 5] = [".DS_Store", "Thumbs.db", "desktop.ini", "__MACOSX", ".git"];
+
+fn write_file(folder: &Path, path: &str, contents: &str) {
+    let path = folder.join(path);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, contents).unwrap();
+}
+
+/// A build folder with files in folders, a name that a URL must encode, and every kind of file
+/// that the scan skips: litter, a version control folder and symbolic links.
+fn build_with_skipped_files() -> tempfile::TempDir {
+    let folder = tempfile::tempdir().unwrap();
+    let root = folder.path();
+    write_file(root, "index.html", "<!doctype html><title>game</title>");
+    write_file(root, "js/main.js", "console.log('game')");
+    write_file(root, "assets/reel strip #1.png", "png");
+    write_file(root, "assets/sounds/win.mp3", "mp3");
+    for name in SKIPPED {
+        write_file(root, &format!("assets/{name}"), "litter");
+        write_file(root, &format!("{name}/inside.js"), "litter");
+    }
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(root.join("js/main.js"), root.join("same.js")).unwrap();
+        std::os::unix::fs::symlink(root.join("js"), root.join("same-js")).unwrap();
+    }
+    folder
+}
+
+/// The files of the build, as the static scan lists them.
+fn scan(build: &Path) -> BuildManifest {
+    dyno_static::inventory::scan(build)
+        .unwrap()
+        .summary
+        .into_manifest()
+        .unwrap()
+}
+
+/// The URL path of a build file, with every character that a URL would read as its own encoded.
+fn url_path(path: &str) -> String {
+    let parts: Vec<String> = path
+        .split('/')
+        .map(|part| utf8_percent_encode(part, NON_ALPHANUMERIC).to_string())
+        .collect();
+    format!("/{}", parts.join("/"))
+}
+
+/// The paths that the scan skips in [`build_with_skipped_files`].
+fn skipped_paths() -> Vec<String> {
+    let mut paths = Vec::new();
+    for name in SKIPPED {
+        paths.push(format!("/assets/{name}"));
+        paths.push(format!("/{name}/inside.js"));
+    }
+    if cfg!(unix) {
+        paths.push("/same.js".to_owned());
+        paths.push("/same-js/main.js".to_owned());
+    }
+    paths
+}
+
+/// Checks that a server of the build gives every file of the manifest with its own bytes, and a
+/// 404 for every path that the scan skips.
+fn assert_serves_the_inventory_and_no_more(
+    server: &BuildServer,
+    build: &Path,
+    files: &BuildManifest,
+) {
+    assert_eq!(files.files.len(), 4, "{files:?}");
+    for file in &files.files {
+        let (head, body) = get(server.url(), &url_path(file.path.as_str()));
+        assert!(
+            head.starts_with("HTTP/1.1 200 OK"),
+            "{:?}: {head}",
+            file.path
+        );
+        assert_eq!(
+            body,
+            fs::read(build.join(file.path.as_str())).unwrap(),
+            "{:?}",
+            file.path
+        );
+    }
+    for path in skipped_paths() {
+        let (head, body) = get(server.url(), &path);
+        assert!(head.starts_with("HTTP/1.1 404 Not Found"), "{path}: {head}");
+        assert_eq!(body, b"404 Not Found", "{path}");
+    }
+}
+
+#[test]
+fn a_build_server_gives_every_file_the_scan_lists_and_none_that_it_skips() {
+    let folder = build_with_skipped_files();
+    let files = scan(folder.path());
+    // With no scan to go by, the server applies the scan's own rule to each path.
+    let server = BuildServer::start(folder.path()).unwrap();
+    assert_serves_the_inventory_and_no_more(&server, folder.path(), &files);
+}
+
+#[test]
+fn a_build_server_of_a_scanned_build_gives_the_files_of_the_scan_and_no_more() {
+    let folder = build_with_skipped_files();
+    let files = scan(folder.path());
+    let build = Build::open(folder.path())
+        .unwrap()
+        .only_the_files_of(&files);
+    let server = BuildServer::start_build(build).unwrap();
+    assert_serves_the_inventory_and_no_more(&server, folder.path(), &files);
+    // A file that came after the scan is not in the build id, so it is not served.
+    write_file(folder.path(), "js/late.js", "late");
+    let (head, _) = get(server.url(), "/js/late.js");
+    assert!(head.starts_with("HTTP/1.1 404 Not Found"), "{head}");
 }

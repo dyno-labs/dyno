@@ -103,6 +103,8 @@ percent-encoding = "2.3.2"
 # `--open-with` stops the browser it started with its whole process group, with no unsafe code.
 # Already in the tree through tempfile; this adds its process feature.
 rustix = { version = "1.1.6", features = ["process"] }
+# The served run's key, from the system's random source. Already in the tree through uuid.
+getrandom = "0.4.3"
 
 # `dyno mcp`, the MCP server: the official MCP Rust SDK. Only the server, its
 # tool macros and the stdio transport.

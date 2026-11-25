@@ -11,12 +11,18 @@ use std::time::{Duration, Instant};
 
 use common::{NO_CHROMIUM, Outcome, copy_dir, data_dir};
 
-/// One HTTP exchange: the status line and the body.
-fn exchange(address: &str, method: &str, path: &str, body: &str) -> (String, String) {
+/// One HTTP exchange with a server, named by its host and port and, for the harness page, the
+/// rest of its URL as dyno printed it: the status line and the body. The run key of a harness
+/// page's URL goes in the key header, as the page's own requests send it.
+fn exchange(server: &str, method: &str, path: &str, body: &str) -> (String, String) {
+    let (address, rest) = server.split_once('/').unwrap_or((server, ""));
+    let key = rest
+        .split_once("key=")
+        .map_or(String::new(), |(_, key)| format!("X-Dyno-Key: {key}\r\n"));
     let mut socket = TcpStream::connect(address).unwrap();
     write!(
         socket,
-        "{method} {path} HTTP/1.1\r\nHost: {address}\r\nContent-Length: {}\r\n\r\n{body}",
+        "{method} {path} HTTP/1.1\r\nHost: {address}\r\n{key}Content-Length: {}\r\n\r\n{body}",
         body.len()
     )
     .unwrap();
@@ -39,7 +45,8 @@ fn next_command(harness: &str) -> String {
 /// A served check in progress: dyno takes free ports, and prints the harness page's URL.
 struct Served {
     child: Child,
-    /// The harness page's host and port.
+    /// The harness page's URL as dyno printed it, without its `http://`: its host and port, and
+    /// the run's key.
     harness: String,
     /// What dyno printed before the URL, and the reader of the rest.
     stderr_before: String,
@@ -79,7 +86,7 @@ fn start_where_dyno_chooses(extra_env: &[(&str, &str)], args: &[&str]) -> Served
         );
         stderr_before.push_str(&line);
         if let Some(rest) = line.split("open http://").nth(1) {
-            break rest.split('/').next().unwrap().to_owned();
+            break rest.split(' ').next().unwrap().to_owned();
         }
     };
     let stderr_so_far = Arc::new(Mutex::new(String::new()));
@@ -137,6 +144,13 @@ const IPHONE_SAFARI: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS
 /// Plays the browser that opens the harness page, through to the end of the run. `query` is
 /// the query string the game loads with, which the page must name.
 fn open_as_browser(harness: &str, query: &str) {
+    let game = say_hello(harness, query);
+    finish_as_browser(harness, &game, query);
+}
+
+/// Plays the browser that opens the harness page, as far as its hello, after which the game
+/// server serves it. Gives the game server's host and port.
+fn say_hello(harness: &str, query: &str) -> String {
     let (_, page) = exchange(harness, "GET", "/", "");
     let game_url = page
         .split("const GAME_URL = \"http://")
@@ -145,12 +159,18 @@ fn open_as_browser(harness: &str, query: &str) {
         .unwrap();
     let (game, path) = game_url.split_once('/').unwrap();
     assert_eq!(path, query);
-    exchange(
+    let (status, _) = exchange(
         harness,
         "POST",
         "/__dyno/hello",
         &format!(r#"{{"user_agent":"{IPHONE_SAFARI}"}}"#),
     );
+    assert_eq!(status, "HTTP/1.1 200 OK");
+    game.to_owned()
+}
+
+/// Plays the browser whose page has said hello, through to the end of the run.
+fn finish_as_browser(harness: &str, game: &str, query: &str) {
     exchange(game, "GET", &format!("/{query}"), "");
     exchange(
         harness,
@@ -204,7 +224,7 @@ fn a_served_check_runs_in_the_browser_that_opens_it_and_records_no_query() {
     assert!(
         outcome
             .stderr
-            .contains(&format!("open http://{harness}/ in the browser")),
+            .contains(&format!("open http://{harness} in the browser")),
         "{}",
         outcome.stderr
     );
@@ -222,6 +242,54 @@ fn a_served_check_runs_in_the_browser_that_opens_it_and_records_no_query() {
     // The address was given, so dyno does not know which path it is. No lab was named.
     assert_eq!(result["run"]["serve_path"], "given");
     assert_eq!(result["run"]["lab"], serde_json::Value::Null);
+}
+
+#[test]
+fn the_run_s_key_is_printed_for_the_person_who_opens_the_page_and_stored_nowhere() {
+    let folder = tempfile::tempdir().unwrap();
+    let out = folder.path().join("result.json");
+    let served = start(
+        &[("DYNO_FAKE_PHONE", "")],
+        &[
+            "check",
+            "tiny-build",
+            "--driver",
+            "serve",
+            "--device",
+            "--no-open",
+            "--out",
+            &out.display().to_string(),
+        ],
+    );
+    let harness = served.harness.clone();
+    let (address, key) = harness.split_once("/?key=").unwrap();
+    assert_eq!(key.len(), 32, "{harness}");
+    // A page without the key, at the same address, starts nothing.
+    let hello = format!(r#"{{"user_agent":"{IPHONE_SAFARI}"}}"#);
+    for path in ["/", "/__dyno/hello", "/__dyno/next"] {
+        assert_eq!(
+            exchange(address, "POST", path, &hello).0,
+            "HTTP/1.1 403 Forbidden",
+            "{path}"
+        );
+    }
+    open_as_browser(&harness, "");
+    let outcome = served.finish();
+    // The person was told the URL, key and all.
+    assert!(
+        outcome
+            .stderr
+            .contains(&format!("open http://{harness} in the browser")),
+        "{}",
+        outcome.stderr
+    );
+    // Nothing that dyno stores holds it: the result and the phone's recording.
+    let recording = folder.path().join("result.device.json");
+    for file in [&out, &recording] {
+        let text = std::fs::read_to_string(file).unwrap();
+        assert!(!text.contains(key), "{}", file.display());
+    }
+    assert!(!outcome.stdout.contains(key));
 }
 
 #[test]
@@ -265,13 +333,8 @@ fn a_served_check_gives_the_browser_the_bytes_of_its_scan_and_nothing_else() {
     // and one is edited: neither the new file nor the new bytes are what the build id covers.
     std::fs::write(build.join("late.js"), "late").unwrap();
     std::fs::write(build.join("js/game.js"), "edited after the scan").unwrap();
-    let (_, page) = exchange(&harness, "GET", "/", "");
-    let game = page
-        .split("const GAME_URL = \"http://")
-        .nth(1)
-        .and_then(|rest| rest.split('/').next())
-        .unwrap()
-        .to_owned();
+    // The game server serves the page's browser once its page has said hello.
+    let game = say_hello(&harness, "");
     for path in ["/.git/config", "/.DS_Store", "/late.js"] {
         let (status, _) = exchange(&game, "GET", path, "");
         assert_eq!(status, "HTTP/1.1 404 Not Found", "{path}");
@@ -279,7 +342,7 @@ fn a_served_check_gives_the_browser_the_bytes_of_its_scan_and_nothing_else() {
     let (status, script) = exchange(&game, "GET", "/js/game.js", "");
     assert_eq!(status, "HTTP/1.1 200 OK");
     assert_eq!(script, scanned_script);
-    open_as_browser(&harness, "");
+    finish_as_browser(&harness, &game, "");
     let result: serde_json::Value = serde_json::from_str(&served.finish().stdout).unwrap();
     // Every file of the build id is one that the server gives.
     let files = result["deterministic"]["build"]["files"]
@@ -332,13 +395,7 @@ fn a_build_file_beside_the_probe_s_path_is_served_as_the_build_s() {
         &["check", &build.display().to_string(), "--driver", "serve"],
     );
     let harness = served.harness.clone();
-    let (_, page) = exchange(&harness, "GET", "/", "");
-    let game = page
-        .split("const GAME_URL = \"http://")
-        .nth(1)
-        .and_then(|rest| rest.split('/').next())
-        .unwrap()
-        .to_owned();
+    let game = say_hello(&harness, "");
     let (status, body) = exchange(&game, "GET", "/__dyno/data.json", "");
     assert_eq!(status, "HTTP/1.1 200 OK");
     assert_eq!(body, "{\"the build's\":1}");
@@ -346,7 +403,7 @@ fn a_build_file_beside_the_probe_s_path_is_served_as_the_build_s() {
     let (status, probe) = exchange(&game, "GET", "/__dyno/probe.js", "");
     assert_eq!(status, "HTTP/1.1 200 OK");
     assert!(probe.contains("data-dyno-relay"), "{probe}");
-    open_as_browser(&harness, "");
+    finish_as_browser(&harness, &game, "");
     served.finish();
 }
 
@@ -549,7 +606,7 @@ fn a_device_check_opens_the_harness_page_in_the_phones_safari() {
     let (outcome, result, harness) = device_check(&[&setting], &[], &[]);
     assert_eq!(
         std::fs::read_to_string(&launched).unwrap(),
-        format!("http://{harness}/")
+        format!("http://{harness}")
     );
     assert!(
         outcome
@@ -562,7 +619,7 @@ fn a_device_check_opens_the_harness_page_in_the_phones_safari() {
     assert!(
         outcome
             .stderr
-            .contains(&format!("open http://{harness}/ in the browser")),
+            .contains(&format!("open http://{harness} in the browser")),
         "{}",
         outcome.stderr
     );
@@ -613,7 +670,7 @@ fn devicectl_opens_the_page_when_the_phone_did_not() {
     let (outcome, _, harness) = device_check(&["fail=launch"], &env, &[]);
     assert_eq!(
         std::fs::read_to_string(&launched).unwrap().trim(),
-        format!("http://{harness}/")
+        format!("http://{harness}")
     );
     assert!(
         outcome
@@ -782,7 +839,7 @@ fn a_device_check_serves_over_the_device_link_when_this_machine_has_a_tunnel_to_
     assert!(harness.starts_with("127.0.0.1:"), "{harness}");
     assert_eq!(
         std::fs::read_to_string(&launched).unwrap(),
-        format!("http://{harness}/")
+        format!("http://{harness}")
     );
     assert!(
         outcome.stderr.contains(
@@ -828,7 +885,7 @@ fn with_no_request_over_the_device_link_dyno_says_so_and_a_person_opens_the_othe
         &[("DYNO_FAKE_PHONE", phone.as_str())],
         &["check", "tiny-build", "--driver", "serve", "--device"],
     );
-    let at_tunnel = format!("http://{}/", served.harness);
+    let at_tunnel = format!("http://{}", served.harness);
     // The phone's Safari never comes to the tunnel address, as when the tunnel has gone. After
     // 30 s dyno says so, with the local network address to open and the flag to run again with.
     let said = served.wait_for_stderr(NO_REQUEST, Duration::from_secs(90));
@@ -1061,7 +1118,7 @@ fn device_runs_check(phone: &[&str], args: &[&str]) -> Outcome {
         }
         said.push_str(&line);
         if let Some(rest) = line.split("open http://").nth(1) {
-            open_as_browser(rest.split('/').next().unwrap(), "");
+            open_as_browser(rest.split(' ').next().unwrap(), "");
         }
     }
     let output = child.wait_with_output().unwrap();

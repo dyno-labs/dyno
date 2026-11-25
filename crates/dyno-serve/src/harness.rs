@@ -8,6 +8,12 @@
 //! messages to its host) to `/__dyno/events` in small batches, and polls `/__dyno/next` for what
 //! to do: run the self-check, send the game a message, send what it holds, or end the run. An
 //! answer it posts goes last in the same batch as the events before it, so dyno sees them first.
+//!
+//! Each of the page's requests carries the run's key in a header ([`crate::key`]). The page sends
+//! no referrer, and neither does its frame, so the game's first request does not name the page's
+//! URL, which holds the key. The game gets its own URL and the page's messages, and no key.
+
+use crate::key::RunKey;
 
 /// The path the page posts `hello` to.
 pub const HELLO_PATH: &str = "/__dyno/hello";
@@ -18,7 +24,9 @@ pub const EVENTS_PATH: &str = "/__dyno/events";
 /// The path the page polls for its next command.
 pub const NEXT_PATH: &str = "/__dyno/next";
 
-/// The harness page. `{{GAME_URL}}` is the game's URL as a JSON string. The message the harness
+/// The harness page. `{{GAME_URL}}` is the game's URL and `{{KEY}}` the run's key, each as a JSON
+/// string. The referrer policy is in the page and on the frame, and the server sends it in a
+/// header too, so a browser that reads only one of them still sends none. The message the harness
 /// sends the game is `{type: name, value: true}`, as in the CDP harness: a provisional shape
 /// until the host profile fixes it. The self-check's WebGL context is lost again at once. Posts do
 /// not use `keepalive`, which caps a body at 64 KiB: a batch from a loading burst can be larger.
@@ -28,17 +36,19 @@ pub const NEXT_PATH: &str = "/__dyno/next";
 const PAGE: &str = r#"<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
 <title>dyno</title>
 <style>html,body{margin:0;height:100%;background:#000;color:#aaa;font:15px system-ui,sans-serif}iframe{display:block;border:0;width:100%;height:100%}p{margin:24px}</style>
 <p id="note">dyno: starting the run</p>
 <script>
 "use strict";
 const GAME_URL = {{GAME_URL}};
+const KEY = {{KEY}};
 const note = document.getElementById("note");
 const queue = [];
 let frame = null;
 const post = (path, body) =>
-  fetch(path, { method: "POST", headers: { "Content-Type": "text/plain" }, body: JSON.stringify(body) });
+  fetch(path, { method: "POST", headers: { "Content-Type": "text/plain", "X-Dyno-Key": KEY }, body: JSON.stringify(body) });
 let sending = false;
 const flush = async () => {
   if (sending) return;
@@ -80,7 +90,7 @@ const obey = async () => {
   for (;;) {
     let command;
     try {
-      command = await (await fetch("/__dyno/next")).json();
+      command = await (await fetch("/__dyno/next", { headers: { "X-Dyno-Key": KEY } })).json();
     } catch {
       await new Promise((resolve) => setTimeout(resolve, 1000));
       continue;
@@ -116,6 +126,7 @@ const obey = async () => {
   }
   frame = document.createElement("iframe");
   frame.allow = "autoplay; fullscreen";
+  frame.referrerPolicy = "no-referrer";
   const navigatedAt = performance.timeOrigin + performance.now();
   frame.src = GAME_URL;
   note.remove();
@@ -126,18 +137,31 @@ const obey = async () => {
 </script>
 "#;
 
-/// The harness page for a game at this URL.
-pub fn page(game_url: &str) -> String {
-    // A JSON string is a JS string. `</` is escaped so the URL cannot end the script element.
-    let literal = serde_json::Value::String(game_url.to_owned())
+/// The header that the server sends with the page, so the page and its frame send no referrer.
+pub const REFERRER_POLICY: (&str, &str) = ("Referrer-Policy", "no-referrer");
+
+/// The harness page for a game at this URL, in a run with this key.
+pub fn page(game_url: &str, key: &RunKey) -> String {
+    PAGE.replace("{{GAME_URL}}", &script_string(game_url))
+        .replace("{{KEY}}", &script_string(key.as_str()))
+}
+
+/// A JS string literal that holds `text`. A JSON string is a JS string. `</` is escaped so the
+/// text cannot end the script element.
+fn script_string(text: &str) -> String {
+    serde_json::Value::String(text.to_owned())
         .to_string()
-        .replace("</", "<\\/");
-    PAGE.replace("{{GAME_URL}}", &literal)
+        .replace("</", "<\\/")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::key::KEY_HEADER;
+
+    fn page(game_url: &str) -> String {
+        super::page(game_url, &RunKey::new().unwrap())
+    }
 
     #[test]
     fn the_page_loads_the_game_url_as_a_script_string() {
@@ -162,5 +186,39 @@ mod tests {
         for path in [HELLO_PATH, EVENTS_PATH, NEXT_PATH] {
             assert!(page.contains(path), "{path}");
         }
+    }
+
+    #[test]
+    fn every_request_of_the_page_carries_the_key_in_the_header_the_server_reads() {
+        let key = RunKey::new().unwrap();
+        let page = super::page("http://h/", &key);
+        assert!(page.contains(&format!(r#"const KEY = "{}";"#, key.as_str())));
+        // The page makes two kinds of request, posts and the poll, and each sends the header.
+        assert_eq!(page.matches("fetch(").count(), 2, "{page}");
+        assert_eq!(page.matches(&format!(r#""{KEY_HEADER}": KEY"#)).count(), 2);
+    }
+
+    #[test]
+    fn neither_the_page_nor_its_frame_sends_a_referrer() {
+        let page = page("http://h/");
+        assert!(page.contains(r#"<meta name="referrer" content="no-referrer">"#));
+        assert!(page.contains(r#"frame.referrerPolicy = "no-referrer";"#));
+        assert_eq!(REFERRER_POLICY, ("Referrer-Policy", "no-referrer"));
+    }
+
+    #[test]
+    fn the_frame_gets_no_key_from_the_page() {
+        let key = RunKey::new().unwrap();
+        let page = super::page("http://h/", &key);
+        // The key is in one place, its constant, and only the page's own requests read it.
+        assert_eq!(page.matches(key.as_str()).count(), 1);
+        assert_eq!(page.matches("KEY").count(), 3, "{page}");
+        // What the page gives the frame: its URL, and messages of the host profile's shape.
+        assert!(page.contains("frame.src = GAME_URL;"));
+        assert!(page.contains(r#"postMessage({ type: command.name, value: true }, "*")"#));
+        assert_eq!(page.matches("postMessage(").count(), 1, "{page}");
+        // The page never lowers its origin to the host's, which would let a frame from the
+        // game's port that does the same read it, key and all.
+        assert!(!page.contains("document.domain"), "{page}");
     }
 }

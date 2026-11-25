@@ -21,6 +21,12 @@
 //! browser has no driver binding. The run gives the same runner protocol messages as the CDP
 //! driver, so `dyno_run::lab` reads both the same way.
 //!
+//! Only the page that dyno asked for drives a run. The harness page's URL holds a key of 128
+//! random bits, new for each run, which every request to the harness server must carry (module
+//! `key`). The game server answers only the browser whose page said hello, from then on. So on a
+//! shared network another device, or the game of another check, can neither start or end a run
+//! nor add to it.
+//!
 //! What a served run cannot see: requests to other hosts, such as a CDN or the game's server,
 //! and the JS heap, which Safari does not expose. The phone's memory comes from the device tools
 //! instead (`dyno-ios`).
@@ -44,6 +50,7 @@ use dyno_schema::scrub::scrub;
 use tokio::sync::mpsc;
 
 use crate::files::{Build, check_probe_path};
+use crate::key::{KeyedUrl, RunKey};
 use crate::local::LocalBrowser;
 
 pub use crate::build_server::BuildServer;
@@ -52,6 +59,7 @@ mod build_server;
 pub mod files;
 mod harness;
 mod http;
+mod key;
 pub mod local;
 mod run;
 
@@ -59,7 +67,7 @@ mod run;
 pub const DRIVER_NAME: &str = "serve";
 
 /// The harness page's port when none is given. The game's is the next one. A fixed port gives
-/// the same URL on every run, so a phone can keep it as a bookmark.
+/// the same address on every run, though each run's URL has a key of its own.
 pub const DEFAULT_PORT: u16 = 7370;
 
 /// How long a run waits for a browser to open the harness page when no time is given.
@@ -111,6 +119,8 @@ pub enum ServeError {
     /// Whoever opens the page in the browser said to stop the run, and why.
     #[error("{0}")]
     Stopped(String),
+    #[error("cannot make the run's key: {0}")]
+    Key(String),
 }
 
 /// The served-run driver, with its servers bound.
@@ -120,6 +130,12 @@ pub struct ServeDriver {
     /// Where the two servers are, in the order the browser is asked: one place, or the tunnel
     /// address and then the local network address.
     places: Vec<Place>,
+    /// The next run's key ([`key`]), and the harness page's URL at each place with it.
+    key: RunKey,
+    harness_urls: Vec<KeyedUrl>,
+    /// Why there is no key for another run: the last run's was spent, and no new one could be
+    /// made. A run must not take a key that another has used.
+    no_key: Option<String>,
     /// Why the servers are not at the tunnel address the options gave.
     tunnel_refused: Option<String>,
     wait_for_browser: Duration,
@@ -183,8 +199,12 @@ impl ServeDriver {
                 }
             }
         };
+        let key = RunKey::new()?;
         Ok(ServeDriver {
             build,
+            harness_urls: harness_urls(&places, &key),
+            key,
+            no_key: None,
             places,
             tunnel_refused,
             wait_for_browser: options.wait_for_browser,
@@ -210,9 +230,10 @@ impl ServeDriver {
 
     /// The harness page's URL at the local network address, when the servers are there as well
     /// as at the tunnel address. No run asks the browser for it: a person opens it when the
-    /// tunnel address gets no request.
+    /// tunnel address gets no request. It holds the next run's key, as
+    /// [`ServeDriver::harness_url`] does.
     pub fn fallback_harness_url(&self) -> Option<&str> {
-        self.places.get(1).map(|place| place.harness_url.as_str())
+        self.harness_urls.get(1).map(KeyedUrl::as_str)
     }
 
     /// Why the servers are not at the tunnel address that the options gave. None when they are
@@ -231,9 +252,12 @@ impl ServeDriver {
         self.last_run
     }
 
-    /// The URL to open in the browser: the harness page, at the address asked for first.
+    /// The URL to open in the browser: the harness page, at the address asked for first, with
+    /// the next run's key. Each run has a key of its own, so after a run this is a new URL. Give
+    /// it to the browser, or to the person who opens the page, and keep it out of anything that
+    /// is stored: anyone with the URL can drive the run while it waits.
     pub fn harness_url(&self) -> &str {
-        &self.first().harness_url
+        self.harness_urls[0].as_str()
     }
 
     /// The game server's URL: the build's root, at the address asked for first.
@@ -263,6 +287,28 @@ impl ServeDriver {
     /// wait, and `open` has returned: it can still restart the browser until then, as by a
     /// launch of its own after the phone did not open the page. The run waits on.
     pub fn run_watched(
+        &mut self,
+        request: &RunRequest,
+        open: Option<Opener<'_>>,
+        say_no_request: Option<(Duration, &mut dyn FnMut())>,
+    ) -> Result<Vec<DriverMessage>, DriverError> {
+        if let Some(why) = &self.no_key {
+            return Err(DriverError::new(DriverErrorCode::Run, why));
+        }
+        let outcome = self.run_keyed(request, open, say_no_request);
+        // A run's key opens no other run: the next one has its own, and its own URLs.
+        match RunKey::new() {
+            Ok(key) => {
+                self.harness_urls = harness_urls(&self.places, &key);
+                self.key = key;
+            }
+            Err(error) => self.no_key = Some(error.to_string()),
+        }
+        outcome
+    }
+
+    /// [`ServeDriver::run_watched`], with the key the driver holds.
+    fn run_keyed(
         &mut self,
         request: &RunRequest,
         open: Option<Opener<'_>>,
@@ -352,12 +398,21 @@ fn driver_error(error: &ServeError) -> DriverError {
     DriverError::new(DriverErrorCode::Run, &error.to_string())
 }
 
+/// The harness page's URL at each place, with this key.
+fn harness_urls(places: &[Place], key: &RunKey) -> Vec<KeyedUrl> {
+    places
+        .iter()
+        .map(|place| KeyedUrl::new(&place.harness_base, key))
+        .collect()
+}
+
 /// The two servers, bound at one address of this machine, with their URLs.
 #[derive(Debug)]
 struct Place {
     harness: TcpListener,
     game: TcpListener,
-    harness_url: String,
+    /// The harness server's URL with no key, which no browser is given.
+    harness_base: String,
     game_url: String,
     /// The path a browser takes to this address.
     path: ServePath,
@@ -381,7 +436,7 @@ impl Place {
         let harness = listen(bind_to, port)?;
         let game = listen(bind_to, game_port)?;
         Ok(Place {
-            harness_url: url(host, &harness)?,
+            harness_base: url(host, &harness)?,
             game_url: url(host, &game)?,
             harness,
             game,

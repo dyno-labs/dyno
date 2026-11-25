@@ -12,8 +12,16 @@
 //! dyno answered `hello`. Probe events keep the game frame's own clock. The page and the frame
 //! share the browser's wall clock, so the frame's clock start is placed on the driver's clock by
 //! the browser's own times, never by this machine's.
+//!
+//! Only the page that dyno asked for drives the run. Every request to the harness server must
+//! carry the run's key ([`crate::key`]), or it is refused and changes nothing, not even the note
+//! that a browser came to that address. The game server serves the page's browser alone: from
+//! the `hello` on, it answers the address that the hello came from, and refuses every other, so
+//! no other device can add game requests to the run. Before the hello, there is no frame, and it
+//! answers no one.
 
 use std::collections::VecDeque;
+use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -29,8 +37,9 @@ use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
 use crate::files::{Build, PROBE_PATH, Pages, build_response};
-use crate::harness::{EVENTS_PATH, HELLO_PATH, NEXT_PATH, page};
+use crate::harness::{EVENTS_PATH, HELLO_PATH, NEXT_PATH, REFERRER_POLICY, page};
 use crate::http::{Response, accept, read_request, write_response};
+use crate::key::RunKey;
 use crate::{DRIVER_NAME, Place, RunTimes, ServeDriver, ServeError, browser_name};
 
 /// How often the run checks whether the frame is idle.
@@ -131,6 +140,10 @@ struct Shared {
     /// The place whose harness server took the page's `hello`: its index in the driver's
     /// places. The page that said it is the page that runs.
     hello_at: Mutex<Option<usize>>,
+    /// The run's key, which every request to the harness server must carry.
+    key: RunKey,
+    /// The address the page's `hello` came from: the only one the game server answers.
+    page_address: Mutex<Option<IpAddr>>,
 }
 
 /// What the two servers at one place share: the run, and what differs between places.
@@ -243,6 +256,8 @@ pub(crate) async fn run(
         greeted: AtomicBool::new(false),
         build: driver.build.clone(),
         hello_at: Mutex::new(None),
+        key: driver.key.clone(),
+        page_address: Mutex::new(None),
     });
     let served = run_at(driver, request, asks, no_request, &shared, seen).await;
     let hello_at = *shared
@@ -278,7 +293,10 @@ async fn run_at(
         let at = Arc::new(At {
             shared: Arc::clone(shared),
             place: index,
-            page: page(&launch_url_at(&request.launch_url, driver.first(), place)),
+            page: page(
+                &launch_url_at(&request.launch_url, driver.first(), place),
+                &shared.key,
+            ),
             game_origin: place.game_url.trim_end_matches('/').to_owned(),
         });
         servers.0.push(tokio::spawn(accept(
@@ -629,15 +647,37 @@ fn tokio_listener(listener: &std::net::TcpListener) -> Result<TcpListener, Serve
     TcpListener::from_std(listener.try_clone().map_err(bind_error)?).map_err(bind_error)
 }
 
+/// What a request to the harness server without the run's key gets: no route, and no change.
+const NO_KEY: &str = "dyno: this run needs the URL that dyno printed for it.\n";
+
 async fn serve_harness(at: Arc<At>, mut socket: TcpStream) {
     let Some(request) = read_request(&mut socket).await else {
         return;
     };
     let shared = &at.shared;
+    let keyed = request
+        .key
+        .as_deref()
+        .is_some_and(|key| shared.key.matches(key));
+    if !keyed {
+        let refused = Response::shared(
+            "403 Forbidden",
+            "text/plain; charset=utf-8",
+            NO_KEY.as_bytes(),
+        );
+        write_response(&mut socket, &refused, false).await;
+        return;
+    }
     let _ = shared.seen.send(Seen::HarnessRequest { place: at.place });
     let response = match (request.method.as_str(), request.path.as_str()) {
-        ("GET", "/") => Response::shared("200 OK", "text/html; charset=utf-8", at.page.as_bytes()),
-        ("POST", HELLO_PATH) => hello(&at, &request.body),
+        ("GET", "/") => {
+            let mut page =
+                Response::shared("200 OK", "text/html; charset=utf-8", at.page.as_bytes());
+            page.headers
+                .push((REFERRER_POLICY.0, REFERRER_POLICY.1.to_owned()));
+            page
+        }
+        ("POST", HELLO_PATH) => hello(&at, &request.body, peer_address(&socket)),
         ("POST", EVENTS_PATH) => events(shared, &request.body),
         ("GET", NEXT_PATH) => next_command(shared).await,
         _ => Response::error("404 Not Found"),
@@ -646,15 +686,24 @@ async fn serve_harness(at: Arc<At>, mut socket: TcpStream) {
 }
 
 /// The first `hello` starts the run, and its place is the path the run took. A later one is
-/// turned away, and so is one that is not a hello: neither sets the path.
-fn hello(at: &At, body: &[u8]) -> Response<'static> {
+/// turned away, and so is one that is not a hello: neither sets the path. The address it came
+/// from is the one the game server answers from then on.
+fn hello(at: &At, body: &[u8], from: Option<IpAddr>) -> Response<'static> {
     let shared = &at.shared;
     let Ok(hello) = serde_json::from_slice::<Hello>(body) else {
+        return Response::error("400 Bad Request");
+    };
+    // A socket with no peer address has gone, and its page with it.
+    let Some(from) = from else {
         return Response::error("400 Bad Request");
     };
     if shared.greeted.swap(true, Ordering::SeqCst) {
         return Response::error("409 Conflict");
     }
+    *shared
+        .page_address
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner) = Some(from);
     *shared
         .hello_at
         .lock()
@@ -703,11 +752,30 @@ fn json_response(value: &impl Serialize) -> Response<'static> {
     Response::new("200 OK", "application/json", body)
 }
 
+/// The address a connection comes from, as one form for IPv4 and IPv6: an IPv4 client of an
+/// IPv6 socket is its IPv4 address.
+fn peer_address(socket: &TcpStream) -> Option<IpAddr> {
+    socket
+        .peer_addr()
+        .ok()
+        .map(|address| address.ip().to_canonical())
+}
+
 async fn serve_game(at: Arc<At>, mut socket: TcpStream) {
     let Some(request) = read_request(&mut socket).await else {
         return;
     };
     let shared = &at.shared;
+    let page_address = *shared
+        .page_address
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    // The game's requests come from the browser whose page said hello. One from anywhere else,
+    // or from before the hello, is no request of this run: it is refused, and not counted.
+    if page_address.is_none() || peer_address(&socket) != page_address {
+        write_response(&mut socket, &Response::error("403 Forbidden"), false).await;
+        return;
+    }
     let head_only = request.method == "HEAD";
     // The probe's path is the one path here that is dyno's. Every other path is the build's, and
     // a build with a file of its own at the probe's path does not get this far.

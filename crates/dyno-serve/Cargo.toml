@@ -12,6 +12,7 @@ dyno-cdp.workspace = true
 dyno-run.workspace = true
 dyno-schema.workspace = true
 dyno-static.workspace = true
+getrandom.workspace = true
 httparse.workspace = true
 memchr.workspace = true
 percent-encoding.workspace = true

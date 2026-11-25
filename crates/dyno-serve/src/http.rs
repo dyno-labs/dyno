@@ -11,6 +11,8 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
+use crate::key::{KEY_HEADER, KEY_PARAMETER};
+
 /// The most of a request head the server reads.
 const MAX_HEAD_BYTES: usize = 16 * 1024;
 
@@ -42,6 +44,10 @@ pub struct Request {
     pub path: String,
     /// The `Range` header, as sent.
     pub range: Option<String>,
+    /// The run key the request carries ([`crate::key`]): the key header, as the harness page's
+    /// own requests send it, or else the key parameter of the query string, as the browser's
+    /// request for the page does.
+    pub key: Option<String>,
     pub body: Vec<u8>,
 }
 
@@ -150,7 +156,9 @@ pub async fn read_request(socket: &mut TcpStream) -> Option<Request> {
     };
     let method = parsed.method?.to_owned();
     let target = parsed.path?;
-    let path = target.split(['?', '#']).next().unwrap_or(target).to_owned();
+    let target = target.split('#').next().unwrap_or(target);
+    let (path, query) = target.split_once('?').unwrap_or((target, ""));
+    let path = path.to_owned();
     let header = |name: &str| {
         parsed
             .headers
@@ -167,6 +175,12 @@ pub async fn read_request(socket: &mut TcpStream) -> Option<Request> {
         return None;
     }
     let range = header("range");
+    let key = header(KEY_HEADER).or_else(|| {
+        query
+            .split('&')
+            .find_map(|pair| pair.strip_prefix(KEY_PARAMETER)?.strip_prefix('='))
+            .map(str::to_owned)
+    });
     let mut body = buffer[head_length..].to_vec();
     while body.len() < length {
         let count = socket.read(&mut chunk).await.ok()?;
@@ -180,6 +194,7 @@ pub async fn read_request(socket: &mut TcpStream) -> Option<Request> {
         method,
         path,
         range,
+        key,
         body,
     })
 }
@@ -330,6 +345,38 @@ mod tests {
             ("POST", "/a")
         );
         assert_eq!(request.body, b"hello");
+        assert_eq!(request.key, None);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_key_is_read_from_the_header_or_else_the_query_string() {
+        let header = read_from(b"GET /__dyno/next HTTP/1.1\r\nX-Dyno-Key: abc\r\n\r\n").await;
+        assert_eq!(header.unwrap().key.as_deref(), Some("abc"));
+        let header_case = read_from(b"GET / HTTP/1.1\r\nx-dyno-key: abc\r\n\r\n").await;
+        assert_eq!(header_case.unwrap().key.as_deref(), Some("abc"));
+        let query = read_from(b"GET /?a=1&key=abc#key=def HTTP/1.1\r\n\r\n")
+            .await
+            .unwrap();
+        assert_eq!(
+            (query.path.as_str(), query.key.as_deref()),
+            ("/", Some("abc"))
+        );
+        let both = read_from(b"GET /?key=def HTTP/1.1\r\nX-Dyno-Key: abc\r\n\r\n").await;
+        assert_eq!(both.unwrap().key.as_deref(), Some("abc"));
+        // Only a parameter named key, and only in the query string.
+        for bytes in [
+            &b"GET /?keys=abc HTTP/1.1\r\n\r\n"[..],
+            b"GET /?monkey=abc HTTP/1.1\r\n\r\n",
+            b"GET /#key=abc HTTP/1.1\r\n\r\n",
+        ] {
+            let request = read_from(bytes).await;
+            assert_eq!(
+                request.unwrap().key,
+                None,
+                "{}",
+                String::from_utf8_lossy(bytes)
+            );
+        }
     }
 
     #[tokio::test(flavor = "current_thread")]

@@ -21,16 +21,29 @@ use dyno_serve::{ServeDriver, ServeOptions};
 const IPHONE_SAFARI: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) \
     AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.2 Mobile/15E148 Safari/604.1";
 
-/// One HTTP exchange: the status line and the body.
+/// The host and port of a server's URL, and the run key in its query string: a harness page's
+/// URL has one.
+fn server(url: &str) -> (&str, Option<&str>) {
+    let rest = url.trim_start_matches("http://");
+    let (address, rest) = rest.split_once('/').unwrap_or((rest, ""));
+    (address, rest.split_once("key=").map(|(_, key)| key))
+}
+
+/// One HTTP exchange with the server at `url`: the status line and the body. The key of a
+/// harness page's URL goes in the key header, as the page's own requests send it.
 fn exchange(url: &str, method: &str, path: &str, body: &str) -> (String, String) {
-    let address = url
-        .trim_start_matches("http://")
-        .trim_end_matches('/')
-        .to_owned();
-    let mut socket = TcpStream::connect(&address).unwrap();
+    let (address, key) = server(url);
+    let headers = key.map_or(String::new(), |key| format!("X-Dyno-Key: {key}\r\n"));
+    send(address, method, path, &headers, body)
+}
+
+/// One HTTP exchange with the server at `address`, with these headers as they are: the status
+/// line and the body.
+fn send(address: &str, method: &str, target: &str, headers: &str, body: &str) -> (String, String) {
+    let mut socket = TcpStream::connect(address).unwrap();
     write!(
         socket,
-        "{method} {path} HTTP/1.1\r\nHost: {address}\r\nContent-Length: {}\r\n\r\n{body}",
+        "{method} {target} HTTP/1.1\r\nHost: {address}\r\n{headers}Content-Length: {}\r\n\r\n{body}",
         body.len()
     )
     .unwrap();
@@ -845,7 +858,7 @@ fn a_run_with_no_opener_asks_no_one_and_records_where_the_page_ran() {
 /// server's hello, and how long the answer took. The browser sends the start of a client hello,
 /// which is all a plain HTTP server needs to know it.
 fn try_tls(url: &str) -> (Vec<u8>, Duration) {
-    let address = url.trim_start_matches("http://").trim_end_matches('/');
+    let (address, _) = server(url);
     let mut socket = TcpStream::connect(address).unwrap();
     // Safari waits far longer than this for the server's hello.
     socket
@@ -994,4 +1007,371 @@ fn a_browser_that_dyno_starts_gives_its_memory_before_the_last_message_and_is_st
     // The program's process group is gone once the run is over.
     let group = rustix::process::Pid::from_raw(i32::try_from(browser).unwrap()).unwrap();
     assert!(rustix::process::test_kill_process_group(group).is_err());
+}
+
+/// The URL with no key: what a page of another run, or any other device, knows of the harness.
+fn without_key(url: &str) -> String {
+    url.split('?').next().unwrap().to_owned()
+}
+
+/// The URL with `key` as its key.
+fn with_key(url: &str, key: &str) -> String {
+    format!("{}?key={key}", without_key(url))
+}
+
+/// A key of the right length and shape that is not the run's.
+fn wrong_key(url: &str) -> String {
+    let key = server(url).1.unwrap();
+    key.chars()
+        .map(|char| if char == '0' { '1' } else { '0' })
+        .collect()
+}
+
+/// Every request a page makes of the harness server, by method and path, with a body that
+/// would be taken were it keyed: a frame document with a pixel ratio of 99, which no browser has,
+/// and the end of a flush.
+const HARNESS_ROUTES: [(&str, &str, &str); 5] = [
+    ("GET", "/", ""),
+    ("POST", "/__dyno/hello", r#"{"user_agent":"intruder"}"#),
+    (
+        "POST",
+        "/__dyno/events",
+        r#"[{"kind":"document","time_origin":1,"device_pixel_ratio":99},{"kind":"flushed"}]"#,
+    ),
+    ("GET", "/__dyno/next", ""),
+    ("GET", "/elsewhere", ""),
+];
+
+/// What the harness server at `url` answers each of its routes without the run's key: with no
+/// key, a wrong one, the key in upper case, and the key in a parameter of another name. Each is
+/// refused.
+fn assert_every_route_refused(url: &str) {
+    let (address, key) = server(url);
+    let key = key.unwrap();
+    let wrong = wrong_key(url);
+    let upper = key.to_uppercase();
+    let header = |key: &str| format!("X-Dyno-Key: {key}\r\n");
+    for (method, path, body) in HARNESS_ROUTES {
+        let tries = [
+            (path.to_owned(), String::new()),
+            (path.to_owned(), header(&wrong)),
+            (path.to_owned(), header(&upper)),
+            (format!("{path}?key={wrong}"), String::new()),
+            (format!("{path}?monkey={key}"), String::new()),
+            (format!("{path}#key={key}"), String::new()),
+        ];
+        for (target, headers) in tries {
+            let (status, answer) = send(address, method, &target, &headers, body);
+            assert_eq!(
+                (status.as_str(), answer.as_str()),
+                (
+                    "HTTP/1.1 403 Forbidden",
+                    "dyno: this run needs the URL that dyno printed for it.\n"
+                ),
+                "{method} {target} {headers}"
+            );
+        }
+    }
+}
+
+#[test]
+fn every_route_of_the_harness_refuses_a_request_without_the_run_s_key_and_changes_nothing() {
+    let options = options_with_a_tunnel(Duration::from_secs(30));
+    let (_build, driver, request) = page_run(&options);
+    let harness = driver.harness_url().to_owned();
+    let fallback = driver.fallback_harness_url().map(str::to_owned);
+    let (told, run) = run_watched(driver, request, Duration::from_millis(300));
+    told.wait_until("asked for the page", |told| !told.asked().is_empty());
+    // Before the hello: no request without the key starts a run or is the request that would
+    // keep dyno from saying that none came, at either address.
+    assert_every_route_refused(&harness);
+    if let Some(fallback) = &fallback {
+        assert_every_route_refused(fallback);
+    }
+    told.wait_until("said that no request came", |told| {
+        told.said_no_request() > 0
+    });
+
+    // The page with the key says hello: no refused hello took the run.
+    assert_eq!(get(&harness, "/").0, "HTTP/1.1 200 OK");
+    let hello = r#"{"user_agent":"curl/8.0"}"#;
+    assert_eq!(post(&harness, "/__dyno/hello", hello).0, "HTTP/1.1 200 OK");
+    let (_, page) = get(&harness, "/");
+    let game = page
+        .split("const GAME_URL = \"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .unwrap()
+        .to_owned();
+    get(&game, "/");
+    // During the run: no request without the key takes a command, sends events or ends the run.
+    assert_every_route_refused(&harness);
+    post(
+        &harness,
+        "/__dyno/events",
+        r#"[{"kind":"document","time_origin":1050,"device_pixel_ratio":3}]"#,
+    );
+    assert_every_route_refused(&harness);
+    assert_eq!(next_command(&harness), r#"{"command":"self_check"}"#);
+    post(
+        &harness,
+        "/__dyno/events",
+        r#"[{"kind":"self_check","webgl_renderer":null}]"#,
+    );
+    assert_eq!(
+        next_command(&harness),
+        r#"{"command":"send","name":"reels:active"}"#
+    );
+    assert_eq!(next_command(&harness), r#"{"command":"flush"}"#);
+    // A flush without the key does not end the run's wait.
+    assert_every_route_refused(&harness);
+    post(&harness, "/__dyno/events", r#"[{"kind":"flushed"}]"#);
+    assert_eq!(next_command(&harness), r#"{"command":"done"}"#);
+
+    let (messages, path) = run.join().unwrap();
+    let messages = messages.unwrap();
+    assert!(matches!(messages.last(), Some(DriverMessage::Done { .. })));
+    assert_eq!(path, Some(ServePath::Tunnel));
+    // The one frame document is the page's, and the self-check took its pixel ratio.
+    let documents = messages
+        .iter()
+        .filter(|message| {
+            matches!(
+                message,
+                DriverMessage::Mark {
+                    mark: RunMark::FrameDocument,
+                    ..
+                }
+            )
+        })
+        .count();
+    assert_eq!(documents, 1, "{messages:?}");
+    assert!(messages.iter().any(|message| matches!(
+        message,
+        DriverMessage::SelfCheck { device_pixel_ratio, .. } if *device_pixel_ratio == 3.0
+    )));
+    let DriverMessage::Hello { driver, .. } = &messages[0] else {
+        panic!("the first message is not hello: {:?}", messages[0]);
+    };
+    assert_eq!(driver.browser, None, "the intruder's user agent ran");
+}
+
+#[test]
+fn the_page_s_own_requests_send_the_key_in_a_header_and_the_page_sets_no_referrer() {
+    let options = ServeOptions {
+        host: Some("127.0.0.1".to_owned()),
+        tunnel_host: None,
+        port: 0,
+        wait_for_browser: Duration::from_secs(30),
+        open_with: None,
+    };
+    let (_build, mut driver, request) = page_run(&options);
+    let harness = driver.harness_url().to_owned();
+    let (address, key) = server(&harness);
+    let (address, key) = (address.to_owned(), key.unwrap().to_owned());
+    let run = thread::spawn(move || driver.run(&request));
+
+    // The browser asks for the URL dyno gave, with the key in its query string. The page holds
+    // the key for its own requests, and tells the browser to send no referrer, so the frame's
+    // request does not name this URL.
+    let mut socket = TcpStream::connect(&address).unwrap();
+    write!(
+        socket,
+        "GET /?key={key} HTTP/1.1\r\nHost: {address}\r\n\r\n"
+    )
+    .unwrap();
+    let mut response = String::new();
+    socket.read_to_string(&mut response).unwrap();
+    let (head, page) = response.split_once("\r\n\r\n").unwrap();
+    assert!(head.starts_with("HTTP/1.1 200 OK\r\n"), "{head}");
+    assert!(
+        format!("{head}\r\n").contains("\r\nReferrer-Policy: no-referrer\r\n"),
+        "{head}"
+    );
+    assert!(page.contains(&format!(r#"const KEY = "{key}";"#)));
+    assert!(page.contains(r#"frame.referrerPolicy = "no-referrer";"#));
+    // Its posts and its poll send the key in the header, as this test's helpers do.
+    let keyed = format!("X-Dyno-Key: {key}\r\n");
+    let hello = r#"{"user_agent":"curl/8.0"}"#;
+    assert_eq!(
+        send(&address, "POST", "/__dyno/hello", &keyed, hello).0,
+        "HTTP/1.1 200 OK"
+    );
+    finish_browser(&harness);
+    assert!(matches!(
+        run.join().unwrap().unwrap().last(),
+        Some(DriverMessage::Done { .. })
+    ));
+}
+
+#[test]
+fn nothing_the_game_frame_can_read_holds_the_key_and_the_frame_cannot_start_or_end_a_run() {
+    let build = tempfile::tempdir().unwrap();
+    fs::write(build.path().join("index.html"), "<head>").unwrap();
+    let options = ServeOptions {
+        host: Some("127.0.0.1".to_owned()),
+        tunnel_host: None,
+        port: 0,
+        wait_for_browser: Duration::from_secs(30),
+        open_with: None,
+    };
+    let mut driver = ServeDriver::bind(build.path(), &options).unwrap();
+    let harness = driver.harness_url().to_owned();
+    let key = server(&harness).1.unwrap().to_owned();
+    let request = RunRequest {
+        protocol_version: RUNNER_PROTOCOL_VERSION,
+        launch_url: driver.launch_url(Some("sessionID=s")),
+        host_profile: HostProfile::reels(),
+        scenario: Scenario::Alone,
+        spins: None,
+        idle_after_ms: 300,
+        timeout_ms: 20_000,
+    };
+    // The frame's URL, which the game reads, is the game's own and holds no key.
+    assert!(!request.launch_url.contains(&key));
+    let launch_url = request.launch_url.clone();
+    let run = thread::spawn(move || driver.run(&request));
+    post(&harness, "/__dyno/hello", r#"{"user_agent":"curl/8.0"}"#);
+    // What the frame gets from the game server: its page, with the probe's tag, and the probe.
+    // The probe reports by posting to the page around it, and holds no key of its own.
+    let (_, index) = get(&launch_url, "/?sessionID=s");
+    let (_, probe) = get(&launch_url, "/__dyno/probe.js");
+    assert!(index.contains("data-dyno-relay"), "{index}");
+    assert!(probe.contains("parent.postMessage"), "{probe}");
+    assert!(!index.contains(&key) && !probe.contains(&key));
+    // So what the game can send the harness server carries no key, and is refused: it can
+    // neither say hello again nor end the run.
+    let unkeyed = without_key(&harness);
+    for (method, path, body) in HARNESS_ROUTES {
+        assert_eq!(
+            exchange(&unkeyed, method, path, body).0,
+            "HTTP/1.1 403 Forbidden"
+        );
+        let with_game_s_query = format!("{path}?sessionID=s");
+        assert_eq!(
+            exchange(&unkeyed, method, &with_game_s_query, body).0,
+            "HTTP/1.1 403 Forbidden"
+        );
+    }
+    // A second page with the right URL is turned away as before, once a run has begun.
+    assert_eq!(
+        post(&harness, "/__dyno/hello", r#"{"user_agent":"curl/8.0"}"#).0,
+        "HTTP/1.1 409 Conflict"
+    );
+    assert_eq!(next_command(&harness), r#"{"command":"done"}"#);
+    let messages = run.join().unwrap().unwrap();
+    let Some(DriverMessage::Error { message, .. }) = messages.last() else {
+        panic!("the run did not end with an error: {messages:?}");
+    };
+    assert_eq!(message, "the run timed out before the game frame was idle");
+}
+
+#[test]
+fn each_run_has_a_key_of_its_own_and_a_spent_key_opens_nothing() {
+    let options = ServeOptions {
+        host: Some("127.0.0.1".to_owned()),
+        tunnel_host: None,
+        port: 0,
+        wait_for_browser: Duration::from_secs(30),
+        open_with: None,
+    };
+    let (_build, mut driver, request) = page_run(&options);
+    let first = driver.harness_url().to_owned();
+    let (driver, messages) = thread::scope(|scope| {
+        let run = scope.spawn(|| {
+            let messages = driver.run(&request);
+            (driver, messages)
+        });
+        play_browser(&first);
+        run.join().unwrap()
+    });
+    assert!(matches!(
+        messages.unwrap().last(),
+        Some(DriverMessage::Done { .. })
+    ));
+    // The same address and port, and a new key.
+    let second = driver.harness_url().to_owned();
+    assert_ne!(second, first);
+    assert_eq!(without_key(&second), without_key(&first));
+    let mut driver = driver;
+    let run = thread::spawn(move || driver.run(&request));
+    // The first run's URL is refused in the second run.
+    assert_every_route_refused(&with_key(&second, server(&first).1.unwrap()));
+    play_browser(&second);
+    assert!(matches!(
+        run.join().unwrap().unwrap().last(),
+        Some(DriverMessage::Done { .. })
+    ));
+}
+
+/// One GET from this source address to the server at `url`: the status line, or None when this
+/// machine cannot send from that address.
+fn get_from(source: &str, url: &str, path: &str) -> Option<String> {
+    let (address, _) = server(url);
+    let address: std::net::SocketAddr = address.parse().unwrap();
+    let source: std::net::SocketAddr = format!("{source}:0").parse().unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let socket = tokio::net::TcpSocket::new_v4().unwrap();
+        socket.bind(source).ok()?;
+        let mut stream = socket.connect(address).await.ok()?;
+        stream
+            .write_all(format!("GET {path} HTTP/1.1\r\nHost: {address}\r\n\r\n").as_bytes())
+            .await
+            .unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).await.unwrap();
+        Some(response.lines().next().unwrap().to_owned())
+    })
+}
+
+#[test]
+fn the_game_server_answers_only_the_page_s_address_and_only_after_its_hello() {
+    let options = ServeOptions {
+        host: Some("127.0.0.1".to_owned()),
+        tunnel_host: None,
+        port: 0,
+        wait_for_browser: Duration::from_secs(30),
+        open_with: None,
+    };
+    let (_build, mut driver, request) = page_run(&options);
+    let harness = driver.harness_url().to_owned();
+    let game = driver.game_url().to_owned();
+    let run = thread::spawn(move || driver.run(&request));
+
+    // Before the hello there is no frame, so the game server answers no one.
+    assert_eq!(get(&game, "/").0, "HTTP/1.1 403 Forbidden");
+    assert_eq!(get(&game, "/__dyno/probe.js").0, "HTTP/1.1 403 Forbidden");
+    // The page says hello from 127.0.0.1, so the game is served there.
+    post(&harness, "/__dyno/hello", r#"{"user_agent":"curl/8.0"}"#);
+    assert_eq!(get(&game, "/").0, "HTTP/1.1 200 OK");
+    // Another device, here another loopback address, gets nothing, and adds no request to the
+    // run. A machine that cannot send from it, such as a Mac with one loopback address, skips
+    // this part.
+    let other = get_from("127.0.0.2", &game, "/");
+    // Linux routes the whole of 127.0.0.0/8 to loopback, so there this part always runs.
+    assert!(other.is_some() || !cfg!(target_os = "linux"));
+    if let Some(status) = &other {
+        assert_eq!(status, "HTTP/1.1 403 Forbidden");
+        assert_eq!(
+            get_from("127.0.0.2", &game, "/__dyno/probe.js").as_deref(),
+            Some("HTTP/1.1 403 Forbidden")
+        );
+    }
+    // Nor does it reach the harness without the key.
+    if let Some(status) = get_from("127.0.0.2", &without_key(&harness), "/__dyno/next") {
+        assert_eq!(status, "HTTP/1.1 403 Forbidden");
+    }
+    assert_eq!(next_command(&harness), r#"{"command":"done"}"#);
+
+    let messages = run.join().unwrap().unwrap();
+    let requests = messages
+        .iter()
+        .filter(|message| matches!(message, DriverMessage::Request { .. }))
+        .count();
+    assert_eq!(requests, 1, "{messages:?}");
 }

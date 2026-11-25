@@ -510,7 +510,6 @@ dependencies = [
  "dyno-static",
  "insta",
  "rmcp",
- "same-file",
  "schemars",
  "serde",
  "serde_json",

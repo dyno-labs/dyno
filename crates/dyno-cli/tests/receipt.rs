@@ -877,11 +877,19 @@ fn a_plain_http_keys_url_uses_no_proxy_from_the_environment() {
 }
 
 #[test]
-fn a_keys_url_of_localhost_reaches_a_server_on_this_machine() {
+fn a_plain_http_keys_url_with_the_name_localhost_is_refused_before_any_connection() {
+    // A name must be looked up, and the lookup is not dyno's to trust. The address is.
     let server = Server::start(200, "", keys_text());
     let url = server.url.replace("127.0.0.1", "localhost");
     let outcome = dyno(&["verify", RECEIPT, "--keys", &url]);
-    assert_exit(&outcome, VERIFIED);
+    assert_exit(&outcome, USAGE);
+    assert_stderr_has(
+        &outcome,
+        "name this machine by its address: 127.0.0.1 or [::1]",
+    );
+    assert_eq!(server.requests(), 0);
+    // The same server, named by its address, is one request.
+    assert_exit(&dyno(&["verify", RECEIPT, "--keys", &server.url]), VERIFIED);
     assert_eq!(server.requests(), 1);
 }
 
@@ -936,32 +944,58 @@ fn keygen_writes_over_no_keys_document_that_is_there() {
         &keys,
     ]);
     assert_exit(&outcome, USAGE);
-    assert_stderr_has(&outcome, "dyno receipt keygen writes over no file");
+    assert_stderr_has(
+        &outcome,
+        "is there already, and dyno receipt writes over no file",
+    );
     assert_eq!(fs::read_to_string(&keys).unwrap(), "the lab's older keys");
     // No key was made for a document that could not be written.
     assert!(!key.exists());
 }
 
 #[test]
-fn sign_writes_no_receipt_over_its_private_key_or_its_result() {
+fn keygen_says_which_file_it_made_when_the_keys_document_cannot_be_made() {
+    let folder = tempfile::tempdir().unwrap();
+    let key = folder.path().join("lab-key.json");
+    let out = folder.path().join("no-such-folder").join("keys.json");
+    let outcome = dyno(&[
+        "receipt",
+        "keygen",
+        "--key",
+        &key.display().to_string(),
+        "--out",
+        &out.display().to_string(),
+    ]);
+    assert_exit(&outcome, INTERNAL);
+    assert!(outcome.stdout.is_empty());
+    assert_stderr_has(&outcome, "keys.json: ");
+    assert_stderr_has(&outcome, "lab-key.json was made and is empty: remove it");
+    // dyno removes no file by its path, and wrote no key without its keys document.
+    assert_eq!(fs::read(&key).unwrap(), b"");
+}
+
+#[test]
+fn sign_writes_over_no_file_so_never_over_its_private_key_or_its_result() {
     let folder = tempfile::tempdir().unwrap();
     let key = folder.path().join("lab-key.json");
     let result = folder.path().join("result.json");
+    let other = folder.path().join("other.json");
     fs::copy(data_dir().join(PRIVATE_KEY), &key).unwrap();
     fs::copy(data_dir().join(RESULT), &result).unwrap();
+    fs::write(&other, "an older receipt").unwrap();
     let (key_text, result_text) = (fs::read(&key).unwrap(), fs::read(&result).unwrap());
     let key_path = key.display().to_string();
     let result_path = result.display().to_string();
     let other_spelling = folder.path().join(".").join("lab-key.json");
-    let cases = [
-        (key_path.clone(), "is the private key file"),
-        (
-            other_spelling.display().to_string(),
-            "is the private key file",
-        ),
-        (result_path.clone(), "is the result file"),
+    let outs = [
+        key_path.clone(),
+        other_spelling.display().to_string(),
+        result_path.clone(),
+        other.display().to_string(),
+        // A folder is there too.
+        folder.path().display().to_string(),
     ];
-    for (out, problem) in cases {
+    for out in outs {
         let outcome = dyno(&[
             "receipt",
             "sign",
@@ -977,24 +1011,39 @@ fn sign_writes_no_receipt_over_its_private_key_or_its_result() {
             &out,
         ]);
         assert_exit(&outcome, USAGE);
-        assert_stderr_has(&outcome, problem);
+        assert!(outcome.stdout.is_empty());
+        assert_stderr_has(
+            &outcome,
+            "is there already, and dyno receipt writes over no file",
+        );
         assert_eq!(fs::read(&key).unwrap(), key_text);
         assert_eq!(fs::read(&result).unwrap(), result_text);
+        assert_eq!(fs::read_to_string(&other).unwrap(), "an older receipt");
     }
 }
 
 #[cfg(unix)]
 #[test]
-fn sign_writes_no_receipt_through_a_link_to_its_private_key() {
+fn sign_writes_no_receipt_through_a_link_or_into_a_pipe() {
     let folder = tempfile::tempdir().unwrap();
     let key = folder.path().join("lab-key.json");
     fs::copy(data_dir().join(PRIVATE_KEY), &key).unwrap();
     let key_text = fs::read(&key).unwrap();
     let soft = folder.path().join("soft.json");
     let hard = folder.path().join("hard.json");
+    let nowhere = folder.path().join("nowhere.json");
+    let pipe = folder.path().join("pipe");
     std::os::unix::fs::symlink(&key, &soft).unwrap();
     fs::hard_link(&key, &hard).unwrap();
-    for out in [soft, hard] {
+    std::os::unix::fs::symlink(folder.path().join("not-there"), &nowhere).unwrap();
+    let made = std::process::Command::new("mkfifo")
+        .arg(&pipe)
+        .status()
+        .unwrap();
+    assert!(made.success());
+    // Opening a pipe with nobody at its other end waits for ever. dyno opens nothing that is
+    // there, so the pipe is refused at once, like the links.
+    for out in [soft, hard, nowhere.clone(), pipe] {
         let outcome = dyno(&[
             "receipt",
             "sign",
@@ -1010,7 +1059,9 @@ fn sign_writes_no_receipt_through_a_link_to_its_private_key() {
             &out.display().to_string(),
         ]);
         assert_exit(&outcome, USAGE);
-        assert_stderr_has(&outcome, "is the private key file");
+        assert_stderr_has(&outcome, "is there already");
         assert_eq!(fs::read(&key).unwrap(), key_text);
     }
+    // Nothing was made where the link leads.
+    assert!(!folder.path().join("not-there").exists());
 }

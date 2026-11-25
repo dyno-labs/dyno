@@ -34,27 +34,27 @@ dyno verify receipt.json --keys https://lab.example/keys.json --result result.js
 
 You must give `--key` or `--keys`, or both. With neither, verify refuses with a usage error. A receipt names its key by id and never brings the key itself, because a receipt that brought its own key would prove nothing: anyone can sign anything with a key they made.
 
-Get the lab's key from the lab, by a way you trust, such as its own site over https. verify takes a keys URL over https only, because over plain http anyone on the network can swap the keys. Plain http works only for a URL on your own machine, such as `http://localhost:8000/keys.json`. verify opens no connection unless `--keys` is a URL.
+Get the lab's key from the lab, by a way you trust, such as its own site over https. verify takes a keys URL over https only, because over plain http anyone on the network can swap the keys. Plain http works only for a loopback address that the URL itself gives, such as `http://127.0.0.1:8000/keys.json` or `http://[::1]:8000/keys.json`, for a lab under test on your own machine. A name is not taken over plain http, not even `localhost`: a name must be looked up, and dyno cannot say where a lookup leads. verify opens no connection unless `--keys` is a URL.
 
 The two kinds of URL get different care:
 
 - An https URL can redirect up to 3 times, and only to https. Its request can go through a proxy that your environment names, because TLS still ends at the lab's own host.
-- A plain http URL follows no redirect and uses no proxy, and its request goes to a loopback address that dyno itself chose. For `localhost`, dyno looks the name up and refuses it when any of its addresses is not this machine. So neither the request nor its answer can cross a network.
-- Either way, the request may take 30 seconds, and the document may have 1 MB.
+- A plain http URL follows no redirect and uses no proxy, so its one request goes to the loopback address in the URL and nowhere else. Neither the request nor its answer can cross a network.
+- Either way, verify makes one request, which may take 30 seconds, and the document may have 1 MB.
 
 ### The checks
 
 verify makes these checks in this order. The verdict lists every one, with `match`, `mismatch` or `not_checked`.
 
-| Check             | It matches when                                                                                                                                                                                            |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `key`             | One of the keys you gave has the receipt's `key_id`. A key with another key id is never tried.                                                                                                             |
-| `signature`       | The signature is that key's Ed25519 signature of the receipt.                                                                                                                                              |
-| `key_not_retired` | The lab had not retired the key when it issued the receipt: the key has no `retired_at`, or the receipt's `issued_at` is before it.                                                                        |
-| `result_sha256`   | With `--result`: the SHA-256 of the result file's canonical JSON is the receipt's `result_sha256`.                                                                                                         |
-| `result_build_id` | With `--result`: the result's `deterministic.build.build_id` is the receipt's `build_id`.                                                                                                                  |
-| `result_hash`     | With `--result`: the result's `result_hash` is the receipt's. A result with none, or with null, matches a receipt's null. One that is not text never matches.                                              |
-| `build_id`        | With `--build`: the build id of the files is the receipt's `build_id`. A .zip with two entries of one name has no build id: it is an input error (64), because programs differ in which entry they unpack. |
+| Check             | It matches when                                                                                                                                                                                                                                                                                |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `key`             | One of the keys you gave has the receipt's `key_id`. A key with another key id is never tried.                                                                                                                                                                                                 |
+| `signature`       | The signature is that key's Ed25519 signature of the receipt.                                                                                                                                                                                                                                  |
+| `key_not_retired` | The lab had not retired the key when it issued the receipt: the key has no `retired_at`, or the receipt's `issued_at` is before it.                                                                                                                                                            |
+| `result_sha256`   | With `--result`: the SHA-256 of the result file's canonical JSON is the receipt's `result_sha256`.                                                                                                                                                                                             |
+| `result_build_id` | With `--result`: the result's `deterministic.build.build_id` is the receipt's `build_id`.                                                                                                                                                                                                      |
+| `result_hash`     | With `--result`: the result's `result_hash` is the receipt's. A result with none, or with null, matches a receipt's null. One that is not text never matches.                                                                                                                                  |
+| `build_id`        | With `--build`: the build id of the files is the receipt's `build_id`. A .zip that two programs can unpack as two builds has no build id, and is an input error (64): one with two file entries of one name, or with an entry whose local header does not say what the central directory says. |
 
 A check that no flag asked for is `not_checked`. So are the checks after `signature` when no key signed the receipt, because its values are then nobody's claim.
 
@@ -183,7 +183,7 @@ dyno receipt keygen --key lab-key.json --out keys.json
 | `--key <FILE>` | Write the private key to this file. Required. The file must not be there.                  |
 | `--out <FILE>` | Write the public keys document to this file instead of stdout. The file must not be there. |
 
-It makes a new Ed25519 key pair from the system's random bytes. It writes the private key file, which only its owner can read on a Mac or on Linux, and the keys document with the new key. It writes over no file: a private key file or a keys document that is there already is a usage error (64), and so is an `--out` that names the private key file by another path or through a link. A key that is written over is lost, and so are the older keys of a keys document.
+It makes a new Ed25519 key pair from the system's random bytes. It writes the private key file, which only its owner can read on a Mac or on Linux, and the keys document with the new key. It writes over no file and removes none: a private key file or a keys document that is there already is a usage error (64), and so is an `--out` that names the same new file as `--key` by another path. A key that is written over is lost, and so are the older keys of a keys document. dyno makes each file with a create that fails when anything is at the path, a link or a pipe too. When it has made the key file and cannot make the keys document, it says that the key file is there and empty, and stops.
 
 Keep the private key file secret. Whoever has it can sign as the lab.
 
@@ -217,9 +217,9 @@ dyno receipt sign --key lab-key.json --result result.json --issuer lab.example -
 | `--lab-kind <KIND>`    | What kind of lab it is, in the lab's own words. Default `own_phones`.                   |
 | `--lab-backend <NAME>` | What the lab's devices run on, such as the name of a device cloud. Default: null.       |
 | `--issued-at <TIME>`   | When the lab signs, in UTC to the second, such as `2026-11-25T10:00:00Z`. Default: now. |
-| `--out <FILE>`         | Write the receipt to this file instead of stdout.                                       |
+| `--out <FILE>`         | Write the receipt to this file instead of stdout. The file must not be there.           |
 
-The receipt is canonical JSON with one final newline. Ed25519 signatures have no random part, so the same key, result and flags always give the same receipt, byte for byte. An `--out` that is the private key file or the result file, by any path or link, is a usage error (64).
+The receipt is canonical JSON with one final newline. Ed25519 signatures have no random part, so the same key, result and flags always give the same receipt, byte for byte. `--out` names a new file. A path where anything is already, by any name or link, is a usage error (64), so the receipt can never land on the private key or on the result.
 
 Each field of the receipt comes from a flag or from the result file:
 

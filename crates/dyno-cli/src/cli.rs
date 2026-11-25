@@ -300,7 +300,8 @@ pub struct KeygenArgs {
     #[arg(long, value_name = "FILE")]
     pub key: PathBuf,
 
-    /// [phase 3] Write the public keys document to FILE instead of stdout
+    /// [phase 3] Write the public keys document to FILE, which must not be there yet, instead of
+    /// stdout
     #[arg(long, value_name = "FILE")]
     pub out: Option<PathBuf>,
 }

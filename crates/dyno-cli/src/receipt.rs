@@ -19,24 +19,49 @@ use crate::output;
 use crate::verify::read_json;
 
 /// Runs `dyno receipt keygen`: writes a new private key file, and the public keys document with
-/// that one key.
+/// that one key. It writes over no file: a private key that is written over is lost, and so are
+/// the older keys of a keys document.
 pub fn keygen(args: KeygenArgs) -> Result<(), CliError> {
+    if let Some(out) = args.out.as_deref().filter(|out| is_there(out)) {
+        return Err(CliError::usage(format!(
+            "{} is there already, and dyno receipt keygen writes over no file: name a new file \
+             with --out",
+            out.display()
+        )));
+    }
     let key = SigningKey::generate().map_err(CliError::internal)?;
-    write_private_key(&args.key, &key.to_file())?;
+    let json = output::json_text(&key.to_file())?;
+    let mut key_file = new_private_key_file(&args.key)?;
+    // The key file is there now. So is --out, when it names the same file by another spelling or
+    // through a link, and writing the keys document there would write over the new key.
+    if let Some(out) = args.out.as_deref().filter(|out| is_there(out)) {
+        drop(key_file);
+        let _ = fs::remove_file(&args.key);
+        return Err(CliError::usage(format!(
+            "--out {} is the private key file of --key: give the keys document a file of its own",
+            out.display()
+        )));
+    }
+    let shown = args.key.display();
+    key_file
+        .write_all(json.as_bytes())
+        .map_err(|error| CliError::internal(format!("cannot write {shown}: {error}")))?;
     let document = PublicKeys {
         keys: vec![key.public_entry(&now_to_the_second())],
     };
-    output::write_json(&document, args.out.as_deref())?;
     let document_place = match &args.out {
-        Some(out) => out.display().to_string(),
-        None => "the JSON on stdout".to_owned(),
+        Some(out) => {
+            write_new_file(out, &output::json_text(&document)?)?;
+            out.display().to_string()
+        }
+        None => {
+            output::write_json(&document, None)?;
+            "the JSON on stdout".to_owned()
+        }
     };
     output::print_summary(&[
         format!("dyno receipt keygen: made key {}", key.key_id()),
-        format!(
-            "  private key: {}. Keep it secret: whoever has it can sign as the lab.",
-            args.key.display()
-        ),
+        format!("  private key: {shown}. Keep it secret: whoever has it can sign as the lab."),
         format!(
             "  public keys document: {document_place}. Give it to the people who verify, such as \
              at an https URL."
@@ -47,6 +72,21 @@ pub fn keygen(args: KeygenArgs) -> Result<(), CliError> {
 
 /// Runs `dyno receipt sign`: writes the signed receipt for a result file.
 pub fn sign(args: SignArgs) -> Result<(), CliError> {
+    // The receipt must not land on one of its own inputs: a private key that is written over is
+    // lost.
+    if let Some(out) = &args.out {
+        for (input, what) in [
+            (&args.key, "private key file"),
+            (&args.result, "result file"),
+        ] {
+            if same_file::is_same_file(out, input).unwrap_or(false) {
+                return Err(CliError::usage(format!(
+                    "--out {} is the {what}: give the receipt a file of its own",
+                    out.display()
+                )));
+            }
+        }
+    }
     let key = read_private_key(&args.key)?;
     let result = read_json(&args.result, "result file")?;
     let issued_at = args.issued_at.unwrap_or_else(now_to_the_second);
@@ -112,19 +152,33 @@ fn read_private_key(path: &Path) -> Result<SigningKey, CliError> {
     SigningKey::from_file(&file).map_err(|error| CliError::usage(format!("{shown}: {error}")))
 }
 
-/// Writes a new private key file that only its owner can read. A file that is there already is a
-/// usage error: writing over a lab's key would lose it.
-fn write_private_key(path: &Path, key: &PrivateKeyFile) -> Result<(), CliError> {
+/// Makes a new, empty private key file that only its owner can read. A file that is there
+/// already is a usage error: writing over a lab's key would lose it.
+fn new_private_key_file(path: &Path) -> Result<fs::File, CliError> {
     let shown = path.display();
-    let json = output::json_text(key)?;
-    let mut file = new_private_file(path).map_err(|error| match error.kind() {
+    new_private_file(path).map_err(|error| match error.kind() {
         io::ErrorKind::AlreadyExists => CliError::usage(format!(
             "{shown} is there already, and dyno does not write over a private key: name a new file"
         )),
         _ => CliError::internal(format!("cannot write {shown}: {error}")),
-    })?;
-    file.write_all(json.as_bytes())
-        .map_err(|error| CliError::internal(format!("cannot write {shown}: {error}")))
+    })
+}
+
+/// Writes text to a file that is not there yet, and never to one that is.
+fn write_new_file(path: &Path, text: &str) -> Result<(), CliError> {
+    let cannot_write =
+        |error: io::Error| CliError::internal(format!("cannot write {}: {error}", path.display()));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(cannot_write)?;
+    file.write_all(text.as_bytes()).map_err(cannot_write)
+}
+
+/// Whether the path names anything: a file, a folder, or a link, even one that leads nowhere.
+fn is_there(path: &Path) -> bool {
+    path.symlink_metadata().is_ok()
 }
 
 /// Makes a file that is not there yet, readable and writable by its owner only.

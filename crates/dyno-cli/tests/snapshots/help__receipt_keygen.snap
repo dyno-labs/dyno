@@ -8,7 +8,7 @@ Usage: dyno receipt keygen [OPTIONS] --key <FILE>
 
 Options:
       --key <FILE>  [phase 3] Write the private key to FILE, which must not be there yet. Keep it secret
-      --out <FILE>  [phase 3] Write the public keys document to FILE instead of stdout
+      --out <FILE>  [phase 3] Write the public keys document to FILE, which must not be there yet, instead of stdout
   -h, --help        Print help
 
 Exit codes:

@@ -7,9 +7,11 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 
-use common::{Outcome, dyno, fixture_build, json};
+use common::{Outcome, data_dir, dyno, dyno_in, fixture_build, json};
 use dyno_schema::receipt::{
     PublicKeys, ReceiptEnvelope, VerifyCheckId, VerifyOutcome, VerifyResult,
 };
@@ -79,24 +81,64 @@ fn keys_retired_at(dir: &Path, retired_at: &str) -> String {
 
 /// A server on this machine that answers every request with this status and body, and its URL.
 fn serve(status: u16, body: String) -> String {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let url = format!("http://{}/keys.json", listener.local_addr().unwrap());
-    thread::spawn(move || {
-        for stream in listener.incoming() {
-            let Ok(stream) = stream else { continue };
-            let mut reader = BufReader::new(&stream);
-            let mut line = String::new();
-            while reader.read_line(&mut line).is_ok_and(|read| read > 0) && line != "\r\n" {
-                line.clear();
+    Server::start(status, "", body).url
+}
+
+/// A server on this machine, and how many requests it got.
+struct Server {
+    url: String,
+    requests: Arc<AtomicUsize>,
+}
+
+impl Server {
+    /// Answers every request with this status, these header lines and this body.
+    fn start(status: u16, headers: &str, body: String) -> Server {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/keys.json", listener.local_addr().unwrap());
+        let requests = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&requests);
+        let headers = headers.to_owned();
+        thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(stream) = stream else { continue };
+                let mut reader = BufReader::new(&stream);
+                let mut line = String::new();
+                while reader.read_line(&mut line).is_ok_and(|read| read > 0) && line != "\r\n" {
+                    line.clear();
+                }
+                seen.fetch_add(1, Ordering::SeqCst);
+                let _ = write!(
+                    &stream,
+                    "HTTP/1.1 {status} X\r\n{headers}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
             }
-            let _ = write!(
-                &stream,
-                "HTTP/1.1 {status} X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
-        }
-    });
-    url
+        });
+        Server { url, requests }
+    }
+
+    fn requests(&self) -> usize {
+        self.requests.load(Ordering::SeqCst)
+    }
+}
+
+/// The known-answer keys document, as its text.
+fn keys_text() -> String {
+    fs::read_to_string(common::data_dir().join(KEYS)).unwrap()
+}
+
+/// The known-answer file's text with a second member put at the start of one of its objects.
+fn with_a_name_twice(path: &str, object_start: &str, second_member: &str) -> String {
+    let text = fs::read_to_string(common::data_dir().join(path)).unwrap();
+    assert!(text.contains(object_start), "{path}");
+    text.replacen(object_start, &format!("{object_start}{second_member},"), 1)
+}
+
+/// Writes text to `name` in `dir` and returns the path.
+fn write_text(dir: &Path, name: &str, text: &str) -> String {
+    let path = dir.join(name);
+    fs::write(&path, text).unwrap();
+    path.display().to_string()
 }
 
 #[test]
@@ -324,8 +366,7 @@ fn out_writes_the_verdict_to_a_file_and_nothing_to_stdout() {
 
 #[test]
 fn a_keys_document_at_a_url_on_this_machine_verifies() {
-    let keys = fs::read_to_string(common::data_dir().join(KEYS)).unwrap();
-    let url = serve(200, keys);
+    let url = serve(200, keys_text());
     let outcome = dyno(&["verify", RECEIPT, "--keys", &url]);
     assert_exit(&outcome, VERIFIED);
     assert_eq!(verdict(&outcome).key.unwrap().key_id, KEY_ID);
@@ -662,5 +703,314 @@ fn a_bad_flag_or_file_of_sign_is_a_usage_error() {
         assert!(outcome.stdout.is_empty(), "{:?}", outcome.args);
         assert_stderr_has(&outcome, problem);
         assert!(!outcome.stderr.contains("a secret that must not be printed"));
+    }
+}
+
+#[test]
+fn a_receipt_with_one_name_twice_is_refused_though_its_last_values_are_signed() {
+    let folder = tempfile::tempdir().unwrap();
+    // A reader that keeps the last value sees the signed receipt. One that keeps the first sees
+    // no measures, and another issuer deep inside.
+    let cases = [
+        ("\"receipt\":{", "\"measures\":[]", "measures"),
+        ("\"lab\":{", "\"kind\":\"another lab\"", "kind"),
+        ("{", "\"signature\":\"AAAA\"", "signature"),
+        (
+            "\"protocol\":{",
+            "\"added_later\":1,\"added_later\":2",
+            "added_later",
+        ),
+    ];
+    for (object_start, second_member, name) in cases {
+        let text = with_a_name_twice(RECEIPT, object_start, second_member);
+        // A plain parser reads it, and keeps the last value of each name.
+        assert!(serde_json::from_str::<Value>(&text).is_ok());
+        let path = write_text(folder.path(), "receipt.json", &text);
+        let outcome = dyno(&["verify", &path, "--key", PUBLIC_KEY]);
+        assert_exit(&outcome, USAGE);
+        assert!(outcome.stdout.is_empty());
+        assert_stderr_has(
+            &outcome,
+            &format!("the name \"{name}\" is twice in one object"),
+        );
+    }
+}
+
+#[test]
+fn a_result_or_a_keys_document_with_one_name_twice_is_refused() {
+    let folder = tempfile::tempdir().unwrap();
+    let result = with_a_name_twice(RESULT, "\"run\":{", "\"duration_ms\":1");
+    let result = write_text(folder.path(), "result.json", &result);
+    let outcome = dyno(&["verify", RECEIPT, "--key", PUBLIC_KEY, "--result", &result]);
+    assert_exit(&outcome, USAGE);
+    assert_stderr_has(&outcome, "the name \"duration_ms\" is twice in one object");
+
+    // A lab does not sign such a result either.
+    let outcome = dyno(&[
+        "receipt",
+        "sign",
+        "--key",
+        PRIVATE_KEY,
+        "--result",
+        &result,
+        "--issuer",
+        "lab.example",
+        "--check-id",
+        "chk_1",
+    ]);
+    assert_exit(&outcome, USAGE);
+    assert_stderr_has(&outcome, "is twice in one object");
+
+    let keys = with_a_name_twice(KEYS, "{", "\"keys\":[]");
+    let from_file = write_text(folder.path(), "keys.json", &keys);
+    let from_url = serve(200, keys);
+    for source in [from_file, from_url] {
+        let outcome = dyno(&["verify", RECEIPT, "--keys", &source]);
+        assert_exit(&outcome, USAGE);
+        assert_stderr_has(
+            &outcome,
+            "is not a keys document: the name \"keys\" is twice",
+        );
+    }
+}
+
+#[test]
+fn a_key_given_with_both_flags_is_retired_as_the_keys_document_says() {
+    let folder = tempfile::tempdir().unwrap();
+    // The lab retired the key before it issued the receipt. --key alone knows no retirement.
+    let keys = keys_retired_at(folder.path(), "2026-11-25T10:00:00Z");
+    assert_exit(&dyno(&["verify", RECEIPT, "--key", PUBLIC_KEY]), VERIFIED);
+    let orders: [&[&str]; 2] = [
+        &["verify", RECEIPT, "--key", PUBLIC_KEY, "--keys", &keys],
+        &["verify", RECEIPT, "--keys", &keys, "--key", PUBLIC_KEY],
+    ];
+    for args in orders {
+        let outcome = dyno(args);
+        assert_exit(&outcome, NOT_VERIFIED);
+        assert_stderr_has(
+            &outcome,
+            "the lab retired key 21fe31dfa154a261 at 2026-11-25T10:00:00Z",
+        );
+        assert!(verdict(&outcome).key.unwrap().retired);
+    }
+}
+
+#[test]
+fn a_keys_document_with_a_key_id_twice_is_refused() {
+    let folder = tempfile::tempdir().unwrap();
+    // The key is retired in its first entry and in use in its second.
+    let mut keys = fixture_json(KEYS);
+    let in_use = keys["keys"][0].clone();
+    keys["keys"][0]["retired_at"] = "2026-11-25T10:00:00Z".into();
+    keys["keys"].as_array_mut().unwrap().push(in_use);
+    let keys = write_json(folder.path(), "keys.json", &keys);
+    let outcome = dyno(&["verify", RECEIPT, "--keys", &keys]);
+    assert_exit(&outcome, USAGE);
+    assert!(outcome.stdout.is_empty());
+    assert_stderr_has(
+        &outcome,
+        "the keys document has key id 21fe31dfa154a261 twice",
+    );
+}
+
+/// A copy of the zip fixture with one entry renamed to the name of another, in its local header
+/// and in the central directory.
+fn zip_with_a_name_twice(dir: &Path) -> String {
+    let mut bytes = fs::read(data_dir().join("../../../../fixtures/zip-input/build.zip")).unwrap();
+    let (from, to) = (b"game/empty-b.txt", b"game/empty-a.txt");
+    let mut renamed = 0;
+    for at in 0..bytes.len() - from.len() {
+        if &bytes[at..at + from.len()] == from {
+            bytes[at..at + to.len()].copy_from_slice(to);
+            renamed += 1;
+        }
+    }
+    assert_eq!(renamed, 2);
+    let path = dir.join("build.zip");
+    fs::write(&path, bytes).unwrap();
+    path.display().to_string()
+}
+
+#[test]
+fn a_zip_with_two_entries_of_one_name_is_refused_by_verify_and_by_check() {
+    let folder = tempfile::tempdir().unwrap();
+    let zip = zip_with_a_name_twice(folder.path());
+    let verified = dyno(&["verify", RECEIPT, "--key", PUBLIC_KEY, "--build", &zip]);
+    let checked = dyno(&["check", &zip]);
+    for outcome in [verified, checked] {
+        assert_exit(&outcome, USAGE);
+        assert!(outcome.stdout.is_empty());
+        assert_stderr_has(&outcome, "has two entries with the same name");
+    }
+}
+
+#[test]
+fn a_plain_http_keys_url_follows_no_redirect() {
+    // The first server sends the request on to a second one, which has the keys.
+    let keys = Server::start(200, "", keys_text());
+    let redirect = Server::start(302, &format!("Location: {}\r\n", keys.url), String::new());
+    let outcome = dyno(&["verify", RECEIPT, "--keys", &redirect.url]);
+    assert_exit(&outcome, INTERNAL);
+    assert_stderr_has(&outcome, "the answer was HTTP 302");
+    assert_eq!(redirect.requests(), 1);
+    assert_eq!(keys.requests(), 0);
+}
+
+#[test]
+fn a_plain_http_keys_url_uses_no_proxy_from_the_environment() {
+    // A proxy that would answer for any URL with the keys. The URL itself has nothing behind it.
+    let proxy = Server::start(200, "", keys_text());
+    let closed = {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        format!("http://{}/keys.json", listener.local_addr().unwrap())
+    };
+    let proxy_url = proxy.url.trim_end_matches("/keys.json");
+    let env: Vec<(&str, &str)> = ["HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"]
+        .into_iter()
+        .map(|name| (name, proxy_url))
+        .chain([("NO_PROXY", ""), ("no_proxy", "")])
+        .collect();
+    let outcome = dyno_in(&data_dir(), &env, &["verify", RECEIPT, "--keys", &closed]);
+    assert_exit(&outcome, INTERNAL);
+    assert_stderr_has(&outcome, "cannot get the keys document");
+    assert_eq!(proxy.requests(), 0);
+}
+
+#[test]
+fn a_keys_url_of_localhost_reaches_a_server_on_this_machine() {
+    let server = Server::start(200, "", keys_text());
+    let url = server.url.replace("127.0.0.1", "localhost");
+    let outcome = dyno(&["verify", RECEIPT, "--keys", &url]);
+    assert_exit(&outcome, VERIFIED);
+    assert_eq!(server.requests(), 1);
+}
+
+#[test]
+fn keygen_writes_no_keys_document_over_its_new_private_key() {
+    let folder = tempfile::tempdir().unwrap();
+    let key = folder.path().join("lab-key.json");
+    let key_path = key.display().to_string();
+    // The same file, spelled in two ways.
+    let other_spelling = folder.path().join(".").join("lab-key.json");
+    for out in [key_path.clone(), other_spelling.display().to_string()] {
+        let outcome = dyno(&["receipt", "keygen", "--key", &key_path, "--out", &out]);
+        assert_exit(&outcome, USAGE);
+        assert!(outcome.stdout.is_empty());
+        assert_stderr_has(&outcome, "is the private key file of --key");
+        // Nothing is left: no key that has no keys document, and no document in the key's place.
+        assert!(!key.exists());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn keygen_writes_no_keys_document_through_a_link_to_its_new_private_key() {
+    let folder = tempfile::tempdir().unwrap();
+    let key = folder.path().join("lab-key.json");
+    let link = folder.path().join("keys.json");
+    std::os::unix::fs::symlink(&key, &link).unwrap();
+    let outcome = dyno(&[
+        "receipt",
+        "keygen",
+        "--key",
+        &key.display().to_string(),
+        "--out",
+        &link.display().to_string(),
+    ]);
+    assert_exit(&outcome, USAGE);
+    assert_stderr_has(&outcome, "is there already");
+    assert!(!key.exists());
+}
+
+#[test]
+fn keygen_writes_over_no_keys_document_that_is_there() {
+    let folder = tempfile::tempdir().unwrap();
+    let key = folder.path().join("lab-key.json");
+    let keys = write_text(folder.path(), "keys.json", "the lab's older keys");
+    let outcome = dyno(&[
+        "receipt",
+        "keygen",
+        "--key",
+        &key.display().to_string(),
+        "--out",
+        &keys,
+    ]);
+    assert_exit(&outcome, USAGE);
+    assert_stderr_has(&outcome, "dyno receipt keygen writes over no file");
+    assert_eq!(fs::read_to_string(&keys).unwrap(), "the lab's older keys");
+    // No key was made for a document that could not be written.
+    assert!(!key.exists());
+}
+
+#[test]
+fn sign_writes_no_receipt_over_its_private_key_or_its_result() {
+    let folder = tempfile::tempdir().unwrap();
+    let key = folder.path().join("lab-key.json");
+    let result = folder.path().join("result.json");
+    fs::copy(data_dir().join(PRIVATE_KEY), &key).unwrap();
+    fs::copy(data_dir().join(RESULT), &result).unwrap();
+    let (key_text, result_text) = (fs::read(&key).unwrap(), fs::read(&result).unwrap());
+    let key_path = key.display().to_string();
+    let result_path = result.display().to_string();
+    let other_spelling = folder.path().join(".").join("lab-key.json");
+    let cases = [
+        (key_path.clone(), "is the private key file"),
+        (
+            other_spelling.display().to_string(),
+            "is the private key file",
+        ),
+        (result_path.clone(), "is the result file"),
+    ];
+    for (out, problem) in cases {
+        let outcome = dyno(&[
+            "receipt",
+            "sign",
+            "--key",
+            &key_path,
+            "--result",
+            &result_path,
+            "--issuer",
+            "lab.example",
+            "--check-id",
+            "chk_1",
+            "--out",
+            &out,
+        ]);
+        assert_exit(&outcome, USAGE);
+        assert_stderr_has(&outcome, problem);
+        assert_eq!(fs::read(&key).unwrap(), key_text);
+        assert_eq!(fs::read(&result).unwrap(), result_text);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn sign_writes_no_receipt_through_a_link_to_its_private_key() {
+    let folder = tempfile::tempdir().unwrap();
+    let key = folder.path().join("lab-key.json");
+    fs::copy(data_dir().join(PRIVATE_KEY), &key).unwrap();
+    let key_text = fs::read(&key).unwrap();
+    let soft = folder.path().join("soft.json");
+    let hard = folder.path().join("hard.json");
+    std::os::unix::fs::symlink(&key, &soft).unwrap();
+    fs::hard_link(&key, &hard).unwrap();
+    for out in [soft, hard] {
+        let outcome = dyno(&[
+            "receipt",
+            "sign",
+            "--key",
+            &key.display().to_string(),
+            "--result",
+            RESULT,
+            "--issuer",
+            "lab.example",
+            "--check-id",
+            "chk_1",
+            "--out",
+            &out.display().to_string(),
+        ]);
+        assert_exit(&outcome, USAGE);
+        assert_stderr_has(&outcome, "is the private key file");
+        assert_eq!(fs::read(&key).unwrap(), key_text);
     }
 }

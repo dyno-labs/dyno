@@ -36,23 +36,29 @@ You must give `--key` or `--keys`, or both. With neither, verify refuses with a 
 
 Get the lab's key from the lab, by a way you trust, such as its own site over https. verify takes a keys URL over https only, because over plain http anyone on the network can swap the keys. Plain http works only for a URL on your own machine, such as `http://localhost:8000/keys.json`. verify opens no connection unless `--keys` is a URL.
 
+The two kinds of URL get different care:
+
+- An https URL can redirect up to 3 times, and only to https. Its request can go through a proxy that your environment names, because TLS still ends at the lab's own host.
+- A plain http URL follows no redirect and uses no proxy, and its request goes to a loopback address that dyno itself chose. For `localhost`, dyno looks the name up and refuses it when any of its addresses is not this machine. So neither the request nor its answer can cross a network.
+- Either way, the request may take 30 seconds, and the document may have 1 MB.
+
 ### The checks
 
 verify makes these checks in this order. The verdict lists every one, with `match`, `mismatch` or `not_checked`.
 
-| Check             | It matches when                                                                                                                     |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `key`             | One of the keys you gave has the receipt's `key_id`. A key with another key id is never tried.                                      |
-| `signature`       | The signature is that key's Ed25519 signature of the receipt.                                                                       |
-| `key_not_retired` | The lab had not retired the key when it issued the receipt: the key has no `retired_at`, or the receipt's `issued_at` is before it. |
-| `result_sha256`   | With `--result`: the SHA-256 of the result file's canonical JSON is the receipt's `result_sha256`.                                  |
-| `result_build_id` | With `--result`: the result's `deterministic.build.build_id` is the receipt's `build_id`.                                           |
-| `result_hash`     | With `--result`: the result's `result_hash` is the receipt's.                                                                       |
-| `build_id`        | With `--build`: the build id of the files is the receipt's `build_id`.                                                              |
+| Check             | It matches when                                                                                                                                                                                            |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `key`             | One of the keys you gave has the receipt's `key_id`. A key with another key id is never tried.                                                                                                             |
+| `signature`       | The signature is that key's Ed25519 signature of the receipt.                                                                                                                                              |
+| `key_not_retired` | The lab had not retired the key when it issued the receipt: the key has no `retired_at`, or the receipt's `issued_at` is before it.                                                                        |
+| `result_sha256`   | With `--result`: the SHA-256 of the result file's canonical JSON is the receipt's `result_sha256`.                                                                                                         |
+| `result_build_id` | With `--result`: the result's `deterministic.build.build_id` is the receipt's `build_id`.                                                                                                                  |
+| `result_hash`     | With `--result`: the result's `result_hash` is the receipt's. A result with none, or with null, matches a receipt's null. One that is not text never matches.                                              |
+| `build_id`        | With `--build`: the build id of the files is the receipt's `build_id`. A .zip with two entries of one name has no build id: it is an input error (64), because programs differ in which entry they unpack. |
 
 A check that no flag asked for is `not_checked`. So are the checks after `signature` when no key signed the receipt, because its values are then nobody's claim.
 
-A retired key still verifies a receipt that was issued before its `retired_at`, and the output says that the key is retired. A key given with `--key` has no times, so it is never retired.
+A retired key still verifies a receipt that was issued before its `retired_at`, and the output says that the key is retired. A key given with `--key` has no times, so alone it is never retired. When the same key comes with `--key` and in the `--keys` document, the document's times count, whichever flag is first: `--key` cannot hide a retirement.
 
 ### The output
 
@@ -113,7 +119,8 @@ A lab's public keys are a JSON document:
 
 The rules of a verifier:
 
-- It refuses a `receipt_version` that it does not know.
+- It refuses a `receipt_version` that it does not know. The version is a number, so `1`, `1.0` and `1e0` are all version 1, and all are `1` in the signed bytes.
+- It refuses a file in which an object has one name twice, at any depth, also inside a field that it does not know (RFC 8785, section 3.1). Parsers differ in which of the two values they keep, so such a receipt could verify with one value while another reader sees the other. The same holds for the result file and the keys document.
 - It ignores a field inside `receipt` that it does not know. The signature still covers that field, because the signature is over the canonical JSON of the whole `receipt` object as the file holds it. So a verifier must not build the signed bytes from only the fields it knows.
 - It tries only a key whose key id is the receipt's `key_id`, and only a key that it was given. It works out a key's id from the public key itself.
 - It ignores a field outside `receipt`, beside `algorithm` and `signature`. Such a field is not signed.
@@ -126,7 +133,7 @@ The forms that dyno holds a version 1 receipt to:
 - A public key is its raw 32 bytes (RFC 8032), in base64url with no padding: 43 characters.
 - A time in a keys document is RFC 3339, with any offset and any fraction of a second.
 
-JSON Schema for both documents is in `packages/schema/json/`: `receipt.schema.json` and `receipt-keys.schema.json`. The TypeScript types are `ReceiptEnvelope`, `Receipt` and `PublicKeys`.
+JSON Schema for both documents is in `packages/schema/json/`: `receipt.schema.json` and `receipt-keys.schema.json`. The TypeScript types are `ReceiptEnvelope`, `Receipt` and `PublicKeys`. The schema takes only version 1 and `ed25519`, gives the forms above as patterns, and requires every field: a field with no value is null, not left out. dyno itself reads a missing field that can be null as null.
 
 ### Canonical JSON
 
@@ -139,7 +146,7 @@ The signature and `result_sha256` are over RFC 8785 canonical JSON (JCS), as UTF
 
 In JavaScript, these are the bytes of `JSON.stringify` on each value read by `JSON.parse`, with the keys of each object sorted by `Array.prototype.sort`. dyno gives the same bytes, and tests it with the examples of RFC 8785 sections 3.2.2 and 3.2.3 and the numbers of its appendix B (`crates/dyno-schema/tests/jcs.rs`).
 
-Two inputs differ between the two. dyno refuses a number too large for a double, such as `1E400`, and a string with half of a surrogate pair, such as `"\ud800"`, as RFC 8785 says. `JSON.parse` takes both: it writes the first as `null` and the second as an escape. A signer in JavaScript must refuse them too, or it signs bytes that no strict verifier makes. No result that dyno writes holds either.
+Three inputs differ between the two. dyno refuses an object with one name twice, a number too large for a double, such as `1E400`, and a string with half of a surrogate pair, such as `"\ud800"`, as RFC 8785 says. `JSON.parse` takes all three: it keeps the last value of the name, writes the number as `null`, and writes the half pair as an escape. A signer in JavaScript must refuse them too, or it signs bytes that no strict verifier makes. No result that dyno writes holds any of them.
 
 `result_sha256` is over the result file as it is, with every field, so it covers the run part and any field that a newer dyno added. The spelling of the file does not matter: the same JSON with other whitespace or key order has the same hash.
 
@@ -155,7 +162,7 @@ A lab publishes its keys document where the people who verify can get it, such a
 | `created_at` | When the lab made the key.                                                           |
 | `retired_at` | When the lab stopped signing with the key. Null while it still signs with it.        |
 
-dyno works out each key's id from its public key. A document with a `key_id` that is not its key's, with a public key that is not 32 bytes, or with a time that is not RFC 3339, is an input error.
+dyno works out each key's id from its public key. A document with a `key_id` that is not its key's, with a public key that is not 32 bytes, or with a time that is not RFC 3339, is an input error. So is a document with one `key_id` in two entries, because two entries could give one key two retirement times.
 
 To change keys, a lab adds the new key to the document and sets `retired_at` on the old one. Receipts that the old key signed before that time still verify.
 
@@ -171,12 +178,12 @@ Two commands are all a lab needs. They are in the same public binary, so the tes
 dyno receipt keygen --key lab-key.json --out keys.json
 ```
 
-| Flag           | What it does                                                              |
-| -------------- | ------------------------------------------------------------------------- |
-| `--key <FILE>` | Write the private key to this file. Required. The file must not be there. |
-| `--out <FILE>` | Write the public keys document to this file instead of stdout.            |
+| Flag           | What it does                                                                               |
+| -------------- | ------------------------------------------------------------------------------------------ |
+| `--key <FILE>` | Write the private key to this file. Required. The file must not be there.                  |
+| `--out <FILE>` | Write the public keys document to this file instead of stdout. The file must not be there. |
 
-It makes a new Ed25519 key pair from the system's random bytes. It writes the private key file, which only its owner can read on a Mac or on Linux, and the keys document with the new key. It never writes over a file: a private key file that is there already is a usage error (64).
+It makes a new Ed25519 key pair from the system's random bytes. It writes the private key file, which only its owner can read on a Mac or on Linux, and the keys document with the new key. It writes over no file: a private key file or a keys document that is there already is a usage error (64), and so is an `--out` that names the private key file by another path or through a link. A key that is written over is lost, and so are the older keys of a keys document.
 
 Keep the private key file secret. Whoever has it can sign as the lab.
 
@@ -212,7 +219,7 @@ dyno receipt sign --key lab-key.json --result result.json --issuer lab.example -
 | `--issued-at <TIME>`   | When the lab signs, in UTC to the second, such as `2026-11-25T10:00:00Z`. Default: now. |
 | `--out <FILE>`         | Write the receipt to this file instead of stdout.                                       |
 
-The receipt is canonical JSON with one final newline. Ed25519 signatures have no random part, so the same key, result and flags always give the same receipt, byte for byte.
+The receipt is canonical JSON with one final newline. Ed25519 signatures have no random part, so the same key, result and flags always give the same receipt, byte for byte. An `--out` that is the private key file or the result file, by any path or link, is a usage error (64).
 
 Each field of the receipt comes from a flag or from the result file:
 
@@ -330,11 +337,11 @@ dyno verify fixtures/receipts/receipt.json --keys fixtures/receipts/keys.json \
 
 ## Where the code is
 
-| Part                                                  | Where                                                 |
-| ----------------------------------------------------- | ----------------------------------------------------- |
-| The types of a receipt, a keys document and a verdict | `crates/dyno-schema/src/receipt.rs`                   |
-| Canonical JSON                                        | `jcs` in `crates/dyno-schema/src/canonical.rs`        |
-| Keys, signing and verifying                           | `crates/dyno-receipt`                                 |
-| The commands                                          | `verify.rs` and `receipt.rs` in `crates/dyno-cli/src` |
+| Part                                                  | Where                                                           |
+| ----------------------------------------------------- | --------------------------------------------------------------- |
+| The types of a receipt, a keys document and a verdict | `crates/dyno-schema/src/receipt.rs`                             |
+| Canonical JSON                                        | `jcs` and `parse_json` in `crates/dyno-schema/src/canonical.rs` |
+| Keys, signing and verifying                           | `crates/dyno-receipt`                                           |
+| The commands                                          | `verify.rs` and `receipt.rs` in `crates/dyno-cli/src`           |
 
 Ed25519 is from `ring`, the library that already does dyno's TLS, so the binary has one crypto library. `dyno mcp` has no receipt tool yet.

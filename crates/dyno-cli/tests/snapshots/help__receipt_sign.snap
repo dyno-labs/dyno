@@ -14,7 +14,7 @@ Options:
       --lab-kind <KIND>     [phase 3] What kind of lab it is, in the lab's own words [default: own_phones]
       --lab-backend <NAME>  [phase 3] What the lab's devices run on, such as the name of a device cloud
       --issued-at <TIME>    [phase 3] When the lab signs, in UTC to the second, such as 2026-11-25T10:00:00Z [default: now]
-      --out <FILE>          [phase 3] Write the receipt to FILE instead of stdout
+      --out <FILE>          [phase 3] Write the receipt to FILE, which must not be there yet, instead of stdout
   -h, --help                Print help
 
 Exit codes:

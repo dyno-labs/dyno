@@ -19,43 +19,64 @@ use crate::output;
 use crate::verify::read_json;
 
 /// Runs `dyno receipt keygen`: writes a new private key file, and the public keys document with
-/// that one key. It writes over no file: a private key that is written over is lost, and so are
-/// the older keys of a keys document.
+/// that one key.
+///
+/// It writes over no file, and removes none: a private key that is written over is lost, and so
+/// are the older keys of a keys document. Each file is made with a create that fails when the
+/// path is there, so nothing that happens between a check and a write can change that.
 pub fn keygen(args: KeygenArgs) -> Result<(), CliError> {
-    if let Some(out) = args.out.as_deref().filter(|out| is_there(out)) {
-        return Err(CliError::usage(format!(
-            "{} is there already, and dyno receipt keygen writes over no file: name a new file \
-             with --out",
-            out.display()
-        )));
+    let shown = args.key.display();
+    if let Some(out) = &args.out {
+        // Neither file is there yet, so the two paths are compared before any key is made.
+        if names_the_same_new_file(&args.key, out) {
+            return Err(CliError::usage(format!(
+                "--out {} is the private key file of --key: give the keys document a file of \
+                 its own",
+                out.display()
+            )));
+        }
+        if out.symlink_metadata().is_ok() {
+            return Err(already_there(out, "name a new file with --out"));
+        }
     }
     let key = SigningKey::generate().map_err(CliError::internal)?;
-    let json = output::json_text(&key.to_file())?;
-    let mut key_file = new_private_key_file(&args.key)?;
-    // The key file is there now. So is --out, when it names the same file by another spelling or
-    // through a link, and writing the keys document there would write over the new key.
-    if let Some(out) = args.out.as_deref().filter(|out| is_there(out)) {
-        drop(key_file);
-        let _ = fs::remove_file(&args.key);
-        return Err(CliError::usage(format!(
-            "--out {} is the private key file of --key: give the keys document a file of its own",
-            out.display()
-        )));
-    }
-    let shown = args.key.display();
-    key_file
-        .write_all(json.as_bytes())
-        .map_err(|error| CliError::internal(format!("cannot write {shown}: {error}")))?;
+    let key_json = output::json_text(&key.to_file())?;
     let document = PublicKeys {
         keys: vec![key.public_entry(&now_to_the_second())],
     };
-    let document_place = match &args.out {
-        Some(out) => {
-            write_new_file(out, &output::json_text(&document)?)?;
+    let document_json = output::json_text(&document)?;
+
+    let mut key_file =
+        new_file(&args.key, Access::OwnerOnly).map_err(|error| match error.kind() {
+            io::ErrorKind::AlreadyExists => CliError::usage(format!(
+                "{shown} is there already, and dyno does not write over a private key: name a \
+                 new file"
+            )),
+            _ => cannot_write(&args.key, &error),
+        })?;
+    // Both files are made before either is written, so a second file that cannot be made leaves
+    // an empty first one, and no key without its keys document.
+    let mut document_file = match &args.out {
+        Some(out) => Some(new_file(out, Access::Shared).map_err(|error| {
+            let made = format!("{shown} was made and is empty: remove it before you try again");
+            match error.kind() {
+                io::ErrorKind::AlreadyExists => already_there(out, &made),
+                _ => CliError::internal(format!("cannot write {}: {error}. {made}", out.display())),
+            }
+        })?),
+        None => None,
+    };
+    key_file
+        .write_all(key_json.as_bytes())
+        .map_err(|error| cannot_write(&args.key, &error))?;
+    let document_place = match (&mut document_file, &args.out) {
+        (Some(file), Some(out)) => {
+            file.write_all(document_json.as_bytes())
+                .map_err(|error| cannot_write(out, &error))?;
             out.display().to_string()
         }
-        None => {
-            output::write_json(&document, None)?;
+        _ => {
+            output::write_text(&document_json, None)?;
             "the JSON on stdout".to_owned()
         }
     };
@@ -70,23 +91,9 @@ pub fn keygen(args: KeygenArgs) -> Result<(), CliError> {
     Ok(())
 }
 
-/// Runs `dyno receipt sign`: writes the signed receipt for a result file.
+/// Runs `dyno receipt sign`: writes the signed receipt for a result file, to stdout or to a new
+/// file. It writes over no file, so it cannot write over its private key or its result.
 pub fn sign(args: SignArgs) -> Result<(), CliError> {
-    // The receipt must not land on one of its own inputs: a private key that is written over is
-    // lost.
-    if let Some(out) = &args.out {
-        for (input, what) in [
-            (&args.key, "private key file"),
-            (&args.result, "result file"),
-        ] {
-            if same_file::is_same_file(out, input).unwrap_or(false) {
-                return Err(CliError::usage(format!(
-                    "--out {} is the {what}: give the receipt a file of its own",
-                    out.display()
-                )));
-            }
-        }
-    }
     let key = read_private_key(&args.key)?;
     let result = read_json(&args.result, "result file")?;
     let issued_at = args.issued_at.unwrap_or_else(now_to_the_second);
@@ -109,12 +116,25 @@ pub fn sign(args: SignArgs) -> Result<(), CliError> {
         }
     })?;
     let envelope = dyno_receipt::sign::sign(receipt, &key).map_err(CliError::internal)?;
-    output::write_json(&envelope, args.out.as_deref())?;
-    let receipt = &envelope.receipt;
+    let receipt_json = output::json_text(&envelope)?;
     let receipt_place = match &args.out {
-        Some(out) => out.display().to_string(),
-        None => "the JSON on stdout. Use --out FILE to write it to a file.".to_owned(),
+        // The file is made, never opened: an --out that is the private key or the result, by
+        // any path or link, is there already, so it is refused and nothing is ever cut short.
+        Some(out) => {
+            let mut file = new_file(out, Access::Shared).map_err(|error| match error.kind() {
+                io::ErrorKind::AlreadyExists => already_there(out, "name a new file with --out"),
+                _ => cannot_write(out, &error),
+            })?;
+            file.write_all(receipt_json.as_bytes())
+                .map_err(|error| cannot_write(out, &error))?;
+            out.display().to_string()
+        }
+        None => {
+            output::write_text(&receipt_json, None)?;
+            "the JSON on stdout. Use --out FILE to write it to a file.".to_owned()
+        }
     };
+    let receipt = &envelope.receipt;
     output::print_summary(&[
         format!(
             "dyno receipt sign: {} signed check {} with key {}",
@@ -152,50 +172,59 @@ fn read_private_key(path: &Path) -> Result<SigningKey, CliError> {
     SigningKey::from_file(&file).map_err(|error| CliError::usage(format!("{shown}: {error}")))
 }
 
-/// Makes a new, empty private key file that only its owner can read. A file that is there
-/// already is a usage error: writing over a lab's key would lose it.
-fn new_private_key_file(path: &Path) -> Result<fs::File, CliError> {
-    let shown = path.display();
-    new_private_file(path).map_err(|error| match error.kind() {
-        io::ErrorKind::AlreadyExists => CliError::usage(format!(
-            "{shown} is there already, and dyno does not write over a private key: name a new file"
-        )),
-        _ => CliError::internal(format!("cannot write {shown}: {error}")),
-    })
+/// Who can read a new file.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Access {
+    /// Only its owner, on unix: a private key.
+    OwnerOnly,
+    /// Whoever the folder and the umask let: a document for other people.
+    Shared,
 }
 
-/// Writes text to a file that is not there yet, and never to one that is.
-fn write_new_file(path: &Path, text: &str) -> Result<(), CliError> {
-    let cannot_write =
-        |error: io::Error| CliError::internal(format!("cannot write {}: {error}", path.display()));
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(cannot_write)?;
-    file.write_all(text.as_bytes()).map_err(cannot_write)
+/// Makes a file that is not there yet, and fails when the path names anything: a file, a
+/// folder, a pipe, or a link, even one that leads nowhere. Nothing is opened that is there, so
+/// nothing is cut short and nothing waits on a pipe.
+fn new_file(path: &Path, access: Access) -> io::Result<fs::File> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    if access == Access::OwnerOnly {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    // Off unix, the folder's own access rules apply to both kinds.
+    #[cfg(not(unix))]
+    let _ = access;
+    options.open(path)
 }
 
-/// Whether the path names anything: a file, a folder, or a link, even one that leads nowhere.
-fn is_there(path: &Path) -> bool {
-    path.symlink_metadata().is_ok()
+/// Whether two paths of files that are not there yet name the same file: the same name in the
+/// same folder, once each folder's own path is resolved. A folder that cannot be resolved has
+/// no file to compare, and making the file there fails later.
+fn names_the_same_new_file(one: &Path, other: &Path) -> bool {
+    let resolved = |path: &Path| {
+        let folder = match path.parent() {
+            Some(folder) if !folder.as_os_str().is_empty() => folder,
+            _ => Path::new("."),
+        };
+        Some((fs::canonicalize(folder).ok()?, path.file_name()?.to_owned()))
+    };
+    match (resolved(one), resolved(other)) {
+        (Some(one), Some(other)) => one == other,
+        _ => false,
+    }
 }
 
-/// Makes a file that is not there yet, readable and writable by its owner only.
-#[cfg(unix)]
-fn new_private_file(path: &Path) -> io::Result<fs::File> {
-    use std::os::unix::fs::OpenOptionsExt;
-    OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)
+/// The usage error for an output path that is there already.
+fn already_there(path: &Path, what_to_do: &str) -> CliError {
+    CliError::usage(format!(
+        "{} is there already, and dyno receipt writes over no file: {what_to_do}",
+        path.display()
+    ))
 }
 
-/// Makes a file that is not there yet. Off unix, the folder's own access rules apply.
-#[cfg(not(unix))]
-fn new_private_file(path: &Path) -> io::Result<fs::File> {
-    OpenOptions::new().write(true).create_new(true).open(path)
+fn cannot_write(path: &Path, error: &io::Error) -> CliError {
+    CliError::internal(format!("cannot write {}: {error}", path.display()))
 }
 
 #[cfg(test)]
@@ -206,5 +235,60 @@ mod tests {
     fn the_time_now_is_a_time_as_a_receipt_states_it() {
         let now = now_to_the_second();
         assert!(dyno_receipt::is_receipt_time(&now), "{now}");
+    }
+
+    #[test]
+    fn two_spellings_of_one_new_file_are_the_same_file() {
+        let folder = tempfile::tempdir().unwrap();
+        let inside = folder.path().join("inside");
+        fs::create_dir(&inside).unwrap();
+        let key = folder.path().join("lab-key.json");
+        let same = [
+            folder.path().join(".").join("lab-key.json"),
+            inside.join("..").join("lab-key.json"),
+        ];
+        for other in same {
+            assert!(names_the_same_new_file(&key, &other), "{}", other.display());
+        }
+        let different = [
+            folder.path().join("keys.json"),
+            inside.join("lab-key.json"),
+            folder.path().join("no-such-folder").join("lab-key.json"),
+            folder.path().join(".."),
+        ];
+        for other in different {
+            assert!(
+                !names_the_same_new_file(&key, &other),
+                "{}",
+                other.display()
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_reached_through_a_link_holds_the_same_new_file() {
+        let folder = tempfile::tempdir().unwrap();
+        let real = folder.path().join("real");
+        fs::create_dir(&real).unwrap();
+        let link = folder.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        assert!(names_the_same_new_file(
+            &real.join("lab-key.json"),
+            &link.join("lab-key.json")
+        ));
+    }
+
+    #[test]
+    fn a_new_file_is_never_made_where_something_is() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("file.json");
+        new_file(&path, Access::Shared).unwrap();
+        for access in [Access::Shared, Access::OwnerOnly] {
+            let error = new_file(&path, access).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        }
+        let error = new_file(folder.path(), Access::Shared).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
     }
 }

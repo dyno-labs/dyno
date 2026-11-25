@@ -7,7 +7,6 @@
 //! file with two values for one name has no one reading, so it must not verify.
 
 use std::fs;
-use std::net::{IpAddr, ToSocketAddrs};
 use std::path::Path;
 use std::time::Duration;
 
@@ -116,7 +115,9 @@ fn keys_document(source: &str) -> Result<Vec<TrustedKey>, CliError> {
 /// The URL that `--keys` names, or None when it names a file.
 ///
 /// The keys decide which receipts verify, so they come over https, where nobody on the network
-/// can swap them. Plain http is taken only from this machine itself, such as a lab under test.
+/// can swap them. Plain http is taken only for a loopback address written in the URL itself,
+/// `127.0.0.1` or `[::1]`, such as a lab under test on this machine. A name is not taken, not
+/// even `localhost`: a name must be looked up, and what it leads to is not dyno's to say.
 fn keys_url(source: &str) -> Result<Option<Url>, CliError> {
     let lower = source.to_ascii_lowercase();
     if !lower.starts_with("https://") && !lower.starts_with("http://") {
@@ -124,114 +125,64 @@ fn keys_url(source: &str) -> Result<Option<Url>, CliError> {
     }
     let url = Url::parse(source)
         .map_err(|error| CliError::usage(format!("--keys {source:?} is not a URL: {error}")))?;
-    let this_machine = match url.host() {
-        Some(Host::Domain(name)) => name == "localhost",
-        Some(Host::Ipv4(address)) => address.is_loopback(),
-        Some(Host::Ipv6(address)) => address.is_loopback(),
-        None => false,
-    };
-    if url.scheme() != "https" && !this_machine {
-        return Err(CliError::usage(format!(
-            "--keys {source:?} must be a file or an https URL: over plain http, anyone on the \
-             network can swap the keys"
-        )));
+    if url.scheme() == "https" {
+        return Ok(Some(url));
     }
-    Ok(Some(url))
+    let problem = match url.host() {
+        Some(Host::Ipv4(address)) if address.is_loopback() => return Ok(Some(url)),
+        Some(Host::Ipv6(address)) if address.is_loopback() => return Ok(Some(url)),
+        Some(Host::Domain("localhost")) => {
+            "over plain http, name this machine by its address: 127.0.0.1 or [::1]"
+        }
+        _ => "over plain http, anyone on the network can swap the keys",
+    };
+    Err(CliError::usage(format!(
+        "--keys {source:?} must be a file or an https URL: {problem}"
+    )))
 }
 
-/// Gets a keys document from its URL. A URL that cannot be reached, or that answers with an
-/// error, is an I/O error.
+/// Gets a keys document from its URL, with one request. A URL that cannot be reached, or that
+/// answers with an error, is an I/O error.
 ///
 /// An https URL can redirect a few times, to https only. Its request can go through a proxy that
 /// the environment names, because TLS still ends at the lab's own host.
 ///
-/// A plain http URL is for this machine itself, and plain http has no such protection. So its
-/// request follows no redirect, uses no proxy, and goes to a loopback address that dyno itself
-/// chose: nothing can send it, or its answer, over a network.
+/// A plain http URL names a loopback address, and plain http has no such protection. So its
+/// request follows no redirect and uses no proxy: it goes to that address and nowhere else, and
+/// neither it nor its answer crosses a network.
 fn fetch(url: &Url) -> Result<String, CliError> {
     let cannot_get = |problem: String| {
         CliError::internal(format!("cannot get the keys document {url}: {problem}"))
     };
-    let common = || {
-        Agent::config_builder()
-            .timeout_connect(Some(CONNECT_TIMEOUT))
-            .timeout_global(Some(REQUEST_TIMEOUT))
-            .http_status_as_error(false)
-            .user_agent(format!("dyno/{TOOL_VERSION}"))
-    };
-    if url.scheme() == "https" {
-        let agent = common()
-            .https_only(true)
-            .max_redirects(HTTPS_REDIRECTS)
-            .build()
-            .into();
-        return get(&agent, url).map_err(cannot_get);
+    let config = Agent::config_builder()
+        .timeout_connect(Some(CONNECT_TIMEOUT))
+        .timeout_global(Some(REQUEST_TIMEOUT))
+        .http_status_as_error(false)
+        .user_agent(format!("dyno/{TOOL_VERSION}"));
+    let agent: Agent = if url.scheme() == "https" {
+        config.https_only(true).max_redirects(HTTPS_REDIRECTS)
+    } else {
+        config.max_redirects(0).proxy(None)
     }
-    let agent = common().max_redirects(0).proxy(None).build().into();
-    let mut problem = "its host has no address".to_owned();
-    for address in loopback_addresses(url)? {
-        // The URL names the address itself, so no later lookup of a name can change it.
-        let mut direct = url.clone();
-        if direct.set_ip_host(address).is_err() {
-            continue;
-        }
-        match get(&agent, &direct) {
-            Ok(text) => return Ok(text),
-            Err(this_problem) => problem = this_problem,
-        }
-    }
-    Err(cannot_get(problem))
-}
-
-/// One request for a keys document, and its body when the answer is a success. An answer that is
-/// a redirect the agent did not follow is not a success.
-fn get(agent: &Agent, url: &Url) -> Result<String, String> {
+    .build()
+    .into();
     let mut response = agent
         .get(url.as_str())
         .call()
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| cannot_get(error.to_string()))?;
+    // A redirect that the agent did not follow is not a success either.
     if !response.status().is_success() {
-        return Err(format!(
+        return Err(cannot_get(format!(
             "the answer was HTTP {}",
             response.status().as_u16()
-        ));
+        )));
     }
     response
         .body_mut()
         .with_config()
         .limit(KEYS_DOCUMENT_LIMIT)
         .read_to_string()
-        .map_err(|error| error.to_string())
-}
-
-/// The loopback addresses of a plain http URL's host: the address it names, or the addresses
-/// that `localhost` has on this machine.
-fn loopback_addresses(url: &Url) -> Result<Vec<IpAddr>, CliError> {
-    let addresses = match url.host() {
-        Some(Host::Ipv4(address)) => vec![IpAddr::V4(address)],
-        Some(Host::Ipv6(address)) => vec![IpAddr::V6(address)],
-        Some(Host::Domain(name)) => {
-            let port = url.port_or_known_default().unwrap_or(80);
-            let resolved = (name, port).to_socket_addrs().map_err(|error| {
-                CliError::internal(format!("cannot find the address of {name}: {error}"))
-            })?;
-            resolved.map(|address| address.ip()).collect()
-        }
-        None => Vec::new(),
-    };
-    only_loopback(addresses, url)
-}
-
-/// The addresses, when each is a loopback address. A hosts file or a resolver can give the name
-/// `localhost` to another machine, and then plain http would cross a network.
-fn only_loopback(addresses: Vec<IpAddr>, url: &Url) -> Result<Vec<IpAddr>, CliError> {
-    match addresses.iter().find(|address| !address.is_loopback()) {
-        Some(other) => Err(CliError::usage(format!(
-            "--keys {url}: its host is at {other} here, which is not this machine itself. Name \
-             127.0.0.1 or [::1], or use https"
-        ))),
-        None => Ok(addresses),
-    }
+        .map_err(|error| cannot_get(error.to_string()))
 }
 
 #[cfg(test)]
@@ -250,61 +201,55 @@ mod tests {
         }
         let url = keys_url("HTTPS://lab.example/keys.json").unwrap().unwrap();
         assert_eq!(url.as_str(), "https://lab.example/keys.json");
+        // Over https a name is fine, this machine's too.
+        assert!(keys_url("https://localhost/keys.json").unwrap().is_some());
     }
 
     #[test]
-    fn plain_http_is_taken_only_from_this_machine() {
+    fn plain_http_is_taken_only_for_a_loopback_address_in_the_url() {
         for url in [
-            "http://localhost:8000/keys.json",
             "http://127.0.0.1:8000/keys.json",
+            "http://127.8.9.10/keys.json",
             "http://[::1]:8000/keys.json",
         ] {
-            assert!(keys_url(url).unwrap().is_some(), "{url}");
+            let taken = keys_url(url).unwrap().unwrap();
+            // The URL is used as it is: the address in it is the one the request goes to.
+            assert_eq!(taken.as_str(), url);
         }
         for url in [
             "http://lab.example/keys.json",
             "http://192.168.1.20/keys.json",
+            "http://0.0.0.0:8000/keys.json",
             "http://localhost.lab.example/keys.json",
             "http://[2001:db8::1]/keys.json",
+            "http://[::ffff:127.0.0.1]/keys.json",
         ] {
-            let error = keys_url(url).unwrap_err().to_string();
-            assert!(error.contains("must be a file or an https URL"), "{error}");
+            let error = keys_url(url).unwrap_err();
+            assert_eq!(error.exit_code(), crate::exit::USAGE);
+            assert!(
+                error
+                    .to_string()
+                    .ends_with("anyone on the network can swap the keys"),
+                "{error}"
+            );
         }
     }
 
     #[test]
-    fn a_plain_http_url_goes_to_the_loopback_address_it_names() {
-        let url = Url::parse("http://127.0.0.1:8000/keys.json").unwrap();
-        assert_eq!(
-            loopback_addresses(&url).unwrap(),
-            ["127.0.0.1".parse::<IpAddr>().unwrap()]
-        );
-        let url = Url::parse("http://[::1]:8000/keys.json").unwrap();
-        assert_eq!(
-            loopback_addresses(&url).unwrap(),
-            ["::1".parse::<IpAddr>().unwrap()]
-        );
-    }
-
-    #[test]
-    fn localhost_gives_only_loopback_addresses() {
-        let url = Url::parse("http://localhost:8000/keys.json").unwrap();
-        let addresses = loopback_addresses(&url).unwrap();
-        assert!(!addresses.is_empty());
-        assert!(addresses.iter().all(IpAddr::is_loopback), "{addresses:?}");
-    }
-
-    #[test]
-    fn a_name_that_is_at_another_machine_is_refused_for_plain_http() {
-        // What a hosts file that gives localhost to another machine would lead to.
-        let url = Url::parse("http://localhost:8000/keys.json").unwrap();
-        let addresses = vec!["127.0.0.1".parse().unwrap(), "192.0.2.7".parse().unwrap()];
-        let error = only_loopback(addresses, &url).unwrap_err();
-        assert_eq!(error.exit_code(), crate::exit::USAGE);
-        assert!(
-            error.to_string().contains("its host is at 192.0.2.7 here"),
-            "{error}"
-        );
+    fn the_name_localhost_is_refused_over_plain_http_and_the_error_says_what_to_write() {
+        for url in [
+            "http://localhost:8000/keys.json",
+            "http://LOCALHOST/keys.json",
+        ] {
+            let error = keys_url(url).unwrap_err();
+            assert_eq!(error.exit_code(), crate::exit::USAGE);
+            assert!(
+                error
+                    .to_string()
+                    .ends_with("name this machine by its address: 127.0.0.1 or [::1]"),
+                "{error}"
+            );
+        }
     }
 
     #[test]

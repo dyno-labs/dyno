@@ -337,7 +337,7 @@ pub struct SignArgs {
     #[arg(long, value_name = "TIME", value_parser = parse_receipt_time)]
     pub issued_at: Option<String>,
 
-    /// [phase 3] Write the receipt to FILE instead of stdout
+    /// [phase 3] Write the receipt to FILE, which must not be there yet, instead of stdout
     #[arg(long, value_name = "FILE")]
     pub out: Option<PathBuf>,
 }

@@ -160,6 +160,12 @@ fn read_zip_within(
         source,
     })?;
     let mut archive = ZipArchive::new(file).map_err(bad_zip)?;
+    // The archive keeps one entry for each name, so the loop below never sees a second one.
+    // Another program can unpack the other entry, and then the build id would be for files that
+    // nobody ran.
+    if archive.has_duplicate_names() {
+        return Err(ScanError::SameNameTwiceInZip(build.to_path_buf()));
+    }
     if archive.len() > limits.entries {
         return Err(too_large(format!(
             "it has {} entries, more than {}",
@@ -340,6 +346,42 @@ mod tests {
             matches!(result, Err(ScanError::BadZip { .. })),
             "{result:?}"
         );
+    }
+
+    /// Renames every entry called `from` to `to`, a name of the same length, in its local header
+    /// and in the central directory, as a crafted zip can.
+    fn rename_entries(zip: &Path, from: &[u8], to: &[u8]) {
+        assert_eq!(from.len(), to.len());
+        let mut bytes = fs::read(zip).unwrap();
+        let mut renamed = 0;
+        for at in 0..bytes.len() - from.len() {
+            if &bytes[at..at + from.len()] == from {
+                bytes[at..at + to.len()].copy_from_slice(to);
+                renamed += 1;
+            }
+        }
+        // Once in the entry's local header, and once in the central directory.
+        assert_eq!(renamed, 2);
+        fs::write(zip, bytes).unwrap();
+    }
+
+    #[test]
+    fn a_zip_with_two_entries_of_one_name_is_refused() {
+        // One unpacker gives the first game.js and another the second, so the zip is two builds.
+        let zip = zip_with(&[
+            ("index.html", b"<script src=game.js></script>"),
+            ("game.js", b"console.log('one')"),
+            ("gamf.js", b"console.log('two')"),
+        ]);
+        assert_eq!(scan(zip.path()).unwrap().summary.files().len(), 3);
+        rename_entries(zip.path(), b"gamf.js", b"game.js");
+        let result = scan(zip.path());
+        let Err(ScanError::SameNameTwiceInZip(path)) = &result else {
+            panic!("{:?}", result.map(|scan| scan.measures));
+        };
+        assert_eq!(path, zip.path());
+        let said = result.unwrap_err().to_string();
+        assert!(said.contains("two entries with the same name"), "{said}");
     }
 
     #[test]

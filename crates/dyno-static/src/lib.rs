@@ -61,6 +61,13 @@ pub enum ScanError {
     BadPath(#[from] RelPathError),
     #[error("the zip has two entries for {0}")]
     DuplicateZipEntry(RelPath),
+    /// Two entries with one name: each program that unpacks the zip keeps one, and not all
+    /// keep the same one.
+    #[error(
+        "the zip {0:?} has two entries with the same name, so what it holds depends on the \
+         program that unpacks it"
+    )]
+    SameNameTwiceInZip(PathBuf),
     #[error("the zip has an entry name with a NUL byte: {0:?}")]
     NulInZipName(String),
     /// A zip that unpacks past the inventory's limits, as a zip bomb does.

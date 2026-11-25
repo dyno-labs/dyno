@@ -54,3 +54,23 @@ fn upload_help() {
 fn link_help() {
     insta::assert_snapshot!("link", help(&["link", "--help"]));
 }
+
+#[test]
+fn verify_help() {
+    insta::assert_snapshot!("verify", help(&["verify", "--help"]));
+}
+
+#[test]
+fn receipt_help() {
+    insta::assert_snapshot!("receipt", help(&["receipt", "--help"]));
+}
+
+#[test]
+fn receipt_keygen_help() {
+    insta::assert_snapshot!("receipt_keygen", help(&["receipt", "keygen", "--help"]));
+}
+
+#[test]
+fn receipt_sign_help() {
+    insta::assert_snapshot!("receipt_sign", help(&["receipt", "sign", "--help"]));
+}

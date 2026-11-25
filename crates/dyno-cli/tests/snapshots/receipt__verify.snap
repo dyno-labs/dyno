@@ -1,0 +1,118 @@
+---
+source: crates/dyno-cli/tests/receipt.rs
+expression: json(&outcome)
+---
+{
+  "checks": [
+    {
+      "actual": "21fe31dfa154a261",
+      "expected": "21fe31dfa154a261",
+      "id": "key",
+      "outcome": "match",
+      "reason": null
+    },
+    {
+      "actual": null,
+      "expected": null,
+      "id": "signature",
+      "outcome": "match",
+      "reason": null
+    },
+    {
+      "actual": null,
+      "expected": "2026-11-25T11:00:00Z",
+      "id": "key_not_retired",
+      "outcome": "match",
+      "reason": null
+    },
+    {
+      "actual": "c36e9f14f9d5f7124781553595d8a64f379007a651cdafd42531cd3558310845",
+      "expected": "c36e9f14f9d5f7124781553595d8a64f379007a651cdafd42531cd3558310845",
+      "id": "result_sha256",
+      "outcome": "match",
+      "reason": null
+    },
+    {
+      "actual": "54bc36cfde26ce4949a736033d9f3d251b6f2ba547725ab7e19779f77be911c5",
+      "expected": "54bc36cfde26ce4949a736033d9f3d251b6f2ba547725ab7e19779f77be911c5",
+      "id": "result_build_id",
+      "outcome": "match",
+      "reason": null
+    },
+    {
+      "actual": "e81eac2b6c4eb2857f836ad82d7bb34b34f5c2abd3b2e2574710c10bf15f722e",
+      "expected": "e81eac2b6c4eb2857f836ad82d7bb34b34f5c2abd3b2e2574710c10bf15f722e",
+      "id": "result_hash",
+      "outcome": "match",
+      "reason": null
+    },
+    {
+      "actual": "54bc36cfde26ce4949a736033d9f3d251b6f2ba547725ab7e19779f77be911c5",
+      "expected": "54bc36cfde26ce4949a736033d9f3d251b6f2ba547725ab7e19779f77be911c5",
+      "id": "build_id",
+      "outcome": "match",
+      "reason": null
+    }
+  ],
+  "key": {
+    "created_at": "2026-11-01T00:00:00Z",
+    "key_id": "21fe31dfa154a261",
+    "retired": false,
+    "retired_at": null
+  },
+  "reason": null,
+  "receipt": {
+    "build_id": "54bc36cfde26ce4949a736033d9f3d251b6f2ba547725ab7e19779f77be911c5",
+    "check_id": "chk_0001",
+    "device": {
+      "key": "iphone-14-pro-max",
+      "model": "iPhone 14 Pro Max",
+      "os_version": "26.6.2 (23G90)"
+    },
+    "dyno_version": "0.1.3",
+    "issued_at": "2026-11-25T11:00:00Z",
+    "issuer": "lab.example",
+    "key_id": "21fe31dfa154a261",
+    "lab": {
+      "backend": "fake-phone",
+      "kind": "own_phones"
+    },
+    "measures": [
+      {
+        "id": "device.footprint_over_baseline",
+        "unit": "bytes_change",
+        "value": 146800640
+      },
+      {
+        "id": "device.kills",
+        "unit": "count",
+        "value": 0
+      },
+      {
+        "id": "device.phys_footprint",
+        "unit": "bytes",
+        "value": 209715200
+      },
+      {
+        "id": "device.phys_footprint_peak",
+        "unit": "bytes",
+        "value": 209715200
+      }
+    ],
+    "protocol": {
+      "device_runs": 3,
+      "host_profile": {
+        "name": "reels",
+        "version": 2
+      },
+      "scenario": "alone",
+      "spins": null
+    },
+    "receipt_version": 1,
+    "result_hash": "e81eac2b6c4eb2857f836ad82d7bb34b34f5c2abd3b2e2574710c10bf15f722e",
+    "result_sha256": "c36e9f14f9d5f7124781553595d8a64f379007a651cdafd42531cd3558310845"
+  },
+  "schema_version": 0,
+  "tool": "[tool]",
+  "verified": true
+}

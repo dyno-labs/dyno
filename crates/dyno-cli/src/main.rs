@@ -20,11 +20,13 @@ mod exit;
 mod link;
 mod mcp;
 mod output;
+mod receipt;
 mod run_info;
 mod site;
 mod upload;
+mod verify;
 
-use cli::{Cli, Command};
+use cli::{Cli, Command, ReceiptCommand};
 
 fn main() -> ExitCode {
     let cli = match Cli::try_parse() {
@@ -52,6 +54,15 @@ fn main() -> ExitCode {
         Command::Logout => account::logout().map(|()| ExitCode::SUCCESS),
         Command::Upload(args) => upload::run(args).map(|()| ExitCode::SUCCESS),
         Command::Link(args) => link::run(args).map(|()| ExitCode::SUCCESS),
+        Command::Verify(args) => {
+            verify::run(args).map(|verified| ExitCode::from(exit::for_verdict(verified)))
+        }
+        Command::Receipt(ReceiptCommand::Keygen(args)) => {
+            receipt::keygen(args).map(|()| ExitCode::SUCCESS)
+        }
+        Command::Receipt(ReceiptCommand::Sign(args)) => {
+            receipt::sign(args).map(|()| ExitCode::SUCCESS)
+        }
     };
     match outcome {
         Ok(code) => code,

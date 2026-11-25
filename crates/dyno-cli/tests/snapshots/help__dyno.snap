@@ -4,7 +4,7 @@ expression: "help(&[\"--help\"])"
 ---
 Predicts how much memory an HTML5 game in an iframe will use on an iPhone, from its build.
 
-check, compare and doctor each write one canonical JSON result to stdout, or to --out. A short summary for people goes to stderr. It has no stable format, so do not parse it. login, logout, upload and link write only that summary.
+check, compare, doctor, verify and receipt each write one canonical JSON result to stdout, or to --out. A short summary for people goes to stderr. It has no stable format, so do not parse it. login, logout, upload and link write only that summary.
 
 Usage: dyno <COMMAND>
 
@@ -17,6 +17,8 @@ Commands:
   logout   [phase 3] Remove the token that dyno login saved
   upload   [phase 3] Upload result files from `dyno check` to the dyno site, and print each one's link
   link     [phase 3] Link a build folder to its game on the dyno site, in dyno.toml
+  verify   [phase 3] Check a lab's signed receipt for a result, against the lab's public key
+  receipt  [phase 3] Run a lab: make its key pair, and sign a receipt for a result
   help     Print this message or the help of the given subcommand(s)
 
 Options:

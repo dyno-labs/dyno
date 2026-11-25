@@ -1,0 +1,24 @@
+---
+source: crates/dyno-cli/tests/help.rs
+expression: "help(&[\"receipt\", \"sign\", \"--help\"])"
+---
+[phase 3] Sign a receipt for a result file from `dyno check` with a run on a device
+
+Usage: dyno receipt sign [OPTIONS] --key <FILE> --result <FILE> --issuer <NAME> --check-id <ID>
+
+Options:
+      --key <FILE>          [phase 3] The private key file that `dyno receipt keygen` wrote
+      --result <FILE>       [phase 3] The result file from `dyno check` to sign a receipt for
+      --issuer <NAME>       [phase 3] The lab's name, such as its domain
+      --check-id <ID>       [phase 3] The lab's id for the run
+      --lab-kind <KIND>     [phase 3] What kind of lab it is, in the lab's own words [default: own_phones]
+      --lab-backend <NAME>  [phase 3] What the lab's devices run on, such as the name of a device cloud
+      --issued-at <TIME>    [phase 3] When the lab signs, in UTC to the second, such as 2026-11-25T10:00:00Z [default: now]
+      --out <FILE>          [phase 3] Write the receipt to FILE instead of stdout
+  -h, --help                Print help
+
+Exit codes:
+  0   the receipt is signed
+  64  usage or input error: a private key file that cannot be read or is not one, or a result
+      that cannot be read, was edited, or has no build or no device
+  70  internal or I/O error, such as a receipt file that cannot be written

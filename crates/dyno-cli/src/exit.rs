@@ -1,8 +1,9 @@
 //! Exit codes and the errors that set them.
 //!
 //! A command that gives a result exits with the code for its status. The status comes from the
-//! deterministic part alone, so the same `result_hash` always gives the same exit code. A command
-//! that stops before it has a result exits with the code for its error.
+//! deterministic part alone, so the same `result_hash` always gives the same exit code. `dyno
+//! verify` exits with the code for its verdict. A command that stops before it has a result exits
+//! with the code for its error.
 
 use std::fmt;
 
@@ -26,6 +27,11 @@ pub const INCOMPLETE: u8 = 2;
 /// A required measure failed its check, a measure row does not fit the check, or an input result
 /// was edited.
 pub const INVALID: u8 = 3;
+/// A receipt is verified: a given key signed it, and everything that was checked matches it.
+pub const VERIFIED: u8 = 0;
+/// A receipt is not verified. The same code as a check that fails: the thing looked at is not
+/// good, and nothing went wrong with the command.
+pub const NOT_VERIFIED: u8 = 1;
 /// A usage or config error: bad flags, or an unreadable target, budget, games or result file.
 pub const USAGE: u8 = 64;
 /// An internal or I/O error, such as an output file that cannot be written.
@@ -39,6 +45,11 @@ pub fn for_status(status: Status) -> u8 {
         Status::Incomplete => INCOMPLETE,
         Status::Invalid => INVALID,
     }
+}
+
+/// The exit code for the verdict of `dyno verify`.
+pub fn for_verdict(verified: bool) -> u8 {
+    if verified { VERIFIED } else { NOT_VERIFIED }
 }
 
 impl CliError {
@@ -90,5 +101,11 @@ mod tests {
         for (status, code) in cases {
             assert_eq!(for_status(status), code, "{status:?}");
         }
+    }
+
+    #[test]
+    fn a_verified_receipt_exits_with_0_and_one_that_is_not_with_1() {
+        assert_eq!(for_verdict(true), 0);
+        assert_eq!(for_verdict(false), 1);
     }
 }

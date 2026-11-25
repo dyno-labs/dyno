@@ -502,6 +502,7 @@ dependencies = [
  "clap",
  "dyno-cdp",
  "dyno-ios",
+ "dyno-receipt",
  "dyno-run",
  "dyno-schema",
  "dyno-score",
@@ -517,6 +518,7 @@ dependencies = [
  "tokio",
  "toml_edit",
  "ureq",
+ "url",
  "uuid",
 ]
 

@@ -12,12 +12,27 @@
 //! this dyno does not know is still signed. These types read only the fields that version 1
 //! names, and ignore the rest.
 
-use schemars::JsonSchema;
+use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
 use ts_rs::TS;
 
 use crate::profile::{ProfileRef, Scenario};
+
+/// Makes every field of an object required in its JSON Schema.
+///
+/// The format gives each field of a receipt and of a keys document, and a field with no value is
+/// null, not left out. The generator leaves a field that can be null out of `required`, because
+/// the Rust reader takes it as null when it is missing. This puts the schema in step with the
+/// format and with the TypeScript types.
+fn every_field_is_there(schema: &mut Schema) {
+    let fields = schema.get("properties").and_then(Value::as_object);
+    let names: Vec<Value> = fields
+        .into_iter()
+        .flat_map(|fields| fields.keys().cloned().map(Value::String))
+        .collect();
+    schema.insert("required".to_owned(), Value::Array(names));
+}
 
 /// The receipt format that this dyno writes and reads. A verifier refuses any other.
 pub const RECEIPT_VERSION: u32 = 1;
@@ -27,33 +42,42 @@ pub const ED25519: &str = "ed25519";
 
 /// A receipt with its signature: the file that a lab gives with a result.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[schemars(transform = every_field_is_there)]
 pub struct ReceiptEnvelope {
     pub receipt: Receipt,
     /// The signature algorithm: `ed25519`.
+    #[schemars(extend("const" = "ed25519"))]
     pub algorithm: String,
     /// The Ed25519 signature over the UTF-8 bytes of the RFC 8785 canonical JSON of `receipt`,
     /// in base64url with no padding.
+    #[schemars(extend("pattern" = "^[A-Za-z0-9_-]{86}$"))]
     pub signature: String,
 }
 
 /// What a lab signs: which result it stands behind, for which build, on which device, and the
 /// device's readings.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[schemars(transform = every_field_is_there)]
 pub struct Receipt {
     /// The format version: 1.
+    #[schemars(extend("const" = 1))]
     pub receipt_version: u32,
     /// The lab's name, such as a domain.
     pub issuer: String,
     /// Which of the lab's keys signed: the first 16 hex characters of the SHA-256 of the raw
     /// 32-byte public key.
+    #[schemars(extend("pattern" = "^[0-9a-f]{16}$"))]
     pub key_id: String,
     /// When the lab signed: RFC 3339, in UTC, to the second, ending in `Z`.
+    #[schemars(extend("pattern" = "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))]
     pub issued_at: String,
     /// The lab's id for the run.
     pub check_id: String,
     /// The build id of the files the lab ran: 64 lower-case hex characters.
+    #[schemars(extend("pattern" = "^[0-9a-f]{64}$"))]
     pub build_id: String,
     /// Lower-case hex SHA-256 of the RFC 8785 canonical JSON of the whole result file.
+    #[schemars(extend("pattern" = "^[0-9a-f]{64}$"))]
     pub result_sha256: String,
     /// The result's own `result_hash`, as the result states it. Null when it states none.
     pub result_hash: Option<String>,
@@ -72,6 +96,7 @@ pub struct Receipt {
 
 /// The lab that ran the check.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[schemars(transform = every_field_is_there)]
 pub struct ReceiptLab {
     /// What kind of lab it is, in the lab's own words.
     pub kind: String,
@@ -82,6 +107,7 @@ pub struct ReceiptLab {
 
 /// The device that ran the check.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[schemars(transform = every_field_is_there)]
 pub struct ReceiptDevice {
     /// The device catalogue's key, such as "iphone-14-pro-max".
     pub key: String,
@@ -93,6 +119,7 @@ pub struct ReceiptDevice {
 
 /// The `protocol` object that `dyno receipt sign` writes, from the result's inputs.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[schemars(transform = every_field_is_there)]
 pub struct ReceiptProtocol {
     pub host_profile: ProfileRef,
     pub scenario: Scenario,
@@ -105,6 +132,7 @@ pub struct ReceiptProtocol {
 
 /// One reading of the device.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[schemars(transform = every_field_is_there)]
 pub struct ReceiptMeasure {
     /// The measure's id, such as "device.phys_footprint".
     pub id: String,
@@ -117,12 +145,14 @@ pub struct ReceiptMeasure {
 
 /// A lab's public keys, as the JSON document the lab publishes.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[schemars(transform = every_field_is_there)]
 pub struct PublicKeys {
     pub keys: Vec<PublicKey>,
 }
 
 /// One of a lab's public keys.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[schemars(transform = every_field_is_there)]
 pub struct PublicKey {
     /// The first 16 hex characters of the SHA-256 of the raw 32-byte public key.
     pub key_id: String,
@@ -140,6 +170,7 @@ pub struct PublicKey {
 
 /// The output of `dyno verify`: whether a receipt holds, and each check that says so.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[schemars(transform = every_field_is_there)]
 pub struct VerifyResult {
     pub schema_version: u32,
     /// The dyno version that verified.
@@ -161,6 +192,7 @@ pub struct VerifyResult {
 
 /// One check of a receipt.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[schemars(transform = every_field_is_there)]
 pub struct VerifyCheck {
     pub id: VerifyCheckId,
     pub outcome: VerifyOutcome,
@@ -208,6 +240,7 @@ pub enum VerifyOutcome {
 
 /// The key that signed a receipt.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[schemars(transform = every_field_is_there)]
 pub struct VerifyKey {
     pub key_id: String,
     /// When the lab made the key. Null for a key given with `--key`, which has no times.
@@ -322,6 +355,47 @@ mod tests {
                 "spins": null,
                 "device_runs": 3
             })
+        );
+    }
+
+    #[test]
+    fn the_schema_takes_only_version_1_and_ed25519_and_requires_every_field() {
+        let schema = serde_json::to_value(schemars::schema_for!(ReceiptEnvelope)).unwrap();
+        assert_eq!(schema["properties"]["algorithm"]["const"], "ed25519");
+        assert_eq!(
+            schema["required"],
+            serde_json::json!(["algorithm", "receipt", "signature"])
+        );
+        let receipt = &schema["$defs"]["Receipt"];
+        assert_eq!(receipt["properties"]["receipt_version"]["const"], 1);
+        let fields = receipt["properties"].as_object().unwrap();
+        let required = receipt["required"].as_array().unwrap();
+        assert_eq!(required.len(), fields.len());
+        // A field that can be null is required too, and still takes null.
+        assert!(required.contains(&"result_hash".into()));
+        assert_eq!(
+            fields["result_hash"]["type"],
+            serde_json::json!(["string", "null"])
+        );
+        let lab = &schema["$defs"]["ReceiptLab"];
+        assert_eq!(lab["required"], serde_json::json!(["backend", "kind"]));
+    }
+
+    #[test]
+    fn the_keys_document_schema_requires_every_field_and_takes_any_algorithm() {
+        // A lab can add a key of another algorithm, which a verifier leaves out.
+        let schema = serde_json::to_value(schemars::schema_for!(PublicKeys)).unwrap();
+        let key = &schema["$defs"]["PublicKey"];
+        assert_eq!(key["properties"]["algorithm"].get("const"), None);
+        assert_eq!(
+            key["required"],
+            serde_json::json!([
+                "algorithm",
+                "created_at",
+                "key_id",
+                "public_key",
+                "retired_at"
+            ])
         );
     }
 

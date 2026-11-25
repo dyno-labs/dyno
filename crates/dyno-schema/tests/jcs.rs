@@ -4,12 +4,12 @@
 //! them from `JSON.parse` and `JSON.stringify`. So each test gives the bytes that those two give,
 //! from the RFC's own examples or from Node.
 
-use dyno_schema::canonical::{jcs, sha256_hex, sha256_of_jcs};
+use dyno_schema::canonical::{jcs, parse_json, sha256_hex, sha256_of_jcs};
 use serde_json::Value;
 
 /// The canonical JSON of a JSON text.
 fn canonical(text: &str) -> String {
-    let json: Value = serde_json::from_str(text).unwrap_or_else(|error| panic!("{text}: {error}"));
+    let json = parse_json(text).unwrap_or_else(|error| panic!("{text}: {error}"));
     jcs(&json).unwrap()
 }
 
@@ -67,13 +67,55 @@ fn keys_sort_by_utf_16_code_units_as_rfc_8785_section_3_2_3_does() {
 }
 
 #[test]
-fn keys_that_look_the_same_stay_apart_and_the_last_of_a_repeated_key_wins() {
+fn keys_that_look_the_same_stay_apart() {
     // "é" as one character sorts after "é" as an "e" and a combining accent: no key is
-    // normalized. JSON.parse keeps the last value of a key that is there twice.
+    // normalized, so the two are two names.
     assert_eq!(
-        canonical(r#"{"b":1,"a":2,"a":3,"":4,"A":5,"aa":6,"\u00e9":7,"e\u0301":8}"#),
+        canonical(r#"{"b":1,"a":3,"":4,"A":5,"aa":6,"\u00e9":7,"e\u0301":8}"#),
         "{\"\":4,\"A\":5,\"a\":3,\"aa\":6,\"b\":1,\"e\u{301}\":8,\"é\":7}"
     );
+}
+
+#[test]
+fn an_object_with_one_name_twice_is_refused_at_any_depth() {
+    // JSON.parse keeps the last value and some parsers keep the first, so such a file has no
+    // one reading. RFC 8785, section 3.1, refuses it.
+    for text in [
+        r#"{"a":1,"a":2}"#,
+        r#"{"a":1,"b":2,"a":1}"#,
+        r#"{"outer":{"a":1,"a":2}}"#,
+        r#"[1,[{"deep":[{"a":null,"a":null}]}]]"#,
+        r#"{"":1,"":2}"#,
+        // The same name, escaped in two ways.
+        r#"{"a":1,"\u0061":2}"#,
+        r#"{"\ud83d\ude00":1,"😀":2}"#,
+    ] {
+        let error = parse_json(text).unwrap_err().to_string();
+        assert!(error.contains("is twice in one object"), "{text}: {error}");
+    }
+    let error = parse_json(r#"{"receipt":{"issuer":"a","issuer":"b"}}"#).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .starts_with(r#"the name "issuer" is twice in one object"#)
+    );
+}
+
+#[test]
+fn the_same_name_in_two_objects_is_not_a_name_twice() {
+    let text = r#"{"a":{"a":1},"b":[{"a":2},{"a":3}]}"#;
+    assert_eq!(canonical(text), text);
+}
+
+#[test]
+fn json_with_no_name_twice_reads_as_the_plain_parser_reads_it() {
+    let text = r#"{"n":[0,-1,18446744073709551615,-9223372036854775808,1.5,1e21,-0.0],
+        "s":"\u20ac\n","t":true,"f":false,"z":null,"o":{},"l":[]}"#;
+    let plain: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(parse_json(text).unwrap(), plain);
+    for not_json in ["", "{", "[1,]", "{\"a\":1} x", "nul"] {
+        assert!(parse_json(not_json).is_err(), "{not_json}");
+    }
 }
 
 #[test]
@@ -187,7 +229,7 @@ fn a_number_too_large_for_a_double_and_half_a_surrogate_pair_do_not_parse() {
     // JavaScript reads the first as Infinity and writes null, and writes the second back as
     // an escape. RFC 8785 refuses both, and so does the parser, before `jcs` sees them.
     for text in ["1E400", "-1E400", r#""\ud800""#, r#""\udc00x""#] {
-        assert!(serde_json::from_str::<Value>(text).is_err(), "{text}");
+        assert!(parse_json(text).is_err(), "{text}");
     }
 }
 
@@ -201,8 +243,8 @@ fn empty_values_and_nesting_are_kept() {
 
 #[test]
 fn the_hash_is_of_the_canonical_bytes_so_key_order_and_number_spelling_do_not_change_it() {
-    let one: Value = serde_json::from_str(r#"{"a": 1.0, "b": [2e0, "x"]}"#).unwrap();
-    let other: Value = serde_json::from_str(r#"{"b":[2,"x"],"a":1}"#).unwrap();
+    let one = parse_json(r#"{"a": 1.0, "b": [2e0, "x"]}"#).unwrap();
+    let other = parse_json(r#"{"b":[2,"x"],"a":1}"#).unwrap();
     assert_eq!(sha256_of_jcs(&one).unwrap(), sha256_of_jcs(&other).unwrap());
     assert_eq!(
         sha256_of_jcs(&one).unwrap(),

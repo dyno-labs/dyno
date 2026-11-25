@@ -44,10 +44,11 @@
         }
       },
       "required": [
-        "key_id",
         "algorithm",
+        "created_at",
+        "key_id",
         "public_key",
-        "created_at"
+        "retired_at"
       ]
     }
   }

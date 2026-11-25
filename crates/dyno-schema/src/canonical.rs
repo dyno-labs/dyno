@@ -14,8 +14,9 @@
 use std::fmt::{self, Write};
 
 use serde::Serialize;
+use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::ser::Error as _;
-use serde_json::{Number, Value};
+use serde_json::{Map, Number, Value};
 use sha2::{Digest, Sha256};
 
 /// The largest safe integer: 2^53 - 1. Canonical JSON writes every number as a double, and above
@@ -45,10 +46,96 @@ pub fn to_canonical_json<T: Serialize>(value: &T) -> Result<String, serde_json::
 /// the bytes are the same as those of a JavaScript program that reads the JSON with `JSON.parse`
 /// and writes each value with `JSON.stringify`, its keys sorted.
 ///
-/// The value must come from `serde_json`'s parser, which refuses what RFC 8785 refuses: a number
-/// too large for a double, and half of a surrogate pair in a string. JavaScript takes both.
+/// The value must come from [`parse_json`], which refuses what RFC 8785 refuses: a name that is
+/// twice in one object, a number too large for a double, and half of a surrogate pair in a
+/// string. JavaScript takes all three.
 pub fn jcs(json: &Value) -> Result<String, serde_json::Error> {
     serde_json_canonicalizer::to_string(json)
+}
+
+/// Reads JSON that another program wrote, and refuses an object that has one name twice, at any
+/// depth (RFC 8785, section 3.1).
+///
+/// A plain parser keeps one of the two values and drops the other, and parsers differ in which.
+/// So one file could verify here with one value while another reader sees the other. Two names
+/// are the same when their characters are, however each is escaped: `"a"` and `"\u0061"`.
+pub fn parse_json(text: &str) -> Result<Value, serde_json::Error> {
+    serde_json::from_str::<NoNameTwice>(text).map(|json| json.0)
+}
+
+/// JSON read with [`parse_json`]'s rule: a wrapper, so that every object inside is read the same
+/// way.
+struct NoNameTwice(Value);
+
+impl<'de> Deserialize<'de> for NoNameTwice {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<NoNameTwice, D::Error> {
+        deserializer
+            .deserialize_any(NoNameTwiceVisitor)
+            .map(NoNameTwice)
+    }
+}
+
+struct NoNameTwiceVisitor;
+
+impl<'de> Visitor<'de> for NoNameTwiceVisitor {
+    type Value = Value;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("a JSON value")
+    }
+
+    fn visit_unit<E>(self) -> Result<Value, E> {
+        Ok(Value::Null)
+    }
+
+    fn visit_bool<E>(self, value: bool) -> Result<Value, E> {
+        Ok(Value::Bool(value))
+    }
+
+    fn visit_i64<E>(self, value: i64) -> Result<Value, E> {
+        Ok(Value::Number(value.into()))
+    }
+
+    fn visit_u64<E>(self, value: u64) -> Result<Value, E> {
+        Ok(Value::Number(value.into()))
+    }
+
+    fn visit_f64<E: de::Error>(self, value: f64) -> Result<Value, E> {
+        // The parser gives no double that is not finite: it refuses a number that large.
+        Number::from_f64(value)
+            .map(Value::Number)
+            .ok_or_else(|| E::custom("a number that is not finite"))
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Value, E> {
+        Ok(Value::String(value.to_owned()))
+    }
+
+    fn visit_string<E>(self, value: String) -> Result<Value, E> {
+        Ok(Value::String(value))
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut items: A) -> Result<Value, A::Error> {
+        let mut list = Vec::new();
+        while let Some(item) = items.next_element::<NoNameTwice>()? {
+            list.push(item.0);
+        }
+        Ok(Value::Array(list))
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut fields: A) -> Result<Value, A::Error> {
+        let mut object = Map::new();
+        while let Some(name) = fields.next_key::<String>()? {
+            if object.contains_key(&name) {
+                return Err(de::Error::custom(format_args!(
+                    "the name {name:?} is twice in one object"
+                )));
+            }
+            let value = fields.next_value::<NoNameTwice>()?;
+            object.insert(name, value.0);
+        }
+        Ok(Value::Object(object))
+    }
 }
 
 /// Lowercase hex SHA-256 of the JSON's RFC 8785 canonical form, as [`jcs`] writes it.

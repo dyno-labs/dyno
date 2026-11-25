@@ -8,7 +8,7 @@ use std::process::{Child, Command, Stdio};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use common::{NO_CHROMIUM, Outcome, data_dir};
+use common::{NO_CHROMIUM, Outcome, copy_dir, data_dir};
 
 /// One HTTP exchange: the status line and the body.
 fn exchange(address: &str, method: &str, path: &str, body: &str) -> (String, String) {
@@ -219,6 +219,48 @@ fn a_served_check_takes_its_environment_from_the_user_agent() {
             }
         })
     );
+}
+
+#[test]
+fn a_served_check_gives_the_browser_the_files_of_its_scan_and_no_others() {
+    let folder = tempfile::tempdir().unwrap();
+    let build = folder.path().join("build");
+    copy_dir(&data_dir().join("tiny-build"), &build);
+    // What the scan skips is not in the build id.
+    std::fs::create_dir(build.join(".git")).unwrap();
+    std::fs::write(build.join(".git/config"), "not the build's").unwrap();
+    std::fs::write(build.join(".DS_Store"), "litter").unwrap();
+    let served = start(
+        &[],
+        &["check", &build.display().to_string(), "--driver", "serve"],
+    );
+    let harness = served.harness.clone();
+    // dyno has scanned the build by the time it prints the URL. A file that comes after is not
+    // in the build id either.
+    std::fs::write(build.join("late.js"), "late").unwrap();
+    let (_, page) = exchange(&harness, "GET", "/", "");
+    let game = page
+        .split("const GAME_URL = \"http://")
+        .nth(1)
+        .and_then(|rest| rest.split('/').next())
+        .unwrap()
+        .to_owned();
+    for path in ["/.git/config", "/.DS_Store", "/late.js"] {
+        let (status, _) = exchange(&game, "GET", path, "");
+        assert_eq!(status, "HTTP/1.1 404 Not Found", "{path}");
+    }
+    open_as_browser(&harness, "");
+    let result: serde_json::Value = serde_json::from_str(&served.finish().stdout).unwrap();
+    // Every file of the build id is one that the server gives.
+    let files = result["deterministic"]["build"]["files"]
+        .as_array()
+        .unwrap();
+    assert!(!files.is_empty());
+    for file in files {
+        let path = file["path"].as_str().unwrap();
+        assert!(!path.contains(".git") && path != "late.js", "{path}");
+    }
+    assert_eq!(result["run"]["build_link"], "served");
 }
 
 /// The fake phone's UDID (crates/dyno-ios/src/fake.rs).

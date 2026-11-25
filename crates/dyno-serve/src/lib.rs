@@ -11,7 +11,8 @@
 //!
 //! Two servers run on one host, on two ports, so the game frame is cross-origin to the harness
 //! page around it. The game server serves the build folder and adds the probe's script tag to
-//! each HTML page. Every request it serves, but the probe's own, is a game request. The harness
+//! each HTML page. It serves the files that the static scan lists for the build, and no others
+//! ([`files`]). Every request it serves, but the probe's own, is a game request. The harness
 //! server serves the harness page, which relays the probe's events to dyno over HTTP, as the
 //! browser has no driver binding. The run gives the same runner protocol messages as the CDP
 //! driver, so `dyno_run::lab` reads both the same way.
@@ -131,7 +132,12 @@ impl ServeDriver {
     /// The address is the first of these: the host the options give; the tunnel address they
     /// give, when the servers can be bound there; this machine's address on its local network.
     pub fn bind(build: &Path, options: &ServeOptions) -> Result<ServeDriver, ServeError> {
-        let build = Build::open(build)?;
+        ServeDriver::bind_build(Build::open(build)?, options)
+    }
+
+    /// [`ServeDriver::bind`], for a build that is open already, such as one that serves only the
+    /// files of its scan ([`Build::only_the_files_of`]).
+    pub fn bind_build(build: Build, options: &ServeOptions) -> Result<ServeDriver, ServeError> {
         let mut tunnel_refused = None;
         let at_tunnel = match (&options.host, options.tunnel_host) {
             (None, Some(tunnel)) => match Servers::bind(&tunnel.to_string(), options.port) {

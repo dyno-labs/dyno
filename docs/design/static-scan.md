@@ -301,7 +301,10 @@ errors is a usage error.
 
 **Walk.** Recursive, sorted. Skip symlinks (never follow them). Skip these
 names anywhere: `.DS_Store`, `Thumbs.db`, `desktop.ini`, and the folders
-`__MACOSX` and `.git`. Paths are `RelPath`: relative, with `/`, and valid
+`__MACOSX` and `.git`. What the walk skips is not part of the build. The
+servers of `--driver serve` and `--browser` give a browser the listed files and
+no others, by this same rule (`inventory::is_skipped_name` and
+`inventory::listed_file`), so a run loads only what the build id covers. Paths are `RelPath`: relative, with `/`, and valid
 UTF-8. A folder with a non-UTF-8 name is a scan error. A zip entry name that is
 not UTF-8 is read as CP437, as the zip format says. Sort paths by byte order.
 

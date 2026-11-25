@@ -470,33 +470,22 @@ fn check_one(
     let clock = Clock::start();
     let run_id = Uuid::new_v4().to_string();
     let device_runs = options.device_runs.filter(|_| options.device);
-    // `--driver serve` serves the build after the scan: once, or with `--runs` once for each run.
-    // Its launch URL is dyno's own server. The result records the build, not that URL.
-    let served_build = match (&options.driver, &target.build) {
-        (DriverArg::Serve, Some(build)) => Some(build),
-        _ => None,
-    };
+    // `--driver serve` and `--browser` serve the build after the scan, so they serve the files
+    // that the scan listed and no others. A served run's launch URL is dyno's own server. The
+    // result records the build, not that URL.
+    //
     // A build that cannot be served, such as a .zip, stops the check before the scan and before
     // the phone is touched.
-    if let Some(build) = served_build {
-        Build::open(build).map_err(serve_error)?;
-    }
-    // `--browser` serves the build on 127.0.0.1 to the CDP driver's Chromium until the check ends.
-    let build_server = match (&target.build, options.browser) {
-        (Some(build), true) => Some(BuildServer::start(build).map_err(serve_error)?),
+    let served_build = match (&options.driver, &target.build) {
+        (DriverArg::Serve, Some(build)) => Some(Build::open(build).map_err(serve_error)?),
         _ => None,
     };
-    let launch_url = match &build_server {
-        Some(server) => Some(LaunchUrl::parse(server.url()).map_err(CliError::internal)?),
-        None => target.launch_url.clone(),
+    let browser_build = match (&target.build, options.browser) {
+        (Some(build), true) => Some(Build::open(build).map_err(serve_error)?),
+        _ => None,
     };
-    // The result records the URL that `--browser` loaded, which has no query string. A served
-    // run's URL can hold a session from `--serve-query`, so it is not recorded.
-    let recorded_launch_url = match &build_server {
-        Some(_) => launch_url.as_ref().map(LaunchUrl::recorded),
-        None => target.launch_url.as_ref().map(LaunchUrl::recorded),
-    };
-    let has_launch_url = launch_url.is_some() || served_build.is_some();
+    let has_launch_url =
+        target.launch_url.is_some() || served_build.is_some() || browser_build.is_some();
 
     let scan = match &target.build {
         Some(build) => dyno_static::scan(build, &options.host_profile, options.budget.as_ref())
@@ -508,10 +497,28 @@ fn check_one(
         None => Vec::new(),
     };
 
+    // The build id covers the files of the scan, so a server gives those and no others.
+    let scanned = |build: Build| match &scan.manifest {
+        Some(manifest) => build.only_the_files_of(manifest),
+        None => build,
+    };
+    // `--browser` serves the build on 127.0.0.1 to the CDP driver's Chromium until the check ends.
+    let build_server = match browser_build {
+        Some(build) => Some(BuildServer::start_build(scanned(build)).map_err(serve_error)?),
+        None => None,
+    };
+    let launch_url = match &build_server {
+        Some(server) => Some(LaunchUrl::parse(server.url()).map_err(CliError::internal)?),
+        None => target.launch_url.clone(),
+    };
+    // The result records the URL that `--browser` loaded, which has no query string. A served
+    // run's URL can hold a session from `--serve-query`, so it is not recorded.
+    let recorded_launch_url = launch_url.as_ref().map(LaunchUrl::recorded);
+
     let mut run_measures = model_measures(has_launch_url);
-    let browser = match (served_build, device_runs) {
-        (Some(build), Some(runs)) => device_runs_run(build, runs, options)?,
-        (Some(build), None) => served_run(build, options)?,
+    let browser = match (served_build.map(scanned), device_runs) {
+        (Some(build), Some(runs)) => device_runs_run(&build, runs, options)?,
+        (Some(build), None) => served_run(&build, options)?,
         (None, _) => browser_run(launch_url.as_ref(), options),
     };
     run_measures.extend(browser.measures);
@@ -612,15 +619,12 @@ fn browser_run(launch_url: Option<&LaunchUrl>, options: &CheckOptions) -> Browse
 }
 
 /// The run of a check that `--driver serve` serves, and with `--device` the device run around it.
-fn served_run(build: &Path, options: &CheckOptions) -> Result<BrowserRun, CliError> {
+fn served_run(build: &Build, options: &CheckOptions) -> Result<BrowserRun, CliError> {
     // The recording starts before the person is told to open the page, so it sees the whole run.
-    let mut device_run = match options.device {
-        true => Some(start_device_run(
-            options.device_recording.as_deref(),
-            options,
-        )?),
-        false => None,
-    };
+    let mut device_run = options
+        .device
+        .then(|| start_device_run(options.device_recording.as_deref(), options))
+        .transpose()?;
     let query = options.serve_query.as_deref();
     let (mut served, request) = serve_to(build, query, device_run.as_mut(), options)?;
     let lab = dyno_run::run_lab(&mut served, &request);
@@ -656,11 +660,14 @@ enum RunOf {
 /// the first game run, and the phone from the first game run whose recording named it. The device
 /// measures come from every run.
 fn device_runs_run(
-    build: &Path,
+    build: &Build,
     runs: u32,
     options: &CheckOptions,
 ) -> Result<BrowserRun, CliError> {
     let empty_build = EmptyBuild::write()?;
+    // dyno wrote the empty build itself and no scan lists it, so the server gives the files that
+    // a scan of it would list.
+    let empty = Build::open(empty_build.path()).map_err(serve_error)?;
     let mut game_device = Vec::new();
     let mut empty_device = Vec::new();
     let mut game_labs = Vec::new();
@@ -670,7 +677,7 @@ fn device_runs_run(
     for run in 1..=runs {
         for of in [RunOf::EmptyBuild, RunOf::Game] {
             let (path, query, name, recording_name) = match of {
-                RunOf::EmptyBuild => (empty_build.path(), None, "the empty build", "empty"),
+                RunOf::EmptyBuild => (&empty, None, "the empty build", "empty"),
                 RunOf::Game => (build, options.serve_query.as_deref(), "the game", "game"),
             };
             output::print_summary(&[format!("dyno check: run {run} of {runs} of {name}.")]);
@@ -738,7 +745,7 @@ fn start_device_run(
 /// machine's address in the device link's tunnel, when it has one; this machine's address on its
 /// local network. A run on a phone that does not serve over the device link says why.
 fn serve_to(
-    build: &Path,
+    build: &Build,
     query: Option<&str>,
     mut device_run: Option<&mut DeviceRun>,
     options: &CheckOptions,
@@ -752,7 +759,7 @@ fn serve_to(
             Err(why) => no_tunnel = Some(why.to_string()),
         }
     }
-    let served = ServeDriver::bind(build, &serve_options).map_err(serve_error)?;
+    let served = ServeDriver::bind_build(build.clone(), &serve_options).map_err(serve_error)?;
     // A launch URL that does not parse stops the check before Safari opens anything.
     let request = run_request(&served_launch_url(&served, query)?, options);
     let no_tunnel = no_tunnel.or_else(|| served.tunnel_refused().map(str::to_owned));

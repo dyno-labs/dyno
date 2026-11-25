@@ -72,6 +72,9 @@ fn a_browser_that_opens_the_harness_page_gives_a_full_run() {
     )
     .unwrap();
     fs::write(build.path().join("game.js"), "console.log('game')").unwrap();
+    fs::create_dir(build.path().join(".git")).unwrap();
+    fs::write(build.path().join(".git/config"), "not the build's").unwrap();
+    fs::write(build.path().join(".DS_Store"), "litter").unwrap();
     let options = ServeOptions {
         host: Some("127.0.0.1".to_owned()),
         tunnel_host: None,
@@ -122,6 +125,9 @@ fn a_browser_that_opens_the_harness_page_gives_a_full_run() {
     assert!(probe_script.contains("data-dyno-relay"));
     assert_eq!(get(&game, "/game.js").1, "console.log('game')");
     assert_eq!(get(&game, "/../secret").0, "HTTP/1.1 404 Not Found");
+    // A file that the scan skips is not part of the build, so the game cannot load it.
+    assert_eq!(get(&game, "/.git/config").0, "HTTP/1.1 404 Not Found");
+    assert_eq!(get(&game, "/.DS_Store").0, "HTTP/1.1 404 Not Found");
     post(
         &harness,
         "/__dyno/events",
@@ -191,8 +197,8 @@ fn a_browser_that_opens_the_harness_page_gives_a_full_run() {
         ]
     );
 
-    // The game's two requests, and the 404, count; the probe's own does not. No URL keeps the
-    // query string, which can hold a session.
+    // The game's two requests, and the three that got a 404, count; the probe's own does not. No
+    // URL keeps the query string, which can hold a session.
     let requests: Vec<&str> = messages
         .iter()
         .filter_map(|message| match message {
@@ -200,7 +206,10 @@ fn a_browser_that_opens_the_harness_page_gives_a_full_run() {
             _ => None,
         })
         .collect();
-    assert_eq!(requests, ["", "game.js", "../secret"]);
+    assert_eq!(
+        requests,
+        ["", "game.js", "../secret", ".git/config", ".DS_Store"]
+    );
 
     let self_check = messages.iter().find_map(|message| match message {
         DriverMessage::SelfCheck {

@@ -3,7 +3,7 @@
 mod common;
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpStream;
+use std::net::{Ipv6Addr, TcpStream, UdpSocket};
 use std::process::{Child, Command, Stdio};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -45,11 +45,20 @@ struct Served {
     stderr_rest: JoinHandle<String>,
 }
 
-/// Starts `dyno check` with `args` in the test data folder, and reads the URL it prints.
+/// Starts `dyno check` with `args` in the test data folder, served on the loopback address, and
+/// reads the URL it prints.
 fn start(extra_env: &[(&str, &str)], args: &[&str]) -> Served {
+    let mut at_loopback = args.to_vec();
+    at_loopback.extend_from_slice(&["--serve-host", "127.0.0.1"]);
+    start_where_dyno_chooses(extra_env, &at_loopback)
+}
+
+/// Starts `dyno check` with `args` in the test data folder, and reads the URL it prints. With no
+/// `--serve-host` in `args`, dyno chooses the address it serves at.
+fn start_where_dyno_chooses(extra_env: &[(&str, &str)], args: &[&str]) -> Served {
     let mut child = Command::new(env!("CARGO_BIN_EXE_dyno"))
         .args(args)
-        .args(["--serve-host", "127.0.0.1", "--serve-port", "0"])
+        .args(["--serve-port", "0"])
         .current_dir(data_dir())
         .env("DYNO_CHROMIUM", NO_CHROMIUM)
         .envs(extra_env.iter().copied())
@@ -185,6 +194,9 @@ fn a_served_check_runs_in_the_browser_that_opens_it_and_records_no_query() {
     let frame_dpr = run_measure(&result, "lab.self_check.frame_dpr");
     assert_eq!(frame_dpr["status"], "measured", "{frame_dpr}");
     assert_eq!(result["run"]["build_link"], "served");
+    // The address was given, so dyno does not know which path it is. No lab was named.
+    assert_eq!(result["run"]["serve_path"], "given");
+    assert_eq!(result["run"]["lab"], serde_json::Value::Null);
 }
 
 #[test]
@@ -584,6 +596,220 @@ fn a_phone_on_the_network_needs_its_address_and_its_pairing_file() {
     assert_eq!(footprint["status"], "measured", "{footprint}");
 }
 
+/// The path a served check's page takes when dyno serves at this machine's own address: the
+/// local network's, or the loopback address on a machine with no network.
+fn own_address_path() -> (String, &'static str) {
+    let address = dyno_serve::local_network_address();
+    let path = if address.is_loopback() {
+        "loopback"
+    } else {
+        "local_network"
+    };
+    (address.to_string(), path)
+}
+
+/// Whether this machine has the IPv6 loopback address, which stands in for a tunnel address in
+/// these tests: the fake devicectl gives it as the phone's, and this machine's own address on the
+/// way to it is the same one. Some containers have none.
+fn has_ipv6_loopback() -> bool {
+    UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).is_ok()
+}
+
+/// A device check of the fake phone at the address that dyno chooses, with this environment and
+/// these extra flags, run to the end with this test as the phone's browser. It gives the
+/// outcome, the result and the harness page's host and port.
+fn device_check_where_dyno_chooses(
+    env: &[(&str, &str)],
+    args: &[&str],
+) -> (Outcome, serde_json::Value, String) {
+    let mut all_env = vec![("DYNO_FAKE_PHONE", "")];
+    all_env.extend_from_slice(env);
+    let mut all_args = vec!["check", "tiny-build", "--driver", "serve", "--device"];
+    all_args.extend_from_slice(args);
+    let served = start_where_dyno_chooses(&all_env, &all_args);
+    let harness = served.harness.clone();
+    open_as_browser(&harness, "");
+    let outcome = served.finish();
+    let result = serde_json::from_str(&outcome.stdout).unwrap();
+    (outcome, result, harness)
+}
+
+const NOT_OVER_THE_DEVICE_LINK: &str = "dyno check: the page is not served over the device link: ";
+
+#[test]
+fn a_device_check_serves_over_the_device_link_when_this_machine_has_a_tunnel_to_the_phone() {
+    if !has_ipv6_loopback() {
+        return;
+    }
+    let folder = tempfile::tempdir().unwrap();
+    let launched = folder.path().join("launched");
+    let phone = format!("launched={}", launched.display());
+    let xcrun = fake_xcrun();
+    let served = start_where_dyno_chooses(
+        &[
+            ("DYNO_FAKE_PHONE", phone.as_str()),
+            ("DYNO_XCRUN", xcrun.as_str()),
+            ("FAKE_XCRUN_TUNNEL", "::1"),
+        ],
+        &["check", "tiny-build", "--driver", "serve", "--device"],
+    );
+    let harness = served.harness.clone();
+    open_as_browser(&harness, "");
+    let outcome = served.finish();
+    // The servers are at this machine's address on the way to the phone's tunnel address, and
+    // that is the page the phone's Safari was told to open.
+    assert!(harness.starts_with("[::1]:"), "{harness}");
+    assert_eq!(
+        std::fs::read_to_string(&launched).unwrap(),
+        format!("http://{harness}/")
+    );
+    assert!(
+        outcome.stderr.contains(
+            "dyno check: the page is served over the device link, so the phone needs no network \
+             path to this machine. Waiting up to 10 minutes."
+        ),
+        "{}",
+        outcome.stderr
+    );
+    assert!(
+        !outcome.stderr.contains(NOT_OVER_THE_DEVICE_LINK),
+        "{}",
+        outcome.stderr
+    );
+    let result: serde_json::Value = serde_json::from_str(&outcome.stdout).unwrap();
+    assert_eq!(result["run"]["serve_path"], "tunnel");
+    let footprint = run_measure(&result, "device.phys_footprint");
+    assert_eq!(footprint["status"], "measured", "{footprint}");
+}
+
+#[test]
+fn a_device_check_on_a_machine_with_no_tunnel_of_its_own_serves_on_the_local_network() {
+    // No devicectl, as on Linux: dyno's own tunnel to the phone takes no connections from it.
+    let (outcome, result, harness) = device_check_where_dyno_chooses(&[], &[]);
+    let (address, path) = own_address_path();
+    assert!(harness.starts_with(&format!("{address}:")), "{harness}");
+    assert_eq!(result["run"]["serve_path"], path);
+    assert!(
+        outcome.stderr.contains(&format!(
+            "{NOT_OVER_THE_DEVICE_LINK}this machine has no tunnel of its own to the phone, which \
+             only a Mac has, and dyno's own tunnel takes no connections from the phone."
+        )),
+        "{}",
+        outcome.stderr
+    );
+    assert!(
+        outcome
+            .stderr
+            .contains("dyno check: the phone must be on this machine's network."),
+        "{}",
+        outcome.stderr
+    );
+}
+
+#[test]
+fn a_mac_with_no_tunnel_to_the_phone_now_serves_on_the_local_network_and_says_why() {
+    let xcrun = fake_xcrun();
+    let (outcome, result, harness) =
+        device_check_where_dyno_chooses(&[("DYNO_XCRUN", xcrun.as_str())], &[]);
+    let (address, path) = own_address_path();
+    assert!(harness.starts_with(&format!("{address}:")), "{harness}");
+    assert_eq!(result["run"]["serve_path"], path);
+    assert!(
+        outcome.stderr.contains(&format!(
+            "{NOT_OVER_THE_DEVICE_LINK}devicectl gave no tunnel address for the phone: this Mac \
+             has no tunnel to the phone now (tunnel state: disconnected)."
+        )),
+        "{}",
+        outcome.stderr
+    );
+    // The run itself is as good as any on the local network.
+    let footprint = run_measure(&result, "device.phys_footprint");
+    assert_eq!(footprint["status"], "measured", "{footprint}");
+}
+
+#[test]
+fn a_tunnel_address_that_this_machine_has_no_tunnel_to_is_not_served_at() {
+    let xcrun = fake_xcrun();
+    // A documentation address (RFC 3849): this machine has no route to it, or a route that
+    // starts outside its network.
+    let env = [
+        ("DYNO_XCRUN", xcrun.as_str()),
+        ("FAKE_XCRUN_TUNNEL", "2001:db8::1"),
+    ];
+    let (outcome, result, harness) = device_check_where_dyno_chooses(&env, &[]);
+    let (address, path) = own_address_path();
+    assert!(harness.starts_with(&format!("{address}:")), "{harness}");
+    assert_eq!(result["run"]["serve_path"], path);
+    let no_route = format!(
+        "{NOT_OVER_THE_DEVICE_LINK}this machine has no route to the phone's tunnel address \
+         2001:db8::1: "
+    );
+    let other_network = format!(
+        "{NOT_OVER_THE_DEVICE_LINK}the route to the phone's tunnel address 2001:db8::1 starts at "
+    );
+    assert!(
+        outcome.stderr.contains(&no_route) || outcome.stderr.contains(&other_network),
+        "{}",
+        outcome.stderr
+    );
+}
+
+#[test]
+fn a_devicectl_that_fails_leaves_the_check_on_the_local_network() {
+    let xcrun = fake_xcrun();
+    let env = [("DYNO_XCRUN", xcrun.as_str()), ("FAKE_XCRUN_FAIL", "list")];
+    let (outcome, result, _) = device_check_where_dyno_chooses(&env, &[]);
+    assert_eq!(result["run"]["serve_path"], own_address_path().1);
+    assert!(
+        outcome.stderr.contains(&format!(
+            "{NOT_OVER_THE_DEVICE_LINK}devicectl gave no tunnel address for the phone: devicectl: \
+             ERROR: devicectl list failed for the test."
+        )),
+        "{}",
+        outcome.stderr
+    );
+}
+
+#[test]
+fn a_given_serve_host_wins_over_the_tunnel_address() {
+    let xcrun = fake_xcrun();
+    let env = [("DYNO_XCRUN", xcrun.as_str()), ("FAKE_XCRUN_TUNNEL", "::1")];
+    let (outcome, result, harness) = device_check(&[], &env, &[]);
+    assert!(harness.starts_with("127.0.0.1:"), "{harness}");
+    assert_eq!(result["run"]["serve_path"], "given");
+    // The tunnel was not looked for, so nothing is said about it.
+    assert!(
+        !outcome.stderr.contains("device link"),
+        "{}",
+        outcome.stderr
+    );
+}
+
+#[test]
+fn a_served_check_with_no_phone_is_at_this_machine_s_own_address() {
+    let served = start_where_dyno_chooses(&[], &["check", "tiny-build", "--driver", "serve"]);
+    let harness = served.harness.clone();
+    open_as_browser(&harness, "");
+    let outcome = served.finish();
+    let (address, path) = own_address_path();
+    assert!(harness.starts_with(&format!("{address}:")), "{harness}");
+    let result: serde_json::Value = serde_json::from_str(&outcome.stdout).unwrap();
+    assert_eq!(result["run"]["serve_path"], path);
+    // With no phone there is no device link to say anything about.
+    assert!(
+        !outcome.stderr.contains("device link"),
+        "{}",
+        outcome.stderr
+    );
+}
+
+#[test]
+fn a_lab_name_labels_a_device_check() {
+    let (_, result, _) = device_check(&[], &[], &["--lab", "rig"]);
+    assert_eq!(result["run"]["lab"], "rig");
+    assert_eq!(result["deterministic"]["inputs"]["device"], true);
+}
+
 /// A device check with `--runs` of the fake phone with these settings, run to the end with this
 /// test as the phone's browser in every run. dyno takes free ports for each run, so each run
 /// prints its own URL. It gives the outcome.
@@ -640,6 +866,8 @@ fn runs_give_the_medians_the_kills_and_the_game_over_the_empty_build() {
     let result: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
     assert_eq!(result["deterministic"]["inputs"]["device_runs"], 2);
+    // The path is the one of the game run that the lab measures come from.
+    assert_eq!(result["run"]["serve_path"], "given");
     let footprint = run_measure(&result, "device.phys_footprint");
     assert_eq!(footprint["value"], 209_715_200, "{footprint}");
     assert_eq!(footprint["uncertainty"]["kind"], "range", "{footprint}");

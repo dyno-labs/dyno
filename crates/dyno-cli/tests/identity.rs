@@ -135,6 +135,50 @@ fn a_game_id_labels_the_result_and_stays_out_of_the_hash() {
 }
 
 #[test]
+fn a_lab_name_labels_the_result_and_stays_out_of_the_hash() {
+    let plain = json(&dyno(&["check", "tiny-build"]));
+    let named = json(&dyno(&["check", "tiny-build", "--lab", "desk"]));
+    assert_eq!(named["run"]["lab"], "desk");
+    assert_eq!(named["result_hash"], plain["result_hash"]);
+    // No name means none recorded. A static scan serves no page, so it has no serve path.
+    assert_eq!(plain["run"]["lab"], Value::Null);
+    assert_eq!(plain["run"]["serve_path"], Value::Null);
+    assert_eq!(named["run"]["serve_path"], Value::Null);
+}
+
+#[test]
+fn a_lab_name_labels_every_game_of_a_games_file() {
+    let catalogue = json(&dyno(&[
+        "check",
+        "--games",
+        "games.toml",
+        "--lab",
+        "devicefarm",
+    ]));
+    let games = catalogue["games"].as_array().unwrap();
+    assert!(!games.is_empty());
+    for game in games {
+        assert_eq!(game["result"]["run"]["lab"], "devicefarm", "{}", game["id"]);
+    }
+}
+
+#[test]
+fn a_lab_name_that_is_not_a_short_lower_case_word_is_a_usage_error() {
+    for name in ["Phone Lab", "rig_2", "2rig", ""] {
+        let outcome = dyno(&["check", "tiny-build", "--lab", name]);
+        assert_exit(&outcome, USAGE);
+        assert!(
+            outcome
+                .stderr
+                .contains("must be a short word in lower case"),
+            "{name:?}: {}",
+            outcome.stderr
+        );
+        assert_eq!(outcome.stdout, "", "{name:?}");
+    }
+}
+
+#[test]
 fn a_game_id_that_is_not_a_uuid_is_a_usage_error() {
     let outcome = dyno(&["check", "tiny-build", "--game-id", "moon_lander"]);
     assert_exit(&outcome, USAGE);

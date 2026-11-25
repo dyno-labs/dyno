@@ -1543,6 +1543,14 @@
             "$ref": "#/$defs/Finding"
           }
         },
+        "lab": {
+          "description": "The kind of lab that ran the check, as `--lab` names it, such as \"desk\", \"rig\" or\n\"devicefarm\". Null when no name was given.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
         "machine": {
           "$ref": "#/$defs/Machine"
         },
@@ -1561,6 +1569,18 @@
           "type": [
             "string",
             "null"
+          ],
+          "default": null
+        },
+        "serve_path": {
+          "description": "The path the browser took to the page of a served run (`--driver serve`): which of this\nmachine's addresses dyno served it at. Null for any other check.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ServePath"
+            },
+            {
+              "type": "null"
+            }
           ],
           "default": null
         },
@@ -1685,6 +1705,31 @@
       "required": [
         "covers",
         "not_covered"
+      ]
+    },
+    "ServePath": {
+      "description": "The path a browser takes to the page that a served run serves: the address dyno served at.",
+      "oneOf": [
+        {
+          "description": "This machine's address inside the device link's tunnel to the phone. The phone needs no\nnetwork path to this machine.",
+          "type": "string",
+          "const": "tunnel"
+        },
+        {
+          "description": "This machine's address on its local network. The browser must be on that network.",
+          "type": "string",
+          "const": "local_network"
+        },
+        {
+          "description": "The loopback address, when this machine is on no network. Only a browser on this machine\nreaches it, such as Safari in the iOS Simulator.",
+          "type": "string",
+          "const": "loopback"
+        },
+        {
+          "description": "The address that `--serve-host` gave. dyno does not know which path it is.",
+          "type": "string",
+          "const": "given"
+        }
       ]
     },
     "Severity": {

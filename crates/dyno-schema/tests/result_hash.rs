@@ -17,7 +17,7 @@ use dyno_schema::path::RelPath;
 use dyno_schema::profile::{HostProfile, Scenario};
 use dyno_schema::result::{
     BuildLink, CheckResult, Deterministic, DeviceClass, Inputs, LoadedResult, Machine, Release,
-    ResultError, RunInfo, Target, TierReport, ToolBuild, Versions, raw_hash_matches,
+    ResultError, RunInfo, ServePath, Target, TierReport, ToolBuild, Versions, raw_hash_matches,
 };
 use dyno_schema::rule::{Finding, Fix, FixAction};
 use dyno_schema::status::{RunCoverage, Status, Verdict};
@@ -163,6 +163,8 @@ fn run_info(started_at: &str, os: &str) -> RunInfo {
         run_id: Some("0b1f8f8e-5d3a-4c7e-9a52-1f2d3c4b5a69".to_owned()),
         build_link: Some(BuildLink::Scanned),
         environment: None,
+        serve_path: None,
+        lab: None,
         started_at: started_at.to_owned(),
         duration_ms: 12,
         machine: Machine {
@@ -432,6 +434,45 @@ fn a_result_from_before_the_run_identity_fields_still_reads_and_matches() {
     assert_eq!(loaded.result.run.build_link, None);
     assert_eq!(loaded.result.run.environment, None);
     assert_eq!(loaded.result.run.release.game_id, None);
+}
+
+#[test]
+fn the_hash_excludes_the_serve_path_and_the_lab() {
+    let mut run = run_info(REFERENCE_TIME, "macos");
+    run.serve_path = Some(ServePath::Tunnel);
+    run.lab = Some("devicefarm".to_owned());
+    let result = CheckResult::new(deterministic(WALK, ITEMS, MEASURE_ORDER), run).unwrap();
+    assert_eq!(result.result_hash, reference_result().result_hash);
+    let json = serde_json::to_value(&result).unwrap();
+    assert_eq!(json["run"]["serve_path"], "tunnel");
+    assert_eq!(json["run"]["lab"], "devicefarm");
+}
+
+#[test]
+fn each_serve_path_has_its_own_name_in_the_json() {
+    let names = [
+        (ServePath::Tunnel, "tunnel"),
+        (ServePath::LocalNetwork, "local_network"),
+        (ServePath::Loopback, "loopback"),
+        (ServePath::Given, "given"),
+    ];
+    for (path, name) in names {
+        assert_eq!(serde_json::to_value(path).unwrap(), name);
+    }
+}
+
+#[test]
+fn a_result_from_before_the_serve_path_and_the_lab_still_reads_and_matches() {
+    let mut json = reference_json();
+    let run = json["run"].as_object_mut().unwrap();
+    // A check that served no page and was given no lab name writes both as null.
+    for field in ["serve_path", "lab"] {
+        assert_eq!(run.remove(field), Some(Value::Null), "{field}");
+    }
+    let loaded = LoadedResult::from_json(json).unwrap();
+    assert!(loaded.hash_matches);
+    assert_eq!(loaded.result.run.serve_path, None);
+    assert_eq!(loaded.result.run.lab, None);
 }
 
 #[test]

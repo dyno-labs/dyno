@@ -81,6 +81,7 @@ export type * from "./RunMark";
 export type * from "./RunRequest";
 export type * from "./Scenario";
 export type * from "./Scope";
+export type * from "./ServePath";
 export type * from "./Severity";
 export type * from "./Shard";
 export type * from "./Source";

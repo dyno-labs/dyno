@@ -640,6 +640,7 @@ expression: json(&outcome)
           "duration_ms": "[duration_ms]",
           "environment": null,
           "findings": [],
+          "lab": null,
           "machine": "[machine]",
           "measures": [
             {
@@ -693,6 +694,7 @@ expression: json(&outcome)
             "version": "v1"
           },
           "run_id": "[run_id]",
+          "serve_path": null,
           "started_at": "[started_at]",
           "target": {
             "build": "tiny-build",
@@ -1259,6 +1261,7 @@ expression: json(&outcome)
               "verdict": "incomplete"
             }
           ],
+          "lab": null,
           "machine": "[machine]",
           "measures": [
             {
@@ -1774,6 +1777,7 @@ expression: json(&outcome)
             "version": null
           },
           "run_id": "[run_id]",
+          "serve_path": null,
           "started_at": "[started_at]",
           "target": {
             "build": null,

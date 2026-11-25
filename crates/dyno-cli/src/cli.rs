@@ -155,7 +155,8 @@ pub struct CheckArgs {
     pub driver: DriverArg,
 
     /// [phase 1] With --driver serve, the address a browser reaches this machine at. Default:
-    /// this machine's address on its local network
+    /// with --device on a Mac, this machine's address in the device link's tunnel to the phone,
+    /// when it has one; else this machine's address on its local network
     #[arg(long, value_name = "HOST")]
     pub serve_host: Option<String>,
 
@@ -222,6 +223,11 @@ pub struct CheckArgs {
         conflicts_with = "baseline"
     )]
     pub runs: Option<u32>,
+
+    /// [phase 2] The kind of lab that runs the check, such as desk, rig or devicefarm: a short
+    /// word in lower case, of the letters a to z, digits and -. Outside the result hash
+    #[arg(long, value_name = "NAME", value_parser = parse_lab_name)]
+    pub lab: Option<String>,
 
     /// [phase 3] Upload the result to the dyno site and print its link, or each game's with
     /// --games. Needs dyno login or DYNO_TOKEN
@@ -461,6 +467,11 @@ fn parse_game_id(text: &str) -> Result<String, String> {
     dyno_schema::link::game_id(text)
 }
 
+/// Parses `--lab`: a short word in lower case.
+fn parse_lab_name(text: &str) -> Result<String, String> {
+    dyno_schema::lab::lab_name(text)
+}
+
 /// The exit codes of `dyno link`.
 const LINK_EXIT_CODES: &str = "\
 Exit codes:
@@ -609,6 +620,33 @@ mod tests {
     fn a_driver_that_is_not_cdp_exec_with_a_program_or_serve_is_an_error() {
         for text in ["exec:", "playwright", "CDP", "serve:"] {
             assert!(text.parse::<DriverArg>().is_err(), "{text}");
+        }
+    }
+
+    /// The `--lab` of a check of `dist` with these extra arguments.
+    fn lab_of(extra: &[&str]) -> Result<Option<String>, clap::Error> {
+        let arguments = ["dyno", "check", "dist"].iter().chain(extra);
+        Cli::try_parse_from(arguments).map(|cli| match cli.command {
+            Command::Check(check) => check.lab,
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn a_check_names_no_lab_unless_asked() {
+        assert_eq!(lab_of(&[]).unwrap(), None);
+        assert_eq!(
+            lab_of(&["--lab", "devicefarm"]).unwrap().as_deref(),
+            Some("devicefarm")
+        );
+    }
+
+    #[test]
+    fn a_lab_name_that_is_not_a_short_lower_case_word_is_a_usage_error() {
+        for name in ["Desk", "phone lab", "", "2rig", &"a".repeat(33)] {
+            let error = lab_of(&["--lab", name]).unwrap_err();
+            assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
+            assert!(error.to_string().contains("lower case"), "{error}");
         }
     }
 

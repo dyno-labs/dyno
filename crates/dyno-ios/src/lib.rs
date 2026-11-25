@@ -6,7 +6,8 @@
 //! gives each process's physical footprint, the `phys_footprint` that jetsam reads, about once a
 //! second, and its log ([`syslog`]) gives the kernel's line when jetsam kills a process.
 //! [`Recorder`] runs the recording on a thread of its own, and opens the page in the phone's
-//! Safari once it records. [`device_measures`] finds the game's WebContent process, reads its
+//! Safari once it records. Between the two, [`tunnel`] gives this machine's address in the device
+//! link's tunnel, when it has one, so the page can be served to the phone with no network path. [`device_measures`] finds the game's WebContent process, reads its
 //! footprint when the frame went idle and its peak, and counts a kill when the kernel killed it
 //! during the run. With `--runs`, [`runs`] reads the runs of the game and of the empty build into
 //! one set of device measures.
@@ -29,6 +30,7 @@ pub mod runs;
 pub mod syslog;
 pub mod sysmon;
 pub mod trace;
+pub mod tunnel;
 
 use dyno_schema::SCHEMA_VERSION;
 use dyno_schema::devices::apple_os;
@@ -46,6 +48,7 @@ use dyno_schema::timeline::{
 
 pub use crate::recorder::{Address, DeviceError, OpenedWith, Recorder};
 use crate::recording::Recording;
+pub use crate::tunnel::NoTunnelAddress;
 
 /// The plan phase that builds `doctor` and the device run.
 pub const DEVICE_PHASE: Phase = 2;

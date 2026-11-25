@@ -2,6 +2,6 @@
 
 /**
  * The path a browser took to the page that a served run serves: the address of this machine
- * that its first request to the harness page came to.
+ * that the page which ran said hello at.
  */
 export type ServePath = "tunnel" | "local_network" | "loopback" | "given";

@@ -9,10 +9,10 @@
 //! A tunnel can go away between the moment its address was read and the moment the browser asks
 //! for the page. So a run on a phone whose caller has a tunnel address
 //! ([`ServeOptions::tunnel_host`]) serves at both addresses, and asks the browser for the tunnel's
-//! first ([`ServeDriver::run_opening`]). When no request has come to the harness page a stated
-//! time after that, it asks the browser for the local network address. Whichever way the page
-//! was asked for, [`ServeDriver::serve_path`] says where the browser's first request to the
-//! harness page came, not where it was sent.
+//! ([`ServeDriver::run_watched`]). It asks once. A second ask would restart the browser, perhaps
+//! under a page that had just begun, so when no request comes to the tunnel address the run only
+//! says so, and a person opens the other address. [`ServeDriver::serve_path`] says which address
+//! the page that ran said hello at, not which one was asked for.
 //!
 //! Two servers run on one host, on two ports, so the game frame is cross-origin to the harness
 //! page around it. The game server serves the build folder and adds the probe's script tag to
@@ -65,11 +65,14 @@ pub const DEFAULT_PORT: u16 = 7370;
 /// How long a run waits for a browser to open the harness page when no time is given.
 pub const DEFAULT_WAIT_FOR_BROWSER: Duration = Duration::from_secs(10 * 60);
 
-/// How long a run waits for the browser's first request at the tunnel address, once the browser
-/// was asked for it, before it asks the browser for the local network address. Safari on a phone
-/// opens a page in about a second or two, and a second ask restarts Safari, so the wait is long
-/// enough not to stop a page that is on its way.
-pub const DEFAULT_WAIT_FOR_TUNNEL: Duration = Duration::from_secs(15);
+/// How long a run that serves at a tunnel address and at the local network address waits for a
+/// request at the tunnel's before its caller says that none has come. Safari on a phone opens a
+/// page in about a second or two, so a page that is on its way is there well before this.
+pub const DEFAULT_SAY_NO_REQUEST_AFTER: Duration = Duration::from_secs(30);
+
+/// Opens the harness page of a run in the browser. It gets the page's URL, once, when the
+/// servers answer. An error stops the run, with that reason, such as a locked phone.
+pub type Opener<'o> = &'o mut (dyn FnMut(&str) -> Result<(), String> + Send);
 
 /// Where and how a served run serves.
 #[derive(Clone, Debug)]
@@ -83,9 +86,6 @@ pub struct ServeOptions {
     /// address too. When they cannot be bound there, they are at the local network address
     /// alone, as with no tunnel address.
     pub tunnel_host: Option<IpAddr>,
-    /// How long the run waits for the browser's first request at the tunnel address before it
-    /// asks the browser for the local network address.
-    pub wait_for_tunnel: Duration,
     /// The harness page's port. The game's is the next one. 0 takes two free ports.
     pub port: u16,
     /// How long the run waits for a browser to open the harness page.
@@ -113,17 +113,6 @@ pub enum ServeError {
     Stopped(String),
 }
 
-/// What became of a request to open the harness page in the browser.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Opened {
-    /// The browser was told to open the page.
-    Yes,
-    /// The browser was not told, so a person opens the page. The run asks for no other address.
-    No,
-    /// The run must stop now, for this reason, such as a locked phone.
-    Stop(String),
-}
-
 /// The served-run driver, with its servers bound.
 #[derive(Debug)]
 pub struct ServeDriver {
@@ -134,12 +123,11 @@ pub struct ServeDriver {
     /// Why the servers are not at the tunnel address the options gave.
     tunnel_refused: Option<String>,
     wait_for_browser: Duration,
-    wait_for_tunnel: Duration,
     open_with: Option<PathBuf>,
     last_run: Option<RunTimes>,
     /// The user agent of the browser that opened the page in the last run.
     last_user_agent: Option<String>,
-    /// Where the browser's first request to the harness page came in the last run.
+    /// Where the page of the last run said hello.
     last_path: Option<ServePath>,
 }
 
@@ -200,7 +188,6 @@ impl ServeDriver {
             places,
             tunnel_refused,
             wait_for_browser: options.wait_for_browser,
-            wait_for_tunnel: options.wait_for_tunnel,
             open_with: options.open_with.clone(),
             last_run: None,
             last_user_agent: None,
@@ -214,15 +201,16 @@ impl ServeDriver {
         self.first().path
     }
 
-    /// The path the browser took in the last run: the place its first request to the harness
-    /// page came to. None before a run, and when no request came.
+    /// The path the browser took in the last run: the address that the page which ran said
+    /// hello at. A request that no run came of, at this address or another, is no path. None
+    /// before a run, and when no page said hello.
     pub fn serve_path(&self) -> Option<ServePath> {
         self.last_path
     }
 
     /// The harness page's URL at the local network address, when the servers are there as well
-    /// as at the tunnel address. A run asks the browser for it when no request came to the
-    /// tunnel address in time.
+    /// as at the tunnel address. No run asks the browser for it: a person opens it when the
+    /// tunnel address gets no request.
     pub fn fallback_harness_url(&self) -> Option<&str> {
         self.places.get(1).map(|place| place.harness_url.as_str())
     }
@@ -263,26 +251,21 @@ impl ServeDriver {
         }
     }
 
-    /// Runs the request as [`Driver::run`] does, and has `open` open the harness page in the
-    /// browser. `open` gets the page's URL once the servers serve, so the browser's first
-    /// request is answered at once. When the servers are at a tunnel address and at the local
-    /// network address, `open` said the browser was told, and no request has come to the harness
-    /// page [`ServeOptions::wait_for_tunnel`] later, `open` gets the URL at the local network
-    /// address.
+    /// Runs the request as [`Driver::run`] does, and tells the caller two things while it waits
+    /// for a page.
     ///
-    /// `open` runs on a thread of its own, because it can take as long as the phone does.
-    pub fn run_opening(
+    /// `open` gets the harness page's URL once the servers serve, to open it in the browser, so
+    /// the browser's first request is answered at once. It is asked once, and runs on a thread
+    /// of its own, because it can take as long as the phone does.
+    ///
+    /// `say_no_request` is called once when no request has come to the harness page at the
+    /// first address, the one of [`ServeDriver::harness_url`], that long after the run began to
+    /// wait. The run waits on.
+    pub fn run_watched(
         &mut self,
         request: &RunRequest,
-        open: &mut (dyn FnMut(&str) -> Opened + Send),
-    ) -> Result<Vec<DriverMessage>, DriverError> {
-        self.run_with(request, Some(open))
-    }
-
-    fn run_with(
-        &mut self,
-        request: &RunRequest,
-        open: Option<&mut (dyn FnMut(&str) -> Opened + Send)>,
+        open: Option<Opener<'_>>,
+        say_no_request: Option<(Duration, &mut dyn FnMut())>,
     ) -> Result<Vec<DriverMessage>, DriverError> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -294,23 +277,23 @@ impl ServeDriver {
             .map(|program| LocalBrowser::open(program, self.harness_url()))
             .transpose()
             .map_err(|error| driver_error(&error))?;
+        let no_request = say_no_request.map(|(after, say)| run::NoRequest { after, say });
         let outcome = match open {
-            None => runtime.block_on(run::run(self, request, None)),
+            None => runtime.block_on(run::run(self, request, None, no_request)),
             Some(open) => std::thread::scope(|scope| {
                 let (ask, mut asked) = mpsc::unbounded_channel::<String>();
                 let (answer, answers) = mpsc::unbounded_channel();
                 // The thread ends when the run drops its end, and the scope waits for it.
                 scope.spawn(move || {
-                    while let Some(url) = asked.blocking_recv() {
-                        if answer.send(open(&url)).is_err() {
-                            break;
-                        }
+                    if let Some(url) = asked.blocking_recv() {
+                        let _ = answer.send(open(&url));
                     }
                 });
-                runtime.block_on(run::run(self, request, Some(run::Asks { ask, answers })))
+                let asks = run::Asks { ask, answers };
+                runtime.block_on(run::run(self, request, Some(asks), no_request))
             }),
         };
-        self.last_path = outcome.first_request.map(|place| self.places[place].path);
+        self.last_path = outcome.hello_at.map(|place| self.places[place].path);
         // An error drops the local browser, which stops it.
         let served = outcome.served.map_err(|error| driver_error(&error))?;
         let mut messages = served.messages;
@@ -339,7 +322,7 @@ impl Driver for ServeDriver {
     /// With `open_with`, the browser starts before the run waits for it, and its processes'
     /// memory goes in just before the run's last message.
     fn run(&mut self, request: &RunRequest) -> Result<Vec<DriverMessage>, DriverError> {
-        self.run_with(request, None)
+        self.run_watched(request, None, None)
     }
 
     /// Safari gives the page no heap reading, and the harness page has no other way to read it.
@@ -711,7 +694,6 @@ mod tests {
         let options = ServeOptions {
             host: None,
             tunnel_host: None,
-            wait_for_tunnel: DEFAULT_WAIT_FOR_TUNNEL,
             port: 0,
             wait_for_browser: Duration::from_secs(1),
             open_with: None,
@@ -746,7 +728,6 @@ mod tests {
         ServeOptions {
             host: host.map(str::to_owned),
             tunnel_host: Some(tunnel.parse().unwrap()),
-            wait_for_tunnel: DEFAULT_WAIT_FOR_TUNNEL,
             port: 0,
             wait_for_browser: Duration::from_secs(1),
             open_with: None,
@@ -858,7 +839,6 @@ mod tests {
         let options = ServeOptions {
             host: Some("127.0.0.1".to_owned()),
             tunnel_host: None,
-            wait_for_tunnel: DEFAULT_WAIT_FOR_TUNNEL,
             port: taken.local_addr().unwrap().port(),
             wait_for_browser: Duration::from_secs(1),
             open_with: None,
@@ -873,7 +853,6 @@ mod tests {
         let options = ServeOptions {
             host: Some("127.0.0.1".to_owned()),
             tunnel_host: None,
-            wait_for_tunnel: DEFAULT_WAIT_FOR_TUNNEL,
             port: 0,
             wait_for_browser: Duration::from_secs(1),
             open_with: None,
@@ -890,7 +869,6 @@ mod tests {
         let options = ServeOptions {
             host: Some("127.0.0.1".to_owned()),
             tunnel_host: None,
-            wait_for_tunnel: DEFAULT_WAIT_FOR_TUNNEL,
             port: 0,
             wait_for_browser: Duration::from_secs(1),
             open_with: None,
@@ -911,7 +889,6 @@ mod tests {
         let options = ServeOptions {
             host: Some("::1".to_owned()),
             tunnel_host: None,
-            wait_for_tunnel: DEFAULT_WAIT_FOR_TUNNEL,
             port: 0,
             wait_for_browser: Duration::from_secs(1),
             open_with: None,
@@ -928,7 +905,6 @@ mod tests {
         let options = ServeOptions {
             host: Some("127.0.0.1".to_owned()),
             tunnel_host: None,
-            wait_for_tunnel: DEFAULT_WAIT_FOR_TUNNEL,
             port: u16::MAX,
             wait_for_browser: Duration::from_secs(1),
             open_with: None,

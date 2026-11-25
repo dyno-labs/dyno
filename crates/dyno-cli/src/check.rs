@@ -9,8 +9,7 @@
 //! serve the page, open it in the phone's Safari, run. The page is served after the recording
 //! starts, because the device link that records the phone can also be the path its Safari loads
 //! the page on, and only a connected phone says where that is ([`bind`]). Safari is asked for the
-//! page from inside the run, once the servers answer, and asked for the local network address
-//! when no request comes over the device link ([`OnPhone`]).
+//! page from inside the run, once the servers answer, and asked once ([`Watched`]).
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -42,8 +41,8 @@ use dyno_score::model::{MODEL_VERSION, model_measures, provisional_tier};
 use dyno_score::status::{overall_status, run_coverage, worst};
 use dyno_serve::files::{Build, check_folder, check_probe_path};
 use dyno_serve::{
-    BuildServer, DEFAULT_PORT, DEFAULT_WAIT_FOR_BROWSER, DEFAULT_WAIT_FOR_TUNNEL, Opened,
-    ServeDriver, ServeError, ServeOptions,
+    BuildServer, DEFAULT_PORT, DEFAULT_SAY_NO_REQUEST_AFTER, DEFAULT_WAIT_FOR_BROWSER, ServeDriver,
+    ServeError, ServeOptions,
 };
 use uuid::Uuid;
 
@@ -147,7 +146,6 @@ pub fn run(args: CheckArgs) -> Result<Status, CliError> {
             host: args.serve_host,
             // A run on a phone asks the phone's recording for it.
             tunnel_host: None,
-            wait_for_tunnel: DEFAULT_WAIT_FOR_TUNNEL,
             port: args.serve_port.unwrap_or(DEFAULT_PORT),
             wait_for_browser: DEFAULT_WAIT_FOR_BROWSER,
             open_with: args.open_with,
@@ -308,7 +306,6 @@ impl CheckOptions {
             serve: ServeOptions {
                 host: None,
                 tunnel_host: None,
-                wait_for_tunnel: DEFAULT_WAIT_FOR_TUNNEL,
                 port: DEFAULT_PORT,
                 wait_for_browser: DEFAULT_WAIT_FOR_BROWSER,
                 open_with: None,
@@ -510,11 +507,10 @@ fn check_one(
     // the scan's own copy, shared, and a check that serves nothing lets go of them here.
     let scanned_files = std::mem::take(&mut scan.files);
     let scanned_files = serves.then_some(scanned_files);
-    let scanned =
-        |folder: &PathBuf| Build::of_scan(folder, scanned_files.clone().unwrap_or_default());
+    let scanned = || Build::of_scan(scanned_files.clone().unwrap_or_default());
     // `--browser` serves the build on 127.0.0.1 to the CDP driver's Chromium until the check ends.
     let build_server = match browser_folder {
-        Some(folder) => Some(BuildServer::start_build(scanned(folder)).map_err(serve_error)?),
+        Some(_) => Some(BuildServer::start_build(scanned()).map_err(serve_error)?),
         None => None,
     };
     let launch_url = match &build_server {
@@ -525,7 +521,7 @@ fn check_one(
     // run's URL can hold a session from `--serve-query`, so it is not recorded.
     let recorded_launch_url = launch_url.as_ref().map(LaunchUrl::recorded);
 
-    let served_build = served_folder.map(scanned);
+    let served_build = served_folder.map(|_| scanned());
     // A build with a file at the probe's path stops the check before the phone is touched.
     if let Some(build) = &served_build {
         check_probe_path(build).map_err(serve_error)?;
@@ -788,16 +784,12 @@ fn bind(
         served.asked_path(),
     ));
     if let Some(also_at) = served.fallback_harness_url() {
-        // dyno asks Safari for the second address itself only when it opens Safari at all.
-        let asks_after =
-            (device_run.is_some() && options.device_open).then_some(options.serve.wait_for_tunnel);
-        output::print_summary(&[output::also_at_line(also_at, asks_after)]);
+        output::print_summary(&[output::also_at_line(also_at)]);
     }
     Ok((served, request))
 }
 
-/// Runs the request in the browser that the servers serve. With a phone whose Safari dyno opens,
-/// Safari is asked for the page from inside the run ([`OnPhone`]), and a phone that stops the
+/// Runs the request in the browser that the servers serve ([`Watched`]). A phone that stops the
 /// check, such as a locked one, is the check's error.
 fn run_served(
     served: &mut ServeDriver,
@@ -805,65 +797,69 @@ fn run_served(
     device_run: Option<&mut DeviceRun>,
     options: &CheckOptions,
 ) -> Result<LabRun, CliError> {
-    let Some(device_run) = device_run.filter(|_| options.device_open) else {
-        return Ok(dyno_run::run_lab(served, request));
-    };
-    let mut on_phone = OnPhone {
+    let mut watched = Watched {
         served,
-        device_run,
-        wait_for_tunnel: options.serve.wait_for_tunnel,
+        // dyno opens the page only on a phone, and not with `--no-open`.
+        opens_on: device_run.filter(|_| options.device_open),
         stopped: None,
     };
-    let lab = dyno_run::run_lab(&mut on_phone, request);
-    match on_phone.stopped {
+    let lab = dyno_run::run_lab(&mut watched, request);
+    match watched.stopped {
         Some(error) => Err(error),
         None => Ok(lab),
     }
 }
 
-/// A served run whose page dyno opens in the phone's Safari. The servers ask for the page once
-/// they answer, so Safari's first request does not wait, and they ask for the local network
-/// address when no request came over the device link in time. Each ask restarts Safari.
-struct OnPhone<'r> {
+/// A served run that says what happens while it waits for its page.
+///
+/// With a phone whose Safari dyno opens, Safari is asked for the page once the servers answer,
+/// so its first request does not wait. It is asked once: a second launch restarts Safari, and
+/// could do so under a page that had just begun.
+///
+/// With the page at a tunnel address and at the local network address, the run says so when no
+/// request has come over the device link after a while. The person then opens the other
+/// address, or runs again with `--serve-host`.
+struct Watched<'r> {
     served: &'r mut ServeDriver,
-    device_run: &'r mut DeviceRun,
-    wait_for_tunnel: Duration,
+    /// The phone whose Safari dyno opens the page in. None when a person opens the page.
+    opens_on: Option<&'r mut DeviceRun>,
     /// Why the phone stopped the check, such as a locked phone.
     stopped: Option<CliError>,
 }
 
-impl Driver for OnPhone<'_> {
+impl Driver for Watched<'_> {
     fn name(&self) -> &str {
         self.served.name()
     }
 
     fn run(&mut self, request: &RunRequest) -> Result<Vec<DriverMessage>, DriverError> {
-        let OnPhone {
+        let Watched {
             served,
-            device_run,
-            wait_for_tunnel,
+            opens_on,
             stopped,
         } = self;
-        let mut asked_before = false;
-        let mut open = |url: &str| {
-            if asked_before {
-                output::print_summary(&[output::asking_again_line(*wait_for_tunnel, url)]);
+        let wait = DEFAULT_SAY_NO_REQUEST_AFTER;
+        let no_request = served
+            .fallback_harness_url()
+            .map(|also_at| output::no_request_line(wait, also_at));
+        let mut say = || output::print_summary(no_request.as_slice());
+        let say_no_request: Option<(Duration, &mut dyn FnMut())> =
+            no_request.is_some().then_some((wait, &mut say));
+        let Some(device_run) = opens_on else {
+            return served.run_watched(request, None, say_no_request);
+        };
+        let mut open = |url: &str| match device_run.open(url) {
+            Ok(line) => {
+                output::print_summary(&[line]);
+                Ok(())
             }
-            asked_before = true;
-            match device_run.open(url) {
-                Ok((opened, line)) => {
-                    output::print_summary(&[line]);
-                    // A person opens a page that Safari did not, at the address they choose.
-                    if opened { Opened::Yes } else { Opened::No }
-                }
-                Err(error) => {
-                    let reason = error.to_string();
-                    *stopped = Some(error);
-                    Opened::Stop(reason)
-                }
+            Err(error) => {
+                let reason = error.to_string();
+                *stopped = Some(error);
+                Err(reason)
             }
         };
-        served.run_opening(request, &mut open)
+        served.run_watched(request, Some(&mut open), say_no_request)
     }
 
     fn reads_heap(&self) -> bool {

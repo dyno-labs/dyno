@@ -47,11 +47,51 @@ pub struct Request {
 
 /// One response. Every response has `Cache-Control: no-store`, so each run loads afresh.
 #[derive(Debug)]
-pub struct Response {
+pub struct Response<'b> {
     pub status: &'static str,
     pub content_type: &'static str,
     pub headers: Vec<(&'static str, String)>,
-    pub body: Vec<u8>,
+    pub body: Body<'b>,
+}
+
+/// A response's body. A build is held in memory once, and a response for one of its files is
+/// written from there: the response holds no copy of the file, and a HEAD request reads only
+/// its length.
+#[derive(Debug)]
+pub enum Body<'b> {
+    /// Bytes that the response made, such as an error's words or a command.
+    Owned(Vec<u8>),
+    /// Bytes that something else holds, such as a build file or a part of one.
+    Shared(&'b [u8]),
+    /// An HTML page of the build with a tag put in at `at`. The page is written from where it
+    /// is, in two parts, with the tag between them.
+    Tagged {
+        page: &'b [u8],
+        tag: &'static [u8],
+        at: usize,
+    },
+}
+
+impl Body<'_> {
+    /// How many bytes the body has.
+    pub fn len(&self) -> usize {
+        self.parts().iter().map(|part| part.len()).sum()
+    }
+
+    /// The body's bytes, in the order they are written. A part can be empty.
+    fn parts(&self) -> [&[u8]; 3] {
+        match self {
+            Body::Owned(bytes) => [bytes, &[], &[]],
+            Body::Shared(bytes) => [bytes, &[], &[]],
+            Body::Tagged { page, tag, at } => [&page[..*at], tag, &page[*at..]],
+        }
+    }
+
+    /// The body in one piece, for a test to read.
+    #[cfg(test)]
+    pub fn to_vec(&self) -> Vec<u8> {
+        self.parts().concat()
+    }
 }
 
 /// What a `Range` header asks for, within a body of known length.
@@ -157,13 +197,16 @@ async fn refuse_tls(socket: &mut TcpStream) {
 
 /// Writes the response, without its body for a HEAD request, and closes the connection. Returns
 /// the body bytes sent.
-pub async fn write_response(socket: &mut TcpStream, response: &Response, head_only: bool) -> u64 {
+pub async fn write_response(
+    socket: &mut TcpStream,
+    response: &Response<'_>,
+    head_only: bool,
+) -> u64 {
+    let length = response.body.len();
     let mut head = format!(
-        "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\n\
+        "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {length}\r\nCache-Control: no-store\r\n\
          Connection: close\r\n",
-        response.status,
-        response.content_type,
-        response.body.len()
+        response.status, response.content_type,
     );
     for (name, value) in &response.headers {
         head.push_str(&format!("{name}: {value}\r\n"));
@@ -174,31 +217,51 @@ pub async fn write_response(socket: &mut TcpStream, response: &Response, head_on
         return 0;
     }
     let mut sent = 0;
-    if !head_only && socket.write_all(&response.body).await.is_ok() {
-        sent = response.body.len() as u64;
+    if !head_only {
+        sent = length as u64;
+        for part in response.body.parts() {
+            if socket.write_all(part).await.is_err() {
+                sent = 0;
+                break;
+            }
+        }
     }
     let _ = socket.shutdown().await;
     sent
 }
 
-impl Response {
-    /// A response with no extra headers.
-    pub fn new(status: &'static str, content_type: &'static str, body: Vec<u8>) -> Response {
+impl<'b> Response<'b> {
+    /// A response with no extra headers, whose body it made.
+    pub fn new(
+        status: &'static str,
+        content_type: &'static str,
+        body: Vec<u8>,
+    ) -> Response<'static> {
         Response {
             status,
             content_type,
             headers: Vec::new(),
-            body,
+            body: Body::Owned(body),
+        }
+    }
+
+    /// A response with no extra headers, whose body something else holds.
+    pub fn shared(
+        status: &'static str,
+        content_type: &'static str,
+        body: &'b [u8],
+    ) -> Response<'b> {
+        Response {
+            status,
+            content_type,
+            headers: Vec::new(),
+            body: Body::Shared(body),
         }
     }
 
     /// A plain-text error response.
-    pub fn error(status: &'static str) -> Response {
-        Response::new(
-            status,
-            "text/plain; charset=utf-8",
-            status.as_bytes().to_vec(),
-        )
+    pub fn error(status: &'static str) -> Response<'static> {
+        Response::shared(status, "text/plain; charset=utf-8", status.as_bytes())
     }
 }
 
@@ -352,6 +415,69 @@ mod tests {
     async fn a_head_too_large_is_not_read() {
         static LONG: [u8; MAX_HEAD_BYTES + 10] = [b'a'; MAX_HEAD_BYTES + 10];
         assert!(read_from(&LONG).await.is_none());
+    }
+
+    /// What a client gets when the server writes this response to it.
+    async fn written(response: &Response<'_>, head_only: bool) -> (u64, String) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let client = tokio::spawn(async move {
+            let mut socket = TcpStream::connect(address).await.unwrap();
+            let mut got = String::new();
+            socket.read_to_string(&mut got).await.unwrap();
+            got
+        });
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let sent = write_response(&mut socket, response, head_only).await;
+        drop(socket);
+        (sent, client.await.unwrap())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_shared_body_is_written_from_where_it_is() {
+        let held = b"0123456789".to_vec();
+        let response = Response::shared("200 OK", "text/plain", &held[2..5]);
+        // The response points into the bytes that are held: it has no copy of them.
+        let Body::Shared(body) = response.body else {
+            panic!("{response:?}");
+        };
+        assert!(std::ptr::eq(body, &held[2..5]));
+        let (sent, got) = written(&response, false).await;
+        assert_eq!(sent, 3);
+        assert!(got.contains("Content-Length: 3\r\n"), "{got}");
+        assert!(got.ends_with("\r\n\r\n234"), "{got}");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_tagged_page_is_written_in_its_parts_with_the_tag_between() {
+        let response = Response {
+            status: "200 OK",
+            content_type: "text/html",
+            headers: Vec::new(),
+            body: Body::Tagged {
+                page: b"<head></head>",
+                tag: b"<script></script>",
+                at: 6,
+            },
+        };
+        assert_eq!(response.body.len(), 30);
+        let (sent, got) = written(&response, false).await;
+        assert_eq!(sent, 30);
+        assert!(got.contains("Content-Length: 30\r\n"), "{got}");
+        assert!(
+            got.ends_with("\r\n\r\n<head><script></script></head>"),
+            "{got}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_head_request_gets_the_length_and_no_body() {
+        let held = vec![b'a'; 1_000];
+        let response = Response::shared("200 OK", "text/plain", &held);
+        let (sent, got) = written(&response, true).await;
+        assert_eq!(sent, 0);
+        assert!(got.contains("Content-Length: 1000\r\n"), "{got}");
+        assert!(got.ends_with("Connection: close\r\n\r\n"), "{got}");
     }
 
     #[test]

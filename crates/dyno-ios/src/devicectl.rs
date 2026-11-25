@@ -4,15 +4,14 @@
 //!
 //! `DYNO_XCRUN` names another program to run instead of `xcrun`, such as a fake in the tests.
 //!
-//! dyno waits for the program itself, and stops it at a deadline of dyno's own. devicectl has a
-//! timer, but a program that stalls before devicectl starts never reads it, and a device run
-//! waits for this program while it records the phone.
+//! dyno waits for the program itself, and stops it at a deadline of dyno's own, with everything
+//! it started. devicectl has a timer, but a program that stalls before devicectl starts never
+//! reads it, and a device run waits for this program while it records the phone.
 
 use std::ffi::{OsStr, OsString};
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 use std::net::IpAddr;
-use std::process::{Command, Stdio};
-use std::sync::mpsc;
+use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -35,6 +34,10 @@ const LIST_DEADLINE: Duration = Duration::from_secs(15);
 
 /// How long dyno waits for the program that launches Safari before it stops it.
 const LAUNCH_DEADLINE: Duration = Duration::from_secs(30);
+
+/// The most of a failed program's words that dyno reads, in bytes. The reason is in its first
+/// lines.
+const MOST_WORDS: u64 = 64 * 1024;
 
 /// How often dyno looks whether the program has ended.
 const POLL: Duration = Duration::from_millis(20);
@@ -75,33 +78,30 @@ fn tunnel_address_within(xcrun: &OsStr, udid: &str, deadline: Duration) -> Resul
 }
 
 /// Runs the program to its end, and gives an error with what it said when it failed. A program
-/// that has not ended at the deadline is killed and waited for, so none is left behind, and that
-/// is an error too.
+/// that has not ended at the deadline is ended with everything it started, and that is an error
+/// too.
+///
+/// The program's error output goes to a file, not a pipe. A pipe ends only when the last
+/// program that holds it has gone, so a program that the first one left behind could keep dyno
+/// reading. dyno reads what the file has when the program ends, up to [`MOST_WORDS`].
 fn run_within(mut command: Command, deadline: Duration) -> Result<(), String> {
-    let mut child = command
+    let cannot_run = |error: std::io::Error| format!("cannot run devicectl: {error}");
+    let mut said = tempfile::tempfile().map_err(cannot_run)?;
+    command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("cannot run devicectl: {error}"))?;
-    // What the program says is read as it comes, so a program that says a lot does not wait for
-    // a reader.
-    let (said_to, said) = mpsc::channel();
-    if let Some(mut stderr) = child.stderr.take() {
-        thread::spawn(move || {
-            let mut words = Vec::new();
-            let _ = stderr.read_to_end(&mut words);
-            let _ = said_to.send(words);
-        });
-    }
+        .stderr(said.try_clone().map_err(cannot_run)?);
+    // The program leads a process group of its own, so that the group can be ended as one.
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut command, 0);
+    let mut child = command.spawn().map_err(cannot_run)?;
     let until = Instant::now() + deadline;
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) if Instant::now() < until => thread::sleep(POLL),
             ended => {
-                let _ = child.kill();
-                let _ = child.wait();
+                end_group(&mut child);
                 return Err(match ended {
                     Err(error) => format!("cannot wait for devicectl: {error}"),
                     Ok(_) => format!(
@@ -115,11 +115,9 @@ fn run_within(mut command: Command, deadline: Duration) -> Result<(), String> {
     if status.success() {
         return Ok(());
     }
-    // The program has ended, so its words are all there, unless something it started still
-    // holds its output open.
-    let words = said
-        .recv_timeout(Duration::from_secs(1))
-        .unwrap_or_default();
+    let mut words = Vec::new();
+    let _ = said.seek(SeekFrom::Start(0));
+    let _ = said.take(MOST_WORDS).read_to_end(&mut words);
     // devicectl's errors take several lines, and the reason is printed on one, so the lines
     // are joined.
     let words = String::from_utf8_lossy(&words);
@@ -136,6 +134,21 @@ fn run_within(mut command: Command, deadline: Duration) -> Result<(), String> {
             lines.join(" ")
         }
     ))
+}
+
+/// Ends the program and every program it started, and waits for the program, so none is left
+/// behind: a wrapper such as `xcrun` can have started devicectl as a program of its own. The
+/// group is the one that [`run_within`] made the program the leader of.
+fn end_group(child: &mut Child) {
+    #[cfg(unix)]
+    if let Some(group) = i32::try_from(child.id())
+        .ok()
+        .and_then(rustix::process::Pid::from_raw)
+    {
+        let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 /// The tunnel address of the phone with this UDID in devicectl's device list: the
@@ -216,6 +229,55 @@ mod tests {
             error.starts_with("devicectl did not end in 0.1 s"),
             "{error}"
         );
+    }
+
+    /// Whether a process with this id is still there 5 s on. A killed process whose parent has
+    /// gone stays a zombie, which signal 0 still finds, until the system reaps it.
+    #[cfg(unix)]
+    fn still_there(pid: i32) -> bool {
+        let pid = rustix::process::Pid::from_raw(pid).unwrap();
+        let until = Instant::now() + Duration::from_secs(5);
+        while rustix::process::test_kill_process(pid).is_ok() {
+            if Instant::now() > until {
+                return true;
+            }
+            thread::sleep(POLL);
+        }
+        false
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn what_a_stopped_program_started_is_ended_with_it() {
+        let folder = tempfile::tempdir().unwrap();
+        let listing = folder.path().join("devices.json");
+        let mut command = Command::new(stub("wrapper-xcrun.sh"));
+        command
+            .args(["devicectl", "list", "devices", "--json-output"])
+            .arg(&listing);
+        let error = run_within(command, Duration::from_millis(500)).unwrap_err();
+        assert!(
+            error.starts_with("devicectl did not end in 0.5 s"),
+            "{error}"
+        );
+        // The wrapper wrote the id of the program it started, which sleeps for minutes.
+        let started = std::fs::read_to_string(folder.path().join("devices.json.pid")).unwrap();
+        assert!(!still_there(started.trim().parse().unwrap()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_program_s_words_are_read_though_something_it_left_holds_its_output() {
+        let started = Instant::now();
+        let mut command = Command::new(stub("lingering-xcrun.sh"));
+        command.arg("devicectl");
+        // What it left behind holds the error output open for 5 s. dyno reads what is there
+        // when the program ends, and does not wait for the output to close.
+        assert_eq!(
+            run_within(command, Duration::from_secs(30)).unwrap_err(),
+            "devicectl: ERROR: devicectl failed for the test, and left a program behind."
+        );
+        assert!(started.elapsed() < Duration::from_secs(3));
     }
 
     #[cfg(unix)]

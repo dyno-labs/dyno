@@ -36,7 +36,7 @@
 //!
 //! The address is read once, before the page is served. The tunnel can go away after that, as it
 //! does when nothing has used it for a while, so the caller serves at the local network address
-//! as well, and asks the browser for it when no request comes to this one (`dyno-serve`).
+//! as well, and says so when no request comes to this one (`dyno-serve`).
 
 use std::ffi::OsStr;
 use std::net::{IpAddr, Ipv6Addr, UdpSocket};

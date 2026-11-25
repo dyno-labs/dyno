@@ -530,6 +530,7 @@ dependencies = [
  "idevice",
  "plist",
  "quick-xml",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",

@@ -12,6 +12,7 @@ dyno-schema.workspace = true
 idevice.workspace = true
 plist.workspace = true
 quick-xml.workspace = true
+rustix.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true

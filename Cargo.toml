@@ -60,10 +60,8 @@ oxc_semantic = "=0.157.0"
 oxc_span = "=0.157.0"
 walkdir = "2.5.0"
 # Reads deflate zips through flate2. zip's "deflate" feature would switch flate2 to zlib-rs, and
-# the fixtures' gzip sizes assume flate2's default miniz_oxide backend. The version is exact: the
-# inventory walks every record of the central directory with `zip::unstable::read::ZipIterable`,
-# and the crate says that its unstable module can change in any release.
-zip = { version = "=9.5.0", default-features = false, features = ["deflate-flate2"] }
+# the fixtures' gzip sizes assume flate2's default miniz_oxide backend.
+zip = { version = "9.4.1", default-features = false, features = ["deflate-flate2"] }
 # Decodes audio for the stereo and silence analysis. MPL-2.0: its files are used unmodified, and
 # THIRD_PARTY_NOTICES.md says where their source is. Only the codecs and containers the audio scan
 # reads; symphonia has no Opus decoder.

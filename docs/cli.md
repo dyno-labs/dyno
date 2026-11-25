@@ -12,7 +12,7 @@ The check summary gives the status and why, the decoded memory and the build siz
 
 `TARGET` is a build folder or .zip, a launch URL, or one of each. A value that starts with `http://` or `https://` is a launch URL. Anything else is a build. dyno parses a launch URL as a browser does, and a URL that does not parse is a usage error.
 
-- A build gives the static scan: what dyno can tell from the files alone. A .zip that two programs can unpack as two builds is a usage error (64): one with two file entries of the same name, or with an entry whose local header does not say what the zip's central directory says, such as another name.
+- A build gives the static scan: what dyno can tell from the files alone. A .zip whose central directory names a file or a folder twice is a usage error (64): programs differ in which of the two entries they unpack, so the zip is not one build.
 - A launch URL adds a browser run: dyno loads the game in a harness page and waits for idle. `--browser` adds the same run of the build itself.
 
 A browser run starts Chromium with its sandbox. A container with no user namespaces has none to give it, so Chromium exits, and the error quotes Chromium's last lines. Set `DYNO_CHROMIUM_SANDBOX=off` to run Chromium without its sandbox there, only for games you trust, such as your own in your own CI.

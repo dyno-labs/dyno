@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReceiptEnvelope",
+  "description": "A receipt with its signature: the file that a lab gives with a result.",
+  "type": "object",
+  "properties": {
+    "algorithm": {
+      "description": "The signature algorithm: `ed25519`.",
+      "type": "string"
+    },
+    "receipt": {
+      "$ref": "#/$defs/Receipt"
+    },
+    "signature": {
+      "description": "The Ed25519 signature over the UTF-8 bytes of the RFC 8785 canonical JSON of `receipt`,\nin base64url with no padding.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "receipt",
+    "algorithm",
+    "signature"
+  ],
+  "$defs": {
+    "Receipt": {
+      "description": "What a lab signs: which result it stands behind, for which build, on which device, and the\ndevice's readings.",
+      "type": "object",
+      "properties": {
+        "build_id": {
+          "description": "The build id of the files the lab ran: 64 lower-case hex characters.",
+          "type": "string"
+        },
+        "check_id": {
+          "description": "The lab's id for the run.",
+          "type": "string"
+        },
+        "device": {
+          "$ref": "#/$defs/ReceiptDevice"
+        },
+        "dyno_version": {
+          "description": "The dyno version that made the result.",
+          "type": "string"
+        },
+        "issued_at": {
+          "description": "When the lab signed: RFC 3339, in UTC, to the second, ending in `Z`.",
+          "type": "string"
+        },
+        "issuer": {
+          "description": "The lab's name, such as a domain.",
+          "type": "string"
+        },
+        "key_id": {
+          "description": "Which of the lab's keys signed: the first 16 hex characters of the SHA-256 of the raw\n32-byte public key.",
+          "type": "string"
+        },
+        "lab": {
+          "$ref": "#/$defs/ReceiptLab"
+        },
+        "measures": {
+          "description": "The device's readings.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ReceiptMeasure"
+          }
+        },
+        "protocol": {
+          "description": "How the lab ran the check: the host profile's name and version, the scenario, the spins\nand the device runs. [`ReceiptProtocol`] is the object that dyno writes. A receipt from\nanother signer can name its fields in another way, so a reader gets the object as it is.",
+          "type": "object",
+          "additionalProperties": true
+        },
+        "receipt_version": {
+          "description": "The format version: 1.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "result_hash": {
+          "description": "The result's own `result_hash`, as the result states it. Null when it states none.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "result_sha256": {
+          "description": "Lower-case hex SHA-256 of the RFC 8785 canonical JSON of the whole result file.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "receipt_version",
+        "issuer",
+        "key_id",
+        "issued_at",
+        "check_id",
+        "build_id",
+        "result_sha256",
+        "dyno_version",
+        "lab",
+        "device",
+        "protocol",
+        "measures"
+      ]
+    },
+    "ReceiptDevice": {
+      "description": "The device that ran the check.",
+      "type": "object",
+      "properties": {
+        "key": {
+          "description": "The device catalogue's key, such as \"iphone-14-pro-max\".",
+          "type": "string"
+        },
+        "model": {
+          "description": "The model's name, such as \"iPhone 14 Pro Max\". Null when the result does not name it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "os_version": {
+          "description": "The OS version, such as \"26.6.2 (23G90)\". Null when the result does not give it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "key"
+      ]
+    },
+    "ReceiptLab": {
+      "description": "The lab that ran the check.",
+      "type": "object",
+      "properties": {
+        "backend": {
+          "description": "What the lab's devices run on, such as the name of a device cloud. Null when the lab does\nnot say.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "description": "What kind of lab it is, in the lab's own words.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    },
+    "ReceiptMeasure": {
+      "description": "One reading of the device.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "The measure's id, such as \"device.phys_footprint\".",
+          "type": "string"
+        },
+        "unit": {
+          "description": "The unit, such as \"bytes\". Null when the signer does not give it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "value": {
+          "description": "The reading, in the measure's unit. Null when the device gave none.",
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ]
+    }
+  }
+}

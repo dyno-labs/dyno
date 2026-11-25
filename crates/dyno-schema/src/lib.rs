@@ -2,7 +2,8 @@
 //!
 //! Every type that crosses a process or language boundary lives here: the check result, the
 //! compare diff, the catalogue result, the doctor report, the budget and games files, the in-page
-//! probe events, the runner protocol and the host's unclean exit record. The JSON Schema files in
+//! probe events, the runner protocol, the host's unclean exit record, and a lab's receipt for a
+//! result with the verdict of `dyno verify`. The JSON Schema files in
 //! `packages/schema/json/` and the TypeScript types in `packages/schema/ts/` are generated from
 //! these types by [`generate`].
 //!
@@ -27,6 +28,7 @@ pub mod measure;
 pub mod path;
 pub mod probe;
 pub mod profile;
+pub mod receipt;
 pub mod result;
 pub mod rule;
 pub mod runner;

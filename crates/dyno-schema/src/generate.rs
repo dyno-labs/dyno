@@ -21,6 +21,7 @@ use crate::ids::MeasureEntry;
 use crate::library::{Library, LibraryBucket};
 use crate::link::LinkFile;
 use crate::probe::ProbeEvent;
+use crate::receipt::{PublicKeys, ReceiptEnvelope, ReceiptProtocol, VerifyResult};
 use crate::result::CheckResult;
 use crate::runner::{DriverMessage, RunRequest};
 
@@ -67,9 +68,12 @@ pub fn json_schemas() -> Vec<(&'static str, String)> {
             pretty_schema::<LibraryBucket>(),
         ),
         ("probe-event.schema.json", pretty_schema::<ProbeEvent>()),
+        ("receipt.schema.json", pretty_schema::<ReceiptEnvelope>()),
+        ("receipt-keys.schema.json", pretty_schema::<PublicKeys>()),
         ("result.schema.json", pretty_schema::<CheckResult>()),
         ("run-request.schema.json", pretty_schema::<RunRequest>()),
         ("unclean-exit.schema.json", pretty_schema::<UncleanExit>()),
+        ("verify.schema.json", pretty_schema::<VerifyResult>()),
     ]
 }
 
@@ -84,7 +88,7 @@ fn pretty_json<T: Serialize>(value: &T) -> String {
 }
 
 /// Writes one TypeScript file per type into `dir`, for every output shape, the runner protocol,
-/// the host records and the rows of the catalogues. The budget, games and link files are TOML
+/// the host records, the rows of the catalogues, and a lab's receipt and public keys. The budget, games and link files are TOML
 /// that people write, so they get JSON Schema only.
 ///
 /// Sizes and counts are `number`, because `JSON.parse` gives numbers. `to_canonical_json` rejects
@@ -102,8 +106,12 @@ pub fn export_typescript(dir: &Path) -> Result<(), ExportError> {
     LibraryBucket::export_all(&config)?;
     MeasureEntry::export_all(&config)?;
     ProbeEvent::export_all(&config)?;
+    PublicKeys::export_all(&config)?;
+    ReceiptEnvelope::export_all(&config)?;
+    ReceiptProtocol::export_all(&config)?;
     RunRequest::export_all(&config)?;
     UncleanExit::export_all(&config)?;
+    VerifyResult::export_all(&config)?;
     write_typescript_index(dir)?;
     Ok(())
 }

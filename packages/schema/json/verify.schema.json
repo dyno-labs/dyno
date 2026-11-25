@@ -1,0 +1,343 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VerifyResult",
+  "description": "The output of `dyno verify`: whether a receipt holds, and each check that says so.",
+  "type": "object",
+  "properties": {
+    "checks": {
+      "description": "Every check, in the order of [`VerifyCheckId`]. A check that a flag did not ask for is\nthere too, as `not_checked`.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/VerifyCheck"
+      }
+    },
+    "key": {
+      "description": "The key that signed the receipt. Null when no given key did.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/VerifyKey"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "reason": {
+      "description": "Why the receipt is not verified: the first check that did not match. Null when it is.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "receipt": {
+      "description": "What the lab signed: the issuer, the time, the device and its readings. Null unless the\nsignature matched, because dyno does not repeat a claim that nobody signed.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Receipt"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "schema_version": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "tool": {
+      "description": "The dyno version that verified.",
+      "type": "string"
+    },
+    "verified": {
+      "description": "True when a given key signed the receipt, and nothing that was checked differs from it.\nThe exit code comes from it alone.",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "schema_version",
+    "tool",
+    "verified",
+    "checks"
+  ],
+  "$defs": {
+    "Receipt": {
+      "description": "What a lab signs: which result it stands behind, for which build, on which device, and the\ndevice's readings.",
+      "type": "object",
+      "properties": {
+        "build_id": {
+          "description": "The build id of the files the lab ran: 64 lower-case hex characters.",
+          "type": "string"
+        },
+        "check_id": {
+          "description": "The lab's id for the run.",
+          "type": "string"
+        },
+        "device": {
+          "$ref": "#/$defs/ReceiptDevice"
+        },
+        "dyno_version": {
+          "description": "The dyno version that made the result.",
+          "type": "string"
+        },
+        "issued_at": {
+          "description": "When the lab signed: RFC 3339, in UTC, to the second, ending in `Z`.",
+          "type": "string"
+        },
+        "issuer": {
+          "description": "The lab's name, such as a domain.",
+          "type": "string"
+        },
+        "key_id": {
+          "description": "Which of the lab's keys signed: the first 16 hex characters of the SHA-256 of the raw\n32-byte public key.",
+          "type": "string"
+        },
+        "lab": {
+          "$ref": "#/$defs/ReceiptLab"
+        },
+        "measures": {
+          "description": "The device's readings.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ReceiptMeasure"
+          }
+        },
+        "protocol": {
+          "description": "How the lab ran the check: the host profile's name and version, the scenario, the spins\nand the device runs. [`ReceiptProtocol`] is the object that dyno writes. A receipt from\nanother signer can name its fields in another way, so a reader gets the object as it is.",
+          "type": "object",
+          "additionalProperties": true
+        },
+        "receipt_version": {
+          "description": "The format version: 1.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "result_hash": {
+          "description": "The result's own `result_hash`, as the result states it. Null when it states none.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "result_sha256": {
+          "description": "Lower-case hex SHA-256 of the RFC 8785 canonical JSON of the whole result file.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "receipt_version",
+        "issuer",
+        "key_id",
+        "issued_at",
+        "check_id",
+        "build_id",
+        "result_sha256",
+        "dyno_version",
+        "lab",
+        "device",
+        "protocol",
+        "measures"
+      ]
+    },
+    "ReceiptDevice": {
+      "description": "The device that ran the check.",
+      "type": "object",
+      "properties": {
+        "key": {
+          "description": "The device catalogue's key, such as \"iphone-14-pro-max\".",
+          "type": "string"
+        },
+        "model": {
+          "description": "The model's name, such as \"iPhone 14 Pro Max\". Null when the result does not name it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "os_version": {
+          "description": "The OS version, such as \"26.6.2 (23G90)\". Null when the result does not give it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "key"
+      ]
+    },
+    "ReceiptLab": {
+      "description": "The lab that ran the check.",
+      "type": "object",
+      "properties": {
+        "backend": {
+          "description": "What the lab's devices run on, such as the name of a device cloud. Null when the lab does\nnot say.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "description": "What kind of lab it is, in the lab's own words.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    },
+    "ReceiptMeasure": {
+      "description": "One reading of the device.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "The measure's id, such as \"device.phys_footprint\".",
+          "type": "string"
+        },
+        "unit": {
+          "description": "The unit, such as \"bytes\". Null when the signer does not give it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "value": {
+          "description": "The reading, in the measure's unit. Null when the device gave none.",
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "VerifyCheck": {
+      "description": "One check of a receipt.",
+      "type": "object",
+      "properties": {
+        "actual": {
+          "description": "What dyno found in the result, or worked out from the result or the build. Null when it\nfound none, or did not look.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expected": {
+          "description": "What the receipt states. Null for a check with no value to state.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "$ref": "#/$defs/VerifyCheckId"
+        },
+        "outcome": {
+          "$ref": "#/$defs/VerifyOutcome"
+        },
+        "reason": {
+          "description": "Why the check did not match, or was not made. Null when it matched.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "outcome"
+      ]
+    },
+    "VerifyCheckId": {
+      "description": "The things `dyno verify` checks, in the order it checks them.",
+      "oneOf": [
+        {
+          "description": "One of the given keys has the receipt's `key_id`.",
+          "type": "string",
+          "const": "key"
+        },
+        {
+          "description": "The signature is that key's, over the receipt.",
+          "type": "string",
+          "const": "signature"
+        },
+        {
+          "description": "The lab had not retired the key when it issued the receipt.",
+          "type": "string",
+          "const": "key_not_retired"
+        },
+        {
+          "description": "`--result`: the SHA-256 of the result file's canonical JSON is the receipt's\n`result_sha256`.",
+          "type": "string",
+          "const": "result_sha256"
+        },
+        {
+          "description": "`--result`: the result's build id is the receipt's `build_id`.",
+          "type": "string",
+          "const": "result_build_id"
+        },
+        {
+          "description": "`--result`: the result's `result_hash` is the receipt's.",
+          "type": "string",
+          "const": "result_hash"
+        },
+        {
+          "description": "`--build`: the build id of the files is the receipt's `build_id`.",
+          "type": "string",
+          "const": "build_id"
+        }
+      ]
+    },
+    "VerifyKey": {
+      "description": "The key that signed a receipt.",
+      "type": "object",
+      "properties": {
+        "created_at": {
+          "description": "When the lab made the key. Null for a key given with `--key`, which has no times.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "key_id": {
+          "type": "string"
+        },
+        "retired": {
+          "description": "Whether the lab has retired the key. A retired key still verifies a receipt that was\nissued before `retired_at`.",
+          "type": "boolean"
+        },
+        "retired_at": {
+          "description": "When the lab retired the key. Null when it has not, and for a key given with `--key`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "key_id",
+        "retired"
+      ]
+    },
+    "VerifyOutcome": {
+      "description": "The outcome of one check of a receipt.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "match",
+            "mismatch"
+          ]
+        },
+        {
+          "description": "No flag asked for the check, or a check before it did not match.",
+          "type": "string",
+          "const": "not_checked"
+        }
+      ]
+    }
+  }
+}

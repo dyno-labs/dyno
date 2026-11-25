@@ -26,7 +26,10 @@ dyno-static = { path = "crates/dyno-static" }
 clap = { version = "4.6.7", features = ["derive"] }
 schemars = "1.2.3"
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.154"
+# float_roundtrip reads each number as the double nearest to it, as JSON.parse does. Without it a
+# number can be one step off, and the canonical JSON of a file that another program wrote, such
+# as a receipt, would not be that program's bytes.
+serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
 serde_json_canonicalizer = "0.4.1"
 sha2 = "0.11.1"
 thiserror = "2.0.21"

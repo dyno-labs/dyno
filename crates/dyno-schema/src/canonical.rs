@@ -4,6 +4,12 @@
 //! gives the same bytes on every machine. A stable hash also needs every list sorted by a
 //! complete key and every path relative with '/'. `RelPath` normalizes paths, and
 //! `CheckResult::new` and `CompareResult::new` sort the lists.
+//!
+//! There are two ways in. [`to_canonical_json`] is for what dyno writes: it refuses an integer
+//! that a double cannot hold, so no two values of ours share their bytes. [`jcs`] is for JSON that
+//! another program wrote, such as a receipt or a result file whose hash a receipt states: it is
+//! RFC 8785 and nothing more, so its bytes are the ones that `JSON.parse` and `JSON.stringify`
+//! give in JavaScript.
 
 use std::fmt::{self, Write};
 
@@ -28,6 +34,26 @@ pub fn to_canonical_json<T: Serialize>(value: &T) -> Result<String, serde_json::
         )));
     }
     serde_json_canonicalizer::to_string(value)
+}
+
+/// The JSON as RFC 8785 (JCS) canonical JSON, with no rule of dyno's own.
+///
+/// Every number is written as the double nearest to it, the way ECMAScript writes a number: the
+/// shortest digits that read back as the same double, `-0` as `0`, an exponent from 1e21 and
+/// below 1e-6, and an integer above 2^53 as the double it rounds to. Keys sort by their UTF-16
+/// code units. A string keeps every character but `"`, `\` and the controls below U+0020. So
+/// the bytes are the same as those of a JavaScript program that reads the JSON with `JSON.parse`
+/// and writes each value with `JSON.stringify`, its keys sorted.
+///
+/// The value must come from `serde_json`'s parser, which refuses what RFC 8785 refuses: a number
+/// too large for a double, and half of a surrogate pair in a string. JavaScript takes both.
+pub fn jcs(json: &Value) -> Result<String, serde_json::Error> {
+    serde_json_canonicalizer::to_string(json)
+}
+
+/// Lowercase hex SHA-256 of the JSON's RFC 8785 canonical form, as [`jcs`] writes it.
+pub fn sha256_of_jcs(json: &Value) -> Result<String, serde_json::Error> {
+    Ok(sha256_hex(jcs(json)?.as_bytes()))
 }
 
 /// A sort key that breaks ties between list items: the item's canonical JSON.

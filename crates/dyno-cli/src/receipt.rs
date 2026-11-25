@@ -57,13 +57,10 @@ pub fn keygen(args: KeygenArgs) -> Result<(), CliError> {
     // Both files are made before either is written, so a second file that cannot be made leaves
     // an empty first one, and no key without its keys document.
     let mut document_file = match &args.out {
-        Some(out) => Some(new_file(out, Access::Shared).map_err(|error| {
-            let made = format!("{shown} was made and is empty: remove it before you try again");
-            match error.kind() {
-                io::ErrorKind::AlreadyExists => already_there(out, &made),
-                _ => CliError::internal(format!("cannot write {}: {error}. {made}", out.display())),
-            }
-        })?),
+        Some(out) => Some(
+            new_file(out, Access::Shared)
+                .map_err(|error| second_file_not_made(&args.key, out, &error))?,
+        ),
         None => None,
     };
     key_file
@@ -215,6 +212,22 @@ fn names_the_same_new_file(one: &Path, other: &Path) -> bool {
     }
 }
 
+/// The error when keygen made the private key file and cannot make the keys document. It names
+/// the file that was made, because dyno removes no file by its path: the person does.
+///
+/// A path that is there already is the usual cause when the two names differ only in their
+/// case, on a volume that takes such names as one file.
+fn second_file_not_made(key: &Path, out: &Path, error: &io::Error) -> CliError {
+    let made = format!(
+        "{} was made and is empty: remove it before you try again",
+        key.display()
+    );
+    match error.kind() {
+        io::ErrorKind::AlreadyExists => already_there(out, &made),
+        _ => CliError::internal(format!("cannot write {}: {error}. {made}", out.display())),
+    }
+}
+
 /// The usage error for an output path that is there already.
 fn already_there(path: &Path, what_to_do: &str) -> CliError {
     CliError::usage(format!(
@@ -277,6 +290,26 @@ mod tests {
             &real.join("lab-key.json"),
             &link.join("lab-key.json")
         ));
+    }
+
+    #[test]
+    fn the_error_for_a_second_file_that_cannot_be_made_names_the_first() {
+        let (key, out) = (Path::new("Lab.json"), Path::new("lab.json"));
+        // What a volume that takes the two names as one file answers.
+        let there = io::Error::from(io::ErrorKind::AlreadyExists);
+        let error = second_file_not_made(key, out, &there);
+        assert_eq!(error.exit_code(), crate::exit::USAGE);
+        assert_eq!(
+            error.to_string(),
+            "lab.json is there already, and dyno receipt writes over no file: Lab.json was made \
+             and is empty: remove it before you try again"
+        );
+        let denied = io::Error::from(io::ErrorKind::PermissionDenied);
+        let error = second_file_not_made(key, out, &denied);
+        assert_eq!(error.exit_code(), crate::exit::INTERNAL);
+        let said = error.to_string();
+        assert!(said.starts_with("cannot write lab.json: "), "{said}");
+        assert!(said.ends_with("Lab.json was made and is empty: remove it before you try again"));
     }
 
     #[test]

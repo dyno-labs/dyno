@@ -1,0 +1,26 @@
+---
+source: crates/dyno-cli/tests/help.rs
+expression: "help(&[\"verify\", \"--help\"])"
+---
+[phase 3] Check a lab's signed receipt for a result, against the lab's public key
+
+Usage: dyno verify [OPTIONS] <RECEIPT>
+
+Arguments:
+  <RECEIPT>  [phase 3] The receipt file that the lab gave with the result
+
+Options:
+      --key <KEY>        [phase 3] A public key of the lab, which you got from the lab and trust: its raw 32 bytes in base64url. Give the flag again for each more key
+      --keys <FILE|URL>  [phase 3] The lab's public keys document, which says when each key was retired: a file, or an https URL
+      --result <FILE>    [phase 3] Also check that this result file is the one the receipt is for
+      --build <BUILD>    [phase 3] Also check that this build folder or .zip has the receipt's build id, so the receipt is for the files you hold
+      --out <FILE>       [phase 3] Write the JSON verdict to FILE instead of stdout
+  -h, --help             Print help
+
+Exit codes:
+  0   verified: a key you gave signed the receipt, and everything you asked to check matches it
+  1   not verified: no key you gave signed it, the key was retired, or the result or the build
+      is not the one the receipt is for
+  64  usage or input error: no key given, or a receipt, key, keys document, result or build that
+      cannot be read or is not one
+  70  the keys document's URL cannot be reached, or the verdict cannot be written

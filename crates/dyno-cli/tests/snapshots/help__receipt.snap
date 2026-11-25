@@ -1,0 +1,21 @@
+---
+source: crates/dyno-cli/tests/help.rs
+expression: "help(&[\"receipt\", \"--help\"])"
+---
+[phase 3] Run a lab: make its key pair, and sign a receipt for a result
+
+Usage: dyno receipt <COMMAND>
+
+Commands:
+  keygen  [phase 3] Make a lab's key pair: a private key file, and the public keys document
+  sign    [phase 3] Sign a receipt for a result file from `dyno check` with a run on a device
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help  Print help
+
+Exit codes:
+  0   the key pair is made, or the receipt is signed
+  64  usage or input error: a private key file that is there already or is not one, or a result
+      that cannot be read, was edited, or has no build or no device
+  70  internal or I/O error, such as a file that cannot be written

@@ -16,9 +16,9 @@ use dyno_schema::profile::{DEFAULT_HOST_PROFILE, HostProfile, Scenario};
     version,
     about = "Predicts how much memory an HTML5 game in an iframe will use on an iPhone, from its build.",
     long_about = "Predicts how much memory an HTML5 game in an iframe will use on an iPhone, from its \
-build.\n\ncheck, compare and doctor each write one canonical JSON result to stdout, or to --out. \
-A short summary for people goes to stderr. It has no stable format, so do not parse it. login, \
-logout, upload and link write only that summary.",
+build.\n\ncheck, compare, doctor, verify and receipt each write one canonical JSON result to \
+stdout, or to --out. A short summary for people goes to stderr. It has no stable format, so do not \
+parse it. login, logout, upload and link write only that summary.",
     after_help = EXIT_CODES,
     arg_required_else_help = true
 )]
@@ -53,6 +53,23 @@ pub enum Command {
     /// [phase 3] Link a build folder to its game on the dyno site, in dyno.toml
     #[command(after_help = LINK_EXIT_CODES)]
     Link(LinkArgs),
+    /// [phase 3] Check a lab's signed receipt for a result, against the lab's public key
+    #[command(after_help = VERIFY_EXIT_CODES)]
+    Verify(VerifyArgs),
+    /// [phase 3] Run a lab: make its key pair, and sign a receipt for a result
+    #[command(subcommand, after_help = RECEIPT_EXIT_CODES)]
+    Receipt(ReceiptCommand),
+}
+
+/// What `dyno receipt` does.
+#[derive(Debug, Subcommand)]
+pub enum ReceiptCommand {
+    /// [phase 3] Make a lab's key pair: a private key file, and the public keys document
+    #[command(after_help = KEYGEN_EXIT_CODES)]
+    Keygen(KeygenArgs),
+    /// [phase 3] Sign a receipt for a result file from `dyno check` with a run on a device
+    #[command(after_help = SIGN_EXIT_CODES)]
+    Sign(SignArgs),
 }
 
 #[derive(Debug, Args)]
@@ -248,6 +265,87 @@ pub struct LinkArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct VerifyArgs {
+    /// [phase 3] The receipt file that the lab gave with the result
+    #[arg(value_name = "RECEIPT")]
+    pub receipt: PathBuf,
+
+    /// [phase 3] A public key of the lab, which you got from the lab and trust: its raw 32 bytes
+    /// in base64url. Give the flag again for each more key
+    #[arg(long, value_name = "KEY")]
+    pub key: Vec<String>,
+
+    /// [phase 3] The lab's public keys document, which says when each key was retired: a file, or
+    /// an https URL
+    #[arg(long, value_name = "FILE|URL")]
+    pub keys: Option<String>,
+
+    /// [phase 3] Also check that this result file is the one the receipt is for
+    #[arg(long, value_name = "FILE")]
+    pub result: Option<PathBuf>,
+
+    /// [phase 3] Also check that this build folder or .zip has the receipt's build id, so the
+    /// receipt is for the files you hold
+    #[arg(long, value_name = "BUILD")]
+    pub build: Option<PathBuf>,
+
+    /// [phase 3] Write the JSON verdict to FILE instead of stdout
+    #[arg(long, value_name = "FILE")]
+    pub out: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct KeygenArgs {
+    /// [phase 3] Write the private key to FILE, which must not be there yet. Keep it secret
+    #[arg(long, value_name = "FILE")]
+    pub key: PathBuf,
+
+    /// [phase 3] Write the public keys document to FILE instead of stdout
+    #[arg(long, value_name = "FILE")]
+    pub out: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+pub struct SignArgs {
+    /// [phase 3] The private key file that `dyno receipt keygen` wrote
+    #[arg(long, value_name = "FILE")]
+    pub key: PathBuf,
+
+    /// [phase 3] The result file from `dyno check` to sign a receipt for
+    #[arg(long, value_name = "FILE")]
+    pub result: PathBuf,
+
+    /// [phase 3] The lab's name, such as its domain
+    #[arg(long, value_name = "NAME")]
+    pub issuer: String,
+
+    /// [phase 3] The lab's id for the run
+    #[arg(long, value_name = "ID")]
+    pub check_id: String,
+
+    /// [phase 3] What kind of lab it is, in the lab's own words
+    #[arg(long, value_name = "KIND", default_value = DEFAULT_LAB_KIND)]
+    pub lab_kind: String,
+
+    /// [phase 3] What the lab's devices run on, such as the name of a device cloud
+    #[arg(long, value_name = "NAME")]
+    pub lab_backend: Option<String>,
+
+    /// [phase 3] When the lab signs, in UTC to the second, such as 2026-11-25T10:00:00Z
+    /// [default: now]
+    #[arg(long, value_name = "TIME", value_parser = parse_receipt_time)]
+    pub issued_at: Option<String>,
+
+    /// [phase 3] Write the receipt to FILE instead of stdout
+    #[arg(long, value_name = "FILE")]
+    pub out: Option<PathBuf>,
+}
+
+/// The lab kind of `dyno receipt sign` when `--lab-kind` does not give one: a lab that runs the
+/// phones it owns.
+pub const DEFAULT_LAB_KIND: &str = "own_phones";
+
+#[derive(Debug, Args)]
 pub struct CompareArgs {
     /// [phase 1] The base result file from `dyno check`, such as the last release
     #[arg(value_name = "BASE")]
@@ -371,6 +469,48 @@ Exit codes:
       know
   70  the site cannot be reached, or dyno.toml cannot be written";
 
+/// The exit codes of `dyno verify`.
+const VERIFY_EXIT_CODES: &str = "\
+Exit codes:
+  0   verified: a key you gave signed the receipt, and everything you asked to check matches it
+  1   not verified: no key you gave signed it, the key was retired, or the result or the build
+      is not the one the receipt is for
+  64  usage or input error: no key given, or a receipt, key, keys document, result or build that
+      cannot be read or is not one
+  70  the keys document's URL cannot be reached, or the verdict cannot be written";
+
+/// The exit codes of `dyno receipt`, for both of its commands.
+const RECEIPT_EXIT_CODES: &str = "\
+Exit codes:
+  0   the key pair is made, or the receipt is signed
+  64  usage or input error: a private key file that is there already or is not one, or a result
+      that cannot be read, was edited, or has no build or no device
+  70  internal or I/O error, such as a file that cannot be written";
+
+/// The exit codes of `dyno receipt keygen`.
+const KEYGEN_EXIT_CODES: &str = "\
+Exit codes:
+  0   the key pair is made
+  64  usage error, or a private key file that is there already
+  70  internal or I/O error, such as a file that cannot be written";
+
+/// The exit codes of `dyno receipt sign`.
+const SIGN_EXIT_CODES: &str = "\
+Exit codes:
+  0   the receipt is signed
+  64  usage or input error: a private key file that cannot be read or is not one, or a result
+      that cannot be read, was edited, or has no build or no device
+  70  internal or I/O error, such as a receipt file that cannot be written";
+
+/// Parses `--issued-at`: a time as a receipt states it.
+fn parse_receipt_time(text: &str) -> Result<String, String> {
+    if dyno_receipt::is_receipt_time(text) {
+        Ok(text.to_owned())
+    } else {
+        Err("it must be in UTC, to the second, such as 2026-11-25T10:00:00Z".to_owned())
+    }
+}
+
 /// Parses `--host-profile`. Help lists the known names, and the value is the profile itself.
 fn host_profile_parser() -> impl TypedValueParser<Value = HostProfile> {
     PossibleValuesParser::new(HostProfile::NAMES).try_map(|name| {
@@ -407,19 +547,42 @@ mod tests {
         Cli::command().debug_assert();
     }
 
+    /// Checks a command, its flags, and the commands under it, such as `receipt sign`.
+    fn assert_command_names_its_phases(command: &clap::Command) {
+        let name = command.get_name();
+        assert_names_a_phase(command.get_about(), name);
+        let own_arguments = command
+            .get_arguments()
+            .filter(|argument| argument.get_id() != "help");
+        for argument in own_arguments {
+            let what = format!("{name} {}", argument.get_id());
+            assert_names_a_phase(argument.get_help(), &what);
+        }
+        for under in command.get_subcommands() {
+            assert_command_names_its_phases(under);
+        }
+    }
+
     #[test]
     fn every_command_and_flag_names_its_phase() {
         let cli = Cli::command();
         for command in cli.get_subcommands() {
-            let name = command.get_name();
-            assert_names_a_phase(command.get_about(), name);
-            let own_arguments = command
-                .get_arguments()
-                .filter(|argument| argument.get_id() != "help");
-            for argument in own_arguments {
-                let what = format!("{name} {}", argument.get_id());
-                assert_names_a_phase(argument.get_help(), &what);
-            }
+            assert_command_names_its_phases(command);
+        }
+    }
+
+    #[test]
+    fn issued_at_is_a_time_as_a_receipt_states_it() {
+        assert_eq!(
+            parse_receipt_time("2026-11-25T10:00:00Z"),
+            Ok("2026-11-25T10:00:00Z".to_owned())
+        );
+        for text in [
+            "2026-11-25T10:00:00.000Z",
+            "2026-11-25T11:00:00+01:00",
+            "now",
+        ] {
+            assert!(parse_receipt_time(text).is_err(), "{text}");
         }
     }
 

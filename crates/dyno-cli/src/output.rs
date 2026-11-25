@@ -15,6 +15,9 @@ use dyno_schema::compare::{AssetChangeKind, CompareResult, MeasureChange};
 use dyno_schema::doctor::DoctorReport;
 use dyno_schema::ids::{MeasureId, RuleId};
 use dyno_schema::measure::{Measure, MeasureStatus, MeasureValue, UncertaintyKind, Unit};
+use dyno_schema::receipt::{
+    Receipt, ReceiptMeasure, VerifyCheck, VerifyCheckId, VerifyOutcome, VerifyResult,
+};
 use dyno_schema::result::{CheckResult, Deterministic};
 use dyno_schema::rule::{Finding, Fix, FixAction};
 use dyno_schema::status::{Status, Verdict};
@@ -273,6 +276,98 @@ pub fn doctor_summary(report: &DoctorReport) -> Vec<String> {
         name(report.status),
         report.phase
     )]
+}
+
+/// What tells someone who verified with a key alone that the files are still unchecked.
+const BUILD_NOT_CHECKED: &str = "  the build was not checked: give --build with the files you \
+    hold, to know that the receipt is for them";
+
+/// The verdict and why, what the lab signed, and each check with its outcome.
+pub fn verify_summary(verdict: &VerifyResult) -> Vec<String> {
+    let mut lines = vec![match (&verdict.reason, &verdict.receipt) {
+        (Some(reason), _) => format!("dyno verify: not verified: {reason}"),
+        (None, Some(receipt)) => format!(
+            "dyno verify: verified: {} signed this receipt with key {}",
+            receipt.issuer, receipt.key_id
+        ),
+        // A verdict with no reason has a receipt, so this line is never printed.
+        (None, None) => "dyno verify: not verified".to_owned(),
+    }];
+    if let Some(receipt) = &verdict.receipt {
+        lines.extend(receipt_lines(receipt));
+    }
+    if let Some(retired_at) = verdict
+        .key
+        .as_ref()
+        .and_then(|key| key.retired_at.as_deref())
+    {
+        lines.push(format!(
+            "  the lab retired the key at {retired_at}: it verifies only a receipt issued before \
+             then"
+        ));
+    }
+    lines.extend(verdict.checks.iter().map(verify_check_line));
+    let build_not_checked = verdict.checks.iter().any(|check| {
+        check.id == VerifyCheckId::BuildId && check.outcome == VerifyOutcome::NotChecked
+    });
+    if verdict.verified && build_not_checked {
+        lines.push(BUILD_NOT_CHECKED.to_owned());
+    }
+    lines
+}
+
+/// What the lab signed: who and when, the device, and each reading.
+fn receipt_lines(receipt: &Receipt) -> Vec<String> {
+    let lab = match &receipt.lab.backend {
+        Some(backend) => format!("{}, {backend}", receipt.lab.kind),
+        None => receipt.lab.kind.clone(),
+    };
+    let device = [
+        receipt.device.model.as_deref(),
+        Some(receipt.device.key.as_str()),
+        receipt.device.os_version.as_deref(),
+    ];
+    let device: Vec<&str> = device.into_iter().flatten().collect();
+    let mut lines = vec![
+        format!(
+            "  signed by {} ({lab}) at {}, as check {}",
+            receipt.issuer, receipt.issued_at, receipt.check_id
+        ),
+        format!(
+            "  build {}, dyno {}",
+            receipt.build_id, receipt.dyno_version
+        ),
+        format!("  device: {}", device.join(", ")),
+    ];
+    lines.extend(receipt.measures.iter().map(receipt_measure_line));
+    lines
+}
+
+/// "  device.phys_footprint: 200.0 MB": bytes in MB, and any other reading with its unit.
+fn receipt_measure_line(measure: &ReceiptMeasure) -> String {
+    let unit = measure.unit.as_deref();
+    let value = match &measure.value {
+        None => "no reading".to_owned(),
+        Some(value) => match (value.as_i64(), unit) {
+            (Some(bytes), Some("bytes" | "bytes_change")) => signed_mb(bytes),
+            (_, None | Some("count")) => value.to_string(),
+            (_, Some(unit)) => format!("{value} {unit}"),
+        },
+    };
+    format!("  {}: {value}", measure.id)
+}
+
+/// "  signature: match", or the outcome with why.
+fn verify_check_line(check: &VerifyCheck) -> String {
+    let outcome = match check.outcome {
+        VerifyOutcome::Match => "match",
+        VerifyOutcome::Mismatch => "MISMATCH",
+        VerifyOutcome::NotChecked => "not checked",
+    };
+    with_reason(
+        format!("  {}: {outcome}", check.id),
+        check.reason.as_deref(),
+    )
 }
 
 /// Why the check has its status, in a few words.
@@ -609,7 +704,7 @@ fn counts<T: Serialize>(kinds: &[T], count_of: impl Fn(&T) -> usize) -> Option<S
 }
 
 /// "1 rule" or "2 rules".
-fn count(amount: usize, one: &str, many: &str) -> String {
+pub fn count(amount: usize, one: &str, many: &str) -> String {
     if amount == 1 {
         format!("1 {one}")
     } else {
@@ -1014,5 +1109,82 @@ mod tests {
             full_result_line(ResultPlace::File(&out)),
             "full result: results/game.json"
         );
+    }
+
+    fn receipt_measure(value: Option<&str>, unit: Option<&str>) -> ReceiptMeasure {
+        ReceiptMeasure {
+            id: "device.reading".to_owned(),
+            value: value.map(|value| value.parse().unwrap()),
+            unit: unit.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn a_receipt_s_reading_is_shown_in_mb_or_with_its_unit() {
+        let cases = [
+            (Some("209715200"), Some("bytes"), "200.0 MB"),
+            (Some("-1048576"), Some("bytes_change"), "-1.0 MB"),
+            (Some("3"), Some("count"), "3"),
+            (Some("1500"), Some("ms"), "1500 ms"),
+            (Some("1.5"), None, "1.5"),
+            // A reading in bytes that is not a whole number is shown as it is.
+            (Some("1.5"), Some("bytes"), "1.5 bytes"),
+            (None, Some("bytes"), "no reading"),
+        ];
+        for (value, unit, shown) in cases {
+            assert_eq!(
+                receipt_measure_line(&receipt_measure(value, unit)),
+                format!("  device.reading: {shown}")
+            );
+        }
+    }
+
+    #[test]
+    fn a_check_line_gives_the_outcome_and_why() {
+        let check = |outcome, reason: Option<&str>| VerifyCheck {
+            id: VerifyCheckId::BuildId,
+            outcome,
+            expected: None,
+            actual: None,
+            reason: reason.map(str::to_owned),
+        };
+        assert_eq!(
+            verify_check_line(&check(VerifyOutcome::Match, None)),
+            "  build_id: match"
+        );
+        assert_eq!(
+            verify_check_line(&check(VerifyOutcome::Mismatch, Some("other files"))),
+            "  build_id: MISMATCH (other files)"
+        );
+        assert_eq!(
+            verify_check_line(&check(
+                VerifyOutcome::NotChecked,
+                Some("no build was given")
+            )),
+            "  build_id: not checked (no build was given)"
+        );
+    }
+
+    #[test]
+    fn a_verdict_with_no_receipt_gives_only_the_reason_and_the_checks() {
+        let verdict = VerifyResult {
+            schema_version: 0,
+            tool: "0.0.0".to_owned(),
+            verified: false,
+            reason: Some("no key signed it".to_owned()),
+            checks: Vec::new(),
+            key: None,
+            receipt: None,
+        };
+        assert_eq!(
+            verify_summary(&verdict),
+            ["dyno verify: not verified: no key signed it"]
+        );
+        // A verdict always has a reason or a receipt. One with neither is still not verified.
+        let neither = VerifyResult {
+            reason: None,
+            ..verdict
+        };
+        assert_eq!(verify_summary(&neither), ["dyno verify: not verified"]);
     }
 }

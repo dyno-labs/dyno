@@ -1,0 +1,17 @@
+---
+source: crates/dyno-cli/tests/help.rs
+expression: "help(&[\"receipt\", \"keygen\", \"--help\"])"
+---
+[phase 3] Make a lab's key pair: a private key file, and the public keys document
+
+Usage: dyno receipt keygen [OPTIONS] --key <FILE>
+
+Options:
+      --key <FILE>  [phase 3] Write the private key to FILE, which must not be there yet. Keep it secret
+      --out <FILE>  [phase 3] Write the public keys document to FILE instead of stdout
+  -h, --help        Print help
+
+Exit codes:
+  0   the key pair is made
+  64  usage error, or a private key file that is there already
+  70  internal or I/O error, such as a file that cannot be written

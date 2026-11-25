@@ -35,7 +35,9 @@ build_link?: BuildLink | null,
 environment?: Environment | null, 
 /**
  * The path the browser took to the page of a served run (`--driver serve`): which of this
- * machine's addresses dyno served it at. Null for any other check.
+ * machine's addresses its first request to the harness page came to. That is the path
+ * that was used, not one that was only tried. Null when no browser asked for the page, and
+ * for any other check.
  */
 serve_path?: ServePath | null, 
 /**

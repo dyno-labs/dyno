@@ -8,6 +8,7 @@ use std::path::Path;
 use dyno_schema::manifest::BuildManifest;
 use dyno_serve::files::Build;
 use dyno_serve::{BuildServer, ServeError};
+use dyno_static::model::BuildFiles;
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 
 /// One HTTP exchange: the head and the body.
@@ -146,13 +147,13 @@ fn build_with_skipped_files() -> tempfile::TempDir {
     folder
 }
 
-/// The files of the build, as the static scan lists them.
-fn scan(build: &Path) -> BuildManifest {
-    dyno_static::inventory::scan(build)
+/// The files of the build as the static scan lists them, and the bytes it read.
+fn scan(build: &Path) -> (BuildManifest, BuildFiles) {
+    let (manifest, files) = dyno_static::inventory::scan(build)
         .unwrap()
         .summary
-        .into_manifest()
-        .unwrap()
+        .into_manifest_and_files();
+    (manifest.unwrap(), files)
 }
 
 /// The URL path of a build file, with every character that a URL would read as its own encoded.
@@ -210,23 +211,36 @@ fn assert_serves_the_inventory_and_no_more(
 #[test]
 fn a_build_server_gives_every_file_the_scan_lists_and_none_that_it_skips() {
     let folder = build_with_skipped_files();
-    let files = scan(folder.path());
-    // With no scan to go by, the server applies the scan's own rule to each path.
+    let files = scan(folder.path()).0;
+    // With no scan to go by, the server scans the folder itself, by the same rule.
     let server = BuildServer::start(folder.path()).unwrap();
     assert_serves_the_inventory_and_no_more(&server, folder.path(), &files);
 }
 
 #[test]
-fn a_build_server_of_a_scanned_build_gives_the_files_of_the_scan_and_no_more() {
+fn a_build_server_of_a_scan_gives_the_bytes_of_the_scan_and_no_more() {
     let folder = build_with_skipped_files();
-    let files = scan(folder.path());
-    let build = Build::open(folder.path())
-        .unwrap()
-        .only_the_files_of(&files);
+    let (files, bytes) = scan(folder.path());
+    let build = Build::of_scan(folder.path(), bytes);
     let server = BuildServer::start_build(build).unwrap();
     assert_serves_the_inventory_and_no_more(&server, folder.path(), &files);
-    // A file that came after the scan is not in the build id, so it is not served.
+    // After the scan: a file is added, one is edited, and one is swapped for a link out of the
+    // build. None of it is in the build id, so none of it is served.
     write_file(folder.path(), "js/late.js", "late");
+    write_file(folder.path(), "js/main.js", "console.log('edited')");
+    fs::remove_file(folder.path().join("assets/sounds/win.mp3")).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("/etc/hostname", folder.path().join("assets/sounds/win.mp3"))
+        .unwrap();
     let (head, _) = get(server.url(), "/js/late.js");
     assert!(head.starts_with("HTTP/1.1 404 Not Found"), "{head}");
+    assert_eq!(get(server.url(), "/js/main.js").1, b"console.log('game')");
+    assert_eq!(get(server.url(), "/assets/sounds/win.mp3").1, b"mp3");
+    // A byte range is a part of the scanned bytes too.
+    let (head, body) = exchange(
+        server.url(),
+        "GET /js/main.js HTTP/1.1\r\nRange: bytes=0-6\r\n\r\n",
+    );
+    assert!(head.starts_with("HTTP/1.1 206 Partial Content"), "{head}");
+    assert_eq!(body, b"console");
 }

@@ -3,6 +3,7 @@
 //!
 //! The recording starts first. Then the check serves the page, at this machine's address in the
 //! device link's tunnel when it has one, and only then opens the page in the phone's Safari.
+//! It can open a page more than once: at another address, when the first got no request.
 
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
@@ -63,24 +64,30 @@ impl DeviceRun {
         self.recorder.tunnel_host()
     }
 
-    /// Opens `url` in the phone's Safari, and gives what to print: whether Safari opened it. A
-    /// locked phone is a usage error. Safari that does not open the page is not an error: the
+    /// Opens `url` in the phone's Safari, and gives whether Safari opened it, with what to print.
+    /// A locked phone is a usage error. Safari that does not open the page is not an error: the
     /// person can open it.
-    pub fn open(&mut self, url: &str) -> Result<String, CliError> {
+    pub fn open(&mut self, url: &str) -> Result<(bool, String), CliError> {
         self.recorder.open(url).map_err(device_error)?;
         let model = self.recorder.phone().model();
         Ok(match self.recorder.opened() {
-            Some(Ok(OpenedWith::CoreDevice)) => {
-                format!("dyno check: opened the page in Safari on the {model}.")
-            }
-            Some(Ok(OpenedWith::Devicectl)) => {
-                format!("dyno check: opened the page in Safari on the {model}, with devicectl.")
-            }
-            Some(Err(error)) => {
-                format!("dyno check: {error}. Open the URL below on the {model} by hand.")
-            }
+            Some(Ok(OpenedWith::CoreDevice)) => (
+                true,
+                format!("dyno check: opened the page in Safari on the {model}."),
+            ),
+            Some(Ok(OpenedWith::Devicectl)) => (
+                true,
+                format!("dyno check: opened the page in Safari on the {model}, with devicectl."),
+            ),
+            Some(Err(error)) => (
+                false,
+                format!("dyno check: {error}. Open the URL above on the {model} by hand."),
+            ),
             // `open` always leaves an answer.
-            None => format!("dyno check: open the URL below on the {model} by hand."),
+            None => (
+                false,
+                format!("dyno check: open the URL above on the {model} by hand."),
+            ),
         })
     }
 

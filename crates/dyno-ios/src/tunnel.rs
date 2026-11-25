@@ -29,10 +29,16 @@
 //! So only a Mac has a tunnel address to serve at, and only macOS knows it. dyno finds it in two
 //! steps, with no interface name. `xcrun devicectl list devices` gives the phone's address in the
 //! tunnel ([`crate::devicectl::tunnel_address`]). Then the operating system's own routing gives
-//! this machine's address on the way to it ([`route_source`]). That address is the tunnel's only
-//! when it is in the phone's network, which [`same_network`] checks: a Mac whose tunnel has gone
-//! can still have a default route for the phone's address, out to the internet.
+//! this machine's address on the way to it ([`route_source`]). The two are a tunnel's two ends
+//! only when [`is_tunnel_pair`] says so: two different IPv6 addresses that a URL can name, in one
+//! /64 network. A Mac whose tunnel has gone can still have a default route for the phone's
+//! address, out to the internet, and a phone address that is this machine's own is no phone's.
+//!
+//! The address is read once, before the page is served. The tunnel can go away after that, as it
+//! does when nothing has used it for a while, so the caller serves at the local network address
+//! as well, and asks the browser for it when no request comes to this one (`dyno-serve`).
 
+use std::ffi::OsStr;
 use std::net::{IpAddr, Ipv6Addr, UdpSocket};
 
 use crate::devicectl;
@@ -48,29 +54,40 @@ pub enum NoTunnelAddress {
     NoUdid,
     #[error("devicectl gave no tunnel address for the phone: {0}")]
     Devicectl(String),
+    #[error(
+        "devicectl gave {0} as the phone's tunnel address, which is not an address of another machine in a tunnel"
+    )]
+    NotAPhoneAddress(IpAddr),
     #[error("this machine has no route to the phone's tunnel address {phone}: {detail}")]
     NoRoute { phone: IpAddr, detail: String },
     #[error(
-        "the route to the phone's tunnel address {phone} starts at {host}, which is not in the tunnel's network"
+        "the route to the phone's tunnel address {phone} starts at {host}, which is not this machine's end of that tunnel"
     )]
     NotInTheTunnel { phone: IpAddr, host: IpAddr },
 }
 
 /// This Mac's address inside its own tunnel to the phone with this UDID: the address the phone's
-/// Safari reaches a server on this Mac at.
-pub(crate) fn host_address(udid: Option<&str>) -> Result<IpAddr, NoTunnelAddress> {
+/// Safari reaches a server on this Mac at. `xcrun` is the program that runs devicectl.
+pub(crate) fn host_address(xcrun: &OsStr, udid: Option<&str>) -> Result<IpAddr, NoTunnelAddress> {
     let udid = udid.ok_or(NoTunnelAddress::NoUdid)?;
-    let phone = devicectl::tunnel_address(udid).map_err(NoTunnelAddress::Devicectl)?;
-    host_address_for(phone)
+    let phone = devicectl::tunnel_address(xcrun, udid).map_err(NoTunnelAddress::Devicectl)?;
+    host_address_for(phone, route_source)
 }
 
-/// This machine's address in the tunnel whose other end has the address `phone`.
-fn host_address_for(phone: IpAddr) -> Result<IpAddr, NoTunnelAddress> {
-    let host = route_source(phone).map_err(|error| NoTunnelAddress::NoRoute {
+/// This machine's address in the tunnel whose other end has the address `phone`. `route` gives
+/// the address of this machine that the operating system sends to an address from.
+fn host_address_for(
+    phone: IpAddr,
+    route: impl Fn(IpAddr) -> std::io::Result<IpAddr>,
+) -> Result<IpAddr, NoTunnelAddress> {
+    if !is_tunnel_address(phone) {
+        return Err(NoTunnelAddress::NotAPhoneAddress(phone));
+    }
+    let host = route(phone).map_err(|error| NoTunnelAddress::NoRoute {
         phone,
         detail: error.to_string(),
     })?;
-    if !same_network(host, phone) {
+    if !is_tunnel_pair(host, phone) {
         return Err(NoTunnelAddress::NotInTheTunnel { phone, host });
     }
     Ok(host)
@@ -89,9 +106,34 @@ fn route_source(to: IpAddr) -> std::io::Result<IpAddr> {
     Ok(socket.local_addr()?.ip())
 }
 
-/// Whether two addresses are in one tunnel's network. A CoreDevice tunnel gives its two ends IPv6
-/// addresses in one /64 network, so that is the test: the first 64 bits are the same. An IPv4
-/// address is in no tunnel.
+/// Whether an address can be one end of a tunnel: an IPv6 address of one machine that a URL can
+/// name. So not the loopback address, which is this machine's own, not the unspecified address,
+/// not an address of a group, not an IPv4 address written as IPv6, and not a link-local address,
+/// which needs an interface's name beside it.
+fn is_tunnel_address(address: IpAddr) -> bool {
+    match address {
+        IpAddr::V6(address) => {
+            !address.is_loopback()
+                && !address.is_unspecified()
+                && !address.is_multicast()
+                && !address.is_unicast_link_local()
+                && address.to_ipv4_mapped().is_none()
+        }
+        IpAddr::V4(_) => false,
+    }
+}
+
+/// Whether two addresses are a tunnel's two ends: each can be one ([`is_tunnel_address`]), they
+/// are two addresses and not one, and they are in one network. A CoreDevice tunnel gives its ends
+/// IPv6 addresses in one /64 network, so the first 64 bits are the same.
+fn is_tunnel_pair(host: IpAddr, phone: IpAddr) -> bool {
+    is_tunnel_address(host)
+        && is_tunnel_address(phone)
+        && host != phone
+        && same_network(host, phone)
+}
+
+/// Whether two addresses have the same first 64 bits. An IPv4 address is in no tunnel's network.
 fn same_network(one: IpAddr, other: IpAddr) -> bool {
     match (one, other) {
         (IpAddr::V6(one), IpAddr::V6(other)) => one.segments()[..4] == other.segments()[..4],
@@ -138,10 +180,93 @@ mod tests {
         assert!(!same_network(address("192.0.2.2"), address("fd7b::1")));
     }
 
-    /// Whether this machine has the IPv6 loopback address. A machine without one, as some
-    /// containers are, cannot run the tests that route to it.
-    fn has_ipv6_loopback() -> bool {
-        UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).is_ok()
+    /// A route lookup that always gives this address.
+    fn route_from(host: &'static str) -> impl Fn(IpAddr) -> std::io::Result<IpAddr> {
+        move |_| Ok(address(host))
+    }
+
+    #[test]
+    fn the_other_end_of_the_phone_s_tunnel_is_this_machine_s_address_there() {
+        assert_eq!(
+            host_address_for(address("fd7b:e5b:6f53::1"), route_from("fd7b:e5b:6f53::2")),
+            Ok(address("fd7b:e5b:6f53::2"))
+        );
+    }
+
+    #[test]
+    fn the_route_is_looked_up_for_the_phone_s_address() {
+        let asked = std::cell::Cell::new(None);
+        let route = |to| {
+            asked.set(Some(to));
+            Ok(address("fd7b:e5b:6f53::2"))
+        };
+        host_address_for(address("fd7b:e5b:6f53::1"), route).unwrap();
+        assert_eq!(asked.get(), Some(address("fd7b:e5b:6f53::1")));
+    }
+
+    #[test]
+    fn a_phone_address_that_no_other_machine_can_have_is_refused_before_any_route() {
+        let unusable = [
+            "::1",
+            "::",
+            "ff02::1",
+            "fe80::1",
+            "::ffff:192.0.2.1",
+            "192.0.2.1",
+            "127.0.0.1",
+        ];
+        for phone in unusable {
+            let route = |_| panic!("no route is looked up for {phone}");
+            assert_eq!(
+                host_address_for(address(phone), route),
+                Err(NoTunnelAddress::NotAPhoneAddress(address(phone))),
+                "{phone}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_route_that_starts_at_the_phone_s_own_address_is_not_a_tunnel() {
+        // This machine has the address itself, so nothing is at the other end.
+        let phone = address("fd7b:e5b:6f53::1");
+        assert_eq!(
+            host_address_for(phone, route_from("fd7b:e5b:6f53::1")),
+            Err(NoTunnelAddress::NotInTheTunnel { phone, host: phone })
+        );
+    }
+
+    #[test]
+    fn a_route_that_starts_in_another_network_or_at_no_usable_address_is_not_the_tunnel() {
+        let phone = address("fd7b:e5b:6f53::1");
+        for host in [
+            "2001:db8::2",
+            "fd7b:e5b:6f53:1::2",
+            "::1",
+            "fe80::2",
+            "192.0.2.2",
+        ] {
+            assert_eq!(
+                host_address_for(phone, route_from(host)),
+                Err(NoTunnelAddress::NotInTheTunnel {
+                    phone,
+                    host: address(host)
+                }),
+                "{host}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_phone_with_no_route_to_it_gives_no_address_and_the_reason() {
+        let phone = address("fd7b:e5b:6f53::1");
+        let no_route = |_| Err(std::io::Error::other("network is unreachable"));
+        assert_eq!(
+            host_address_for(phone, no_route),
+            Err(NoTunnelAddress::NoRoute {
+                phone,
+                detail: "network is unreachable".to_owned()
+            })
+        );
     }
 
     #[test]
@@ -150,26 +275,14 @@ mod tests {
             route_source(address("127.0.0.1")).unwrap(),
             address("127.0.0.1")
         );
-        if has_ipv6_loopback() {
-            assert_eq!(route_source(address("::1")).unwrap(), address("::1"));
-        }
     }
 
     #[test]
-    fn a_phone_in_this_machine_s_network_gives_the_address_on_the_way_to_it() {
-        if !has_ipv6_loopback() {
-            return;
-        }
-        // The loopback address stands in for a tunnel: both of its ends are this machine.
-        assert_eq!(host_address_for(address("::1")), Ok(address("::1")));
-    }
-
-    #[test]
-    fn a_phone_address_with_no_tunnel_behind_it_gives_no_address() {
-        // A documentation address (RFC 3849): no tunnel has it. A machine with no IPv6 route has
-        // no route to it, and one with a route to the internet starts from its own address there.
+    fn a_documentation_address_has_no_tunnel_behind_it_on_any_machine() {
+        // RFC 3849: no tunnel has it. A machine with no IPv6 route has no route to it, and one
+        // with a route to the internet starts from its own address there.
         let phone = address("2001:db8::1");
-        match host_address_for(phone) {
+        match host_address_for(phone, route_source) {
             Err(NoTunnelAddress::NoRoute { phone: to, .. }) => assert_eq!(to, phone),
             Err(NoTunnelAddress::NotInTheTunnel { phone: to, host }) => {
                 assert_eq!(to, phone);
@@ -180,18 +293,31 @@ mod tests {
     }
 
     #[test]
-    fn an_ipv4_phone_address_is_not_a_tunnel_s() {
-        assert_eq!(
-            host_address_for(address("127.0.0.1")),
-            Err(NoTunnelAddress::NotInTheTunnel {
-                phone: address("127.0.0.1"),
-                host: address("127.0.0.1"),
-            })
-        );
+    fn a_phone_with_no_udid_has_no_tunnel_to_find() {
+        // The program is never run.
+        let xcrun = OsStr::new("no-such-xcrun-in-tests");
+        assert_eq!(host_address(xcrun, None), Err(NoTunnelAddress::NoUdid));
     }
 
     #[test]
-    fn a_phone_with_no_udid_has_no_tunnel_to_find() {
-        assert_eq!(host_address(None), Err(NoTunnelAddress::NoUdid));
+    fn a_devicectl_that_cannot_run_gives_no_tunnel_address() {
+        let xcrun = OsStr::new("no-such-xcrun-in-tests");
+        let error = host_address(xcrun, Some("00008120-000000000000001E")).unwrap_err();
+        assert!(matches!(error, NoTunnelAddress::Devicectl(_)), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_tunnel_address_from_devicectl_counts_only_with_this_machine_s_end_of_it() {
+        // The stub lists the phone at fd7b:e5b:6f53::1. This machine has no tunnel to it, so
+        // the system's own routing gives no address in that network.
+        let xcrun =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/stub-xcrun.sh");
+        let phone = address("fd7b:e5b:6f53::1");
+        match host_address(xcrun.as_os_str(), Some("00008120-000000000000001E")) {
+            Err(NoTunnelAddress::NoRoute { phone: to, .. }) => assert_eq!(to, phone),
+            Err(NoTunnelAddress::NotInTheTunnel { phone: to, .. }) => assert_eq!(to, phone),
+            other => panic!("{other:?}"),
+        }
     }
 }

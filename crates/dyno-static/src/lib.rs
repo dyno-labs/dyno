@@ -21,7 +21,7 @@ use dyno_schema::profile::HostProfile;
 use dyno_schema::rule::Finding;
 use zip::result::ZipError;
 
-use crate::model::{AudioSummary, MeasureWithoutValue, Summaries, TextureSummary};
+use crate::model::{AudioSummary, BuildFiles, MeasureWithoutValue, Summaries, TextureSummary};
 
 pub mod audio;
 pub mod bundle;
@@ -38,6 +38,9 @@ pub mod textures;
 pub struct StaticScan {
     /// The build's files and id.
     pub manifest: Option<BuildManifest>,
+    /// The bytes of every file in the manifest, as the scan read them. A served run gives the
+    /// browser these bytes, so what runs is what the build id covers.
+    pub files: BuildFiles,
     /// One measure per static measure id.
     pub measures: Vec<Measure>,
     /// One finding per static rule.
@@ -125,8 +128,10 @@ pub fn scan(
         duplicates: duplicates.summary,
         measures_without_value: measures_without_value(&measures),
     };
+    let (manifest, files) = inventory.summary.into_manifest_and_files();
     Ok(StaticScan {
-        manifest: inventory.summary.into_manifest(),
+        manifest,
+        files,
         measures,
         findings: rules::check(&summaries, budget),
     })
@@ -145,6 +150,7 @@ pub fn without_build() -> StaticScan {
         .collect();
     StaticScan {
         manifest: None,
+        files: BuildFiles::default(),
         measures,
         findings: rules::without_build(),
     }

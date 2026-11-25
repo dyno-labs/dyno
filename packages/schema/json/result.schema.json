@@ -1573,7 +1573,7 @@
           "default": null
         },
         "serve_path": {
-          "description": "The path the browser took to the page of a served run (`--driver serve`): which of this\nmachine's addresses dyno served it at. Null for any other check.",
+          "description": "The path the browser took to the page of a served run (`--driver serve`): which of this\nmachine's addresses its first request to the harness page came to. That is the path\nthat was used, not one that was only tried. Null when no browser asked for the page, and\nfor any other check.",
           "anyOf": [
             {
               "$ref": "#/$defs/ServePath"
@@ -1708,7 +1708,7 @@
       ]
     },
     "ServePath": {
-      "description": "The path a browser takes to the page that a served run serves: the address dyno served at.",
+      "description": "The path a browser took to the page that a served run serves: the address of this machine\nthat its first request to the harness page came to.",
       "oneOf": [
         {
           "description": "This machine's address inside the device link's tunnel to the phone. The phone needs no\nnetwork path to this machine.",
@@ -1726,7 +1726,7 @@
           "const": "loopback"
         },
         {
-          "description": "The address that `--serve-host` gave. dyno does not know which path it is.",
+          "description": "The address that `--serve-host` gave, which is then the only one. dyno does not know\nwhich path it is.",
           "type": "string",
           "const": "given"
         }

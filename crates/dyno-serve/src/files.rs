@@ -1,29 +1,29 @@
-//! The build's files, as the game server serves them: a URL path to a file inside the build
-//! folder, its content type, and each HTML page with the probe's script tag added, or as it is.
+//! The build's files, as the game server serves them: a URL path to a file of the build, its
+//! content type, and each HTML page with the probe's script tag added, or as it is.
 //!
-//! The server gives the files that the static scan's inventory lists, and no others, so a page
-//! under test loads only what the build id covers. The rule for what a build's files are is the
-//! scan's own (`dyno_static::inventory`), not a copy of it: no operating system litter, no
-//! version control folder, and nothing through a symbolic link. A build that was scanned serves
-//! only the files of that scan ([`Build::only_the_files_of`]), so a file that came after the scan
-//! is not served either.
+//! The server gives the bytes that the static scan read, from memory, and nothing else. So a
+//! page under test loads exactly what the build id covers: no file that the scan skips, such as
+//! operating system litter, a version control folder or anything behind a symbolic link, no file
+//! that came to the folder after the scan, and no bytes that changed after it. There is one rule
+//! for what a build's files are, the scan's walk, and one list, the scan's inventory
+//! (`dyno_static::model::BuildFiles`). A build that is opened with no scan is scanned here.
+//!
+//! The server reads nothing from the folder while it serves. It asks the folder one thing, once,
+//! when the build is opened: whether its volume gives a file under a name in another case, as
+//! the default volume of a Mac does. On such a volume a game can ask for `index.html` and get
+//! the build's `Index.html`, so the server gives that file for a name that differs only in case.
 
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
-use dyno_schema::manifest::BuildManifest;
 use dyno_schema::path::RelPath;
-use dyno_static::inventory::listed_file;
+use dyno_static::model::BuildFiles;
 use percent_encoding::percent_decode_str;
 
 use crate::ServeError;
 use crate::http::{RangeAsk, Request, Response, range_ask};
 
-/// The path the game server serves the probe at. A request under it is dyno's, not the game's.
-pub const DYNO_PATH: &str = "/__dyno/";
-
-/// The probe's path on the game server.
+/// The probe's path on the game server of a served run. It is the one path there that is dyno's
+/// and not the build's.
 pub const PROBE_PATH: &str = "/__dyno/probe.js";
 
 /// The tag added to each HTML page, before any of the page's own scripts. It loads the probe from
@@ -44,73 +44,147 @@ pub enum Pages {
     AsTheyAre,
 }
 
-/// A build folder to serve.
+/// A build to serve: the files of one scan of a build folder, with their bytes.
 #[derive(Clone, Debug)]
 pub struct Build {
-    /// The folder, with every link resolved.
-    root: PathBuf,
-    /// The files of the scan that the build was listed by, when it was. None serves every file
-    /// that a scan of the folder would list now.
-    scanned: Option<Arc<BTreeSet<RelPath>>>,
+    files: BuildFiles,
+    /// Whether the folder's volume gives a file under a name in another case.
+    folds_case: bool,
+}
+
+/// One file of a build: its path as the scan listed it, and the bytes the scan read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BuildFile<'b> {
+    pub path: &'b RelPath,
+    pub bytes: &'b [u8],
+}
+
+/// An error unless `path` is a folder: a served run serves a build folder, not a .zip.
+pub fn check_folder(path: &Path) -> Result<(), ServeError> {
+    if path.is_dir() {
+        return Ok(());
+    }
+    Err(ServeError::Build(format!(
+        "{} is not a folder: the served run serves a build folder, so unzip a .zip first",
+        path.display()
+    )))
+}
+
+/// An error when the build has a file at the probe's path, which a served run's game server
+/// gives the probe at: the page would get the probe where it asked for the build's file.
+pub fn check_probe_path(build: &Build) -> Result<(), ServeError> {
+    match build.file(PROBE_PATH) {
+        Some(file) => Err(ServeError::Build(format!(
+            "the build has a file at {}, which is where a served run gives the page dyno's own \
+             probe: give the file another name",
+            file.path.as_str()
+        ))),
+        None => Ok(()),
+    }
 }
 
 impl Build {
-    /// The build in this folder. A .zip or a missing folder is an error.
-    pub fn open(path: &Path) -> Result<Build, ServeError> {
-        if !path.is_dir() {
-            return Err(ServeError::Build(format!(
-                "{} is not a folder: the served run serves a build folder, so unzip a .zip first",
-                path.display()
-            )));
+    /// The build in this folder, scanned now: the files that the static scan's inventory lists,
+    /// with the bytes it read. A .zip or a missing folder is an error, and so is a folder that
+    /// the scan cannot read.
+    pub fn open(folder: &Path) -> Result<Build, ServeError> {
+        check_folder(folder)?;
+        let scan = dyno_static::inventory::scan(folder)
+            .map_err(|error| ServeError::Build(error.to_string()))?;
+        let (_, files) = scan.summary.into_manifest_and_files();
+        Ok(Build::of_scan(folder, files))
+    }
+
+    /// The build in this folder as a scan of it read it: `files` are the bytes of that scan, so
+    /// the server gives what the scan's build id covers.
+    pub fn of_scan(folder: &Path, files: BuildFiles) -> Build {
+        Build {
+            folds_case: folds_case(folder, &files),
+            files,
         }
-        let root = path
-            .canonicalize()
-            .map_err(|error| ServeError::Build(format!("{}: {error}", path.display())))?;
-        Ok(Build {
-            root,
-            scanned: None,
-        })
     }
 
-    /// The build with only the files of this manifest, which a scan of the folder gave. The
-    /// build id covers exactly these, so the server then gives exactly what the id names: a file
-    /// that was added to the folder after the scan is not served.
-    #[must_use]
-    pub fn only_the_files_of(mut self, manifest: &BuildManifest) -> Build {
-        let files = manifest.files.iter().map(|file| file.path.clone());
-        self.scanned = Some(Arc::new(files.collect()));
-        self
-    }
-
-    /// The file a URL path names, when it is a file of the build. A folder serves its
-    /// `index.html`.
+    /// The file of the build that a URL path names. A folder gives its `index.html`.
     ///
-    /// None for a file that the scan's inventory does not list: one with a skipped name in its
-    /// path, such as `.git` or `__MACOSX`, and one reached through a symbolic link. None too for
-    /// a path that leaves the build, such as through `..`, and for a file that is not there.
-    pub fn file(&self, url_path: &str) -> Option<PathBuf> {
-        let mut relative = PathBuf::new();
+    /// None for anything that the scan did not list, and for a path that leaves the build, such
+    /// as through `..`. On a volume that gives a file under a name in another case, a path that
+    /// differs from one listed file's only in case names that file.
+    pub fn file(&self, url_path: &str) -> Option<BuildFile<'_>> {
+        let mut asked = PathBuf::new();
         for segment in url_path.split('/') {
             let segment = percent_decode_str(segment).decode_utf8().ok()?;
             match segment.as_ref() {
                 "" | "." => {}
                 ".." => return None,
                 name if name.contains(['/', '\\', '\0']) => return None,
-                name => relative.push(name),
+                name => asked.push(name),
             }
         }
-        if self.root.join(&relative).is_dir() {
-            relative.push(INDEX);
-        }
-        // The path as the inventory writes it, by the same rule.
-        let path = RelPath::from_path(&relative).ok()?;
-        if let Some(scanned) = &self.scanned
-            && !scanned.contains(&path)
-        {
+        // The paths as the inventory writes them, by the same rule. The root is no file.
+        let file = RelPath::from_path(&asked).ok();
+        let index = RelPath::from_path(&asked.join(INDEX)).ok()?;
+        let listed = |path: &RelPath| self.files.entry(path);
+        let found = file
+            .as_ref()
+            .and_then(listed)
+            .or_else(|| listed(&index))
+            .or_else(|| file.as_ref().and_then(|path| self.in_another_case(path)))
+            .or_else(|| self.in_another_case(&index));
+        found.map(|(path, bytes)| BuildFile { path, bytes })
+    }
+
+    /// The one listed file whose path differs from `path` only in the case of its letters, on a
+    /// volume that would give that file for `path`. None on any other volume.
+    fn in_another_case(&self, path: &RelPath) -> Option<(&RelPath, &[u8])> {
+        if !self.folds_case {
             return None;
         }
-        listed_file(&self.root, &path)
+        let asked = path.as_str().to_lowercase();
+        let mut same = self
+            .files
+            .paths()
+            .filter(|listed| listed.as_str().to_lowercase() == asked);
+        // Such a volume cannot hold two names that differ only in case, so there is one at most.
+        let only = same.next()?;
+        same.next().is_none().then(|| self.files.entry(only))?
     }
+}
+
+/// Whether the volume that holds `folder` gives a file under a name in another case. It asks for
+/// one listed file by its path with every ASCII letter in the other case: the volume folds case
+/// when that is the same file. A build with no letter in any path gives no answer, so false.
+fn folds_case(folder: &Path, files: &BuildFiles) -> bool {
+    let probe = files.paths().find_map(|path| {
+        let swapped: String = path
+            .as_str()
+            .chars()
+            .map(|c| match c {
+                c if c.is_ascii_lowercase() => c.to_ascii_uppercase(),
+                c => c.to_ascii_lowercase(),
+            })
+            .collect();
+        // A path with no letter cannot ask, and neither can one whose other spelling is a file
+        // of the build too, which only a volume that keeps case apart can hold.
+        let other = RelPath::new(&swapped).ok()?;
+        (other != *path && files.get(&other).is_none())
+            .then(|| (folder.join(path.as_str()), folder.join(swapped)))
+    });
+    probe.is_some_and(|(listed, swapped)| is_same_file(&listed, &swapped))
+}
+
+/// Whether two paths name one file, and not one a link to the other. Only Unix says.
+#[cfg(unix)]
+fn is_same_file(one: &Path, other: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (one.symlink_metadata(), other.symlink_metadata()) {
+        (Ok(one), Ok(other)) => one.dev() == other.dev() && one.ino() == other.ino(),
+        _ => false,
+    }
+}
+
+#[cfg(not(unix))]
+fn is_same_file(_one: &Path, _other: &Path) -> bool {
+    false
 }
 
 /// The response to a request for a build file: the file, part of it, or an error. Only GET and
@@ -119,30 +193,28 @@ pub(crate) fn build_response(build: &Build, request: &Request, pages: Pages) -> 
     if request.method != "GET" && request.method != "HEAD" {
         return Response::error("405 Method Not Allowed");
     }
-    let Some(path) = build.file(&request.path) else {
-        return Response::error("404 Not Found");
-    };
-    match std::fs::read(&path) {
-        Ok(contents) => file_response(&path, contents, request.range.as_deref(), pages),
-        Err(_) => Response::error("404 Not Found"),
+    match build.file(&request.path) {
+        Some(file) => file_response(
+            Path::new(file.path.as_str()),
+            file.bytes,
+            request.range.as_deref(),
+            pages,
+        ),
+        None => Response::error("404 Not Found"),
     }
 }
 
 /// The response for a file: the whole file, or the part a `Range` header asks for. With the
-/// probe, an HTML page gets the probe's tag and is always sent whole.
-pub fn file_response(
-    path: &Path,
-    contents: Vec<u8>,
-    range: Option<&str>,
-    pages: Pages,
-) -> Response {
+/// probe, an HTML page gets the probe's tag and is always sent whole. The response has its own
+/// copy of the bytes it sends, and no more.
+pub fn file_response(path: &Path, contents: &[u8], range: Option<&str>, pages: Pages) -> Response {
     let content_type = content_type(path);
     if pages == Pages::WithProbe && is_html(path) {
-        return Response::new("200 OK", content_type, with_probe(&contents));
+        return Response::new("200 OK", content_type, with_probe(contents));
     }
     let length = contents.len() as u64;
     let mut response = match range_ask(range, length) {
-        RangeAsk::Whole => Response::new("200 OK", content_type, contents),
+        RangeAsk::Whole => Response::new("200 OK", content_type, contents.to_vec()),
         RangeAsk::Part(start, end) => {
             // Both ends are inside the file, so they fit in usize.
             let part = contents[start as usize..=end as usize].to_vec();
@@ -248,6 +320,29 @@ mod tests {
         std::str::from_utf8(bytes).unwrap()
     }
 
+    /// The listed path of the file that a URL path names in the build.
+    fn named<'b>(build: &'b Build, url_path: &str) -> Option<&'b str> {
+        build.file(url_path).map(|file| file.path.as_str())
+    }
+
+    fn write_file(folder: &Path, path: &str, contents: &str) {
+        let path = folder.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, contents).unwrap();
+    }
+
+    /// A build of these files, with no folder behind it, on a volume that folds case or not.
+    fn build_of(files: &[(&str, &str)], folds_case: bool) -> Build {
+        let files: std::collections::BTreeMap<RelPath, Vec<u8>> = files
+            .iter()
+            .map(|(path, contents)| (RelPath::new(path).unwrap(), contents.as_bytes().to_vec()))
+            .collect();
+        Build {
+            files: files.into(),
+            folds_case,
+        }
+    }
+
     #[test]
     fn the_probe_goes_first_in_the_head() {
         let page = with_probe(b"<!doctype html><html><HEAD lang=en><script src=a.js></script>");
@@ -277,45 +372,49 @@ mod tests {
     }
 
     #[test]
-    fn a_path_names_a_file_inside_the_build() {
+    fn a_path_names_a_file_of_the_build_and_a_folder_names_its_index() {
         let folder = tempfile::tempdir().unwrap();
-        fs::create_dir(folder.path().join("assets")).unwrap();
-        fs::write(folder.path().join("index.html"), "page").unwrap();
-        fs::write(folder.path().join("assets/a b.png"), "png").unwrap();
+        write_file(folder.path(), "index.html", "page");
+        write_file(folder.path(), "assets/a b.png", "png");
+        write_file(folder.path(), "help/index.html", "help");
         let build = Build::open(folder.path()).unwrap();
-        let root = folder.path().canonicalize().unwrap();
-        assert_eq!(build.file("/"), Some(root.join("index.html")));
-        assert_eq!(
-            build.file("/assets/a%20b.png"),
-            Some(root.join("assets/a b.png"))
-        );
-        assert_eq!(build.file("/assets/missing.png"), None);
+        assert_eq!(named(&build, "/"), Some("index.html"));
+        assert_eq!(named(&build, "/assets/a%20b.png"), Some("assets/a b.png"));
+        assert_eq!(named(&build, "/help"), Some("help/index.html"));
+        assert_eq!(named(&build, "/help/"), Some("help/index.html"));
+        assert_eq!(named(&build, "/assets/missing.png"), None);
+        // A folder with no page of its own names nothing.
+        assert_eq!(named(&build, "/assets/"), None);
+        assert_eq!(build.file("/assets/a%20b.png").unwrap().bytes, b"png");
     }
 
     #[test]
     fn a_path_that_leaves_the_build_names_nothing() {
         let outer = tempfile::tempdir().unwrap();
-        fs::write(outer.path().join("secret.txt"), "secret").unwrap();
-        fs::create_dir(outer.path().join("build")).unwrap();
+        write_file(outer.path(), "secret.txt", "secret");
+        write_file(outer.path(), "build/index.html", "page");
         let build = Build::open(&outer.path().join("build")).unwrap();
         for path in ["/../secret.txt", "/%2e%2e/secret.txt", "/..%2fsecret.txt"] {
-            assert_eq!(build.file(path), None, "{path}");
+            assert_eq!(named(&build, path), None, "{path}");
         }
     }
 
     #[cfg(unix)]
     #[test]
-    fn a_link_out_of_the_build_names_nothing() {
+    fn a_link_names_nothing_whether_it_leaves_the_build_or_not() {
         let outer = tempfile::tempdir().unwrap();
-        fs::write(outer.path().join("secret.txt"), "secret").unwrap();
-        fs::create_dir(outer.path().join("build")).unwrap();
-        std::os::unix::fs::symlink(
-            outer.path().join("secret.txt"),
-            outer.path().join("build/link.txt"),
-        )
-        .unwrap();
-        let build = Build::open(&outer.path().join("build")).unwrap();
-        assert_eq!(build.file("/link.txt"), None);
+        write_file(outer.path(), "secret.txt", "secret");
+        let root = outer.path().join("build");
+        write_file(&root, "js/main.js", "1");
+        std::os::unix::fs::symlink(outer.path().join("secret.txt"), root.join("link.txt")).unwrap();
+        std::os::unix::fs::symlink(root.join("js/main.js"), root.join("same.js")).unwrap();
+        std::os::unix::fs::symlink(root.join("js"), root.join("same-js")).unwrap();
+        let build = Build::open(&root).unwrap();
+        // The scan lists the file once, by its own path, so that is its only URL.
+        assert_eq!(named(&build, "/js/main.js"), Some("js/main.js"));
+        for path in ["/link.txt", "/same.js", "/same-js/main.js"] {
+            assert_eq!(named(&build, path), None, "{path}");
+        }
     }
 
     /// Operating system litter and version control, which the scan's inventory leaves out.
@@ -324,13 +423,11 @@ mod tests {
     #[test]
     fn a_file_or_folder_that_the_scan_skips_names_nothing() {
         let folder = tempfile::tempdir().unwrap();
-        fs::create_dir(folder.path().join("assets")).unwrap();
-        fs::write(folder.path().join("assets/a.png"), "png").unwrap();
+        write_file(folder.path(), "assets/a.png", "png");
         for name in SKIPPED {
-            fs::write(folder.path().join("assets").join(name), "litter").unwrap();
-            fs::create_dir(folder.path().join(name)).unwrap();
-            fs::write(folder.path().join(name).join("inside.js"), "litter").unwrap();
-            fs::write(folder.path().join(name).join("index.html"), "litter").unwrap();
+            write_file(folder.path(), &format!("assets/{name}"), "litter");
+            write_file(folder.path(), &format!("{name}/inside.js"), "litter");
+            write_file(folder.path(), &format!("{name}/index.html"), "litter");
         }
         let build = Build::open(folder.path()).unwrap();
         for name in SKIPPED {
@@ -340,79 +437,119 @@ mod tests {
                 // A folder's own page is not served from a skipped folder either.
                 format!("/{name}/"),
                 format!("/{name}"),
+                // Nor is a skipped entry under a name in another case, on any volume.
+                format!("/{}/inside.js", name.to_uppercase()),
+                format!("/{}/inside.js", name.to_lowercase()),
             ] {
-                assert_eq!(build.file(&path), None, "{path}");
+                assert_eq!(named(&build, &path), None, "{path}");
             }
         }
         // A file beside them is still served.
-        assert!(build.file("/assets/a.png").is_some());
+        assert_eq!(named(&build, "/assets/a.png"), Some("assets/a.png"));
+    }
+
+    #[test]
+    fn the_bytes_served_are_the_scan_s_whatever_the_folder_holds_later() {
+        let folder = tempfile::tempdir().unwrap();
+        write_file(folder.path(), "index.html", "scanned page");
+        write_file(folder.path(), "js/main.js", "scanned script");
+        let build = Build::open(folder.path()).unwrap();
+        // After the scan: a file is edited, one is swapped for a link, one is added, one goes.
+        write_file(folder.path(), "index.html", "edited page");
+        write_file(folder.path(), "js/late.js", "late");
+        fs::remove_file(folder.path().join("js/main.js")).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("/etc/hostname", folder.path().join("js/main.js")).unwrap();
+        assert_eq!(build.file("/").unwrap().bytes, b"scanned page");
+        assert_eq!(build.file("/js/main.js").unwrap().bytes, b"scanned script");
+        assert_eq!(named(&build, "/js/late.js"), None);
+    }
+
+    #[test]
+    fn a_build_of_a_scan_serves_the_bytes_of_that_scan() {
+        let folder = tempfile::tempdir().unwrap();
+        write_file(folder.path(), "index.html", "scanned page");
+        let scan = dyno_static::inventory::scan(folder.path()).unwrap();
+        let (_, files) = scan.summary.into_manifest_and_files();
+        write_file(folder.path(), "index.html", "edited page");
+        let build = Build::of_scan(folder.path(), files);
+        assert_eq!(build.file("/").unwrap().bytes, b"scanned page");
+    }
+
+    #[test]
+    fn on_a_volume_that_keeps_case_apart_only_the_exact_name_is_the_file() {
+        let build = build_of(&[("Index.html", "page"), ("JS/Main.js", "1")], false);
+        assert_eq!(named(&build, "/Index.html"), Some("Index.html"));
+        for path in ["/", "/index.html", "/js/main.js", "/JS/main.js"] {
+            assert_eq!(named(&build, path), None, "{path}");
+        }
+    }
+
+    #[test]
+    fn on_a_volume_that_folds_case_a_name_in_another_case_is_the_listed_file() {
+        let build = build_of(
+            &[
+                ("Index.html", "page"),
+                ("JS/Main.js", "1"),
+                ("Help/INDEX.HTML", "help"),
+            ],
+            true,
+        );
+        // The root finds the build's page, as the volume would give it.
+        assert_eq!(named(&build, "/"), Some("Index.html"));
+        assert_eq!(named(&build, "/index.html"), Some("Index.html"));
+        assert_eq!(named(&build, "/js/main.js"), Some("JS/Main.js"));
+        assert_eq!(named(&build, "/help/"), Some("Help/INDEX.HTML"));
+        assert_eq!(build.file("/js/MAIN.JS").unwrap().bytes, b"1");
+        // What the scan did not list is still not served.
+        assert_eq!(named(&build, "/js/other.js"), None);
+        assert_eq!(named(&build, "/.git/config"), None);
+    }
+
+    #[test]
+    fn an_exact_name_wins_over_a_name_in_another_case() {
+        let build = build_of(&[("a.js", "lower"), ("A.js", "upper")], true);
+        assert_eq!(build.file("/a.js").unwrap().bytes, b"lower");
+        assert_eq!(build.file("/A.js").unwrap().bytes, b"upper");
+        // Two files differ from this name only in case, so it names neither.
+        assert_eq!(named(&build, "/A.JS"), None);
+    }
+
+    #[test]
+    fn the_build_serves_a_name_in_another_case_exactly_when_its_volume_does() {
+        let folder = tempfile::tempdir().unwrap();
+        write_file(folder.path(), "Index.html", "page");
+        // What this volume does: a Mac's default volume gives the file, Linux's does not.
+        let volume_folds_case = folder.path().join("index.html").exists();
+        let build = Build::open(folder.path()).unwrap();
+        assert_eq!(build.folds_case, volume_folds_case);
+        assert_eq!(named(&build, "/Index.html"), Some("Index.html"));
+        assert_eq!(
+            named(&build, "/"),
+            volume_folds_case.then_some("Index.html")
+        );
     }
 
     #[cfg(unix)]
     #[test]
-    fn a_link_inside_the_build_names_nothing_and_its_target_does() {
+    fn a_link_under_the_other_spelling_does_not_make_a_volume_fold_case() {
         let folder = tempfile::tempdir().unwrap();
-        let root = folder.path().canonicalize().unwrap();
-        fs::create_dir(root.join("js")).unwrap();
-        fs::write(root.join("js/main.js"), "1").unwrap();
-        std::os::unix::fs::symlink(root.join("js/main.js"), root.join("same.js")).unwrap();
-        std::os::unix::fs::symlink(root.join("js"), root.join("same-js")).unwrap();
-        let build = Build::open(&root).unwrap();
-        // The scan lists the file once, by its own path, so that is its only URL.
-        assert_eq!(build.file("/js/main.js"), Some(root.join("js/main.js")));
-        assert_eq!(build.file("/same.js"), None);
-        assert_eq!(build.file("/same-js/main.js"), None);
-    }
-
-    fn manifest_of(paths: &[&str]) -> BuildManifest {
-        BuildManifest {
-            build_id: None,
-            files: paths
-                .iter()
-                .map(|path| dyno_schema::manifest::ManifestFile {
-                    path: RelPath::new(path).unwrap(),
-                    bytes: 0,
-                    sha256: String::new(),
-                    kind: dyno_schema::manifest::FileKind::Other,
-                })
-                .collect(),
+        write_file(folder.path(), "a.js", "1");
+        if folder.path().join("A.JS").exists() {
+            // This volume folds case, so it cannot hold the link.
+            return;
         }
+        std::os::unix::fs::symlink(folder.path().join("a.js"), folder.path().join("A.JS")).unwrap();
+        let build = Build::open(folder.path()).unwrap();
+        assert!(!build.folds_case);
+        assert_eq!(named(&build, "/A.JS"), None);
     }
 
     #[test]
-    fn a_scanned_build_serves_the_files_of_its_scan_and_no_file_that_came_after() {
+    fn a_build_with_no_letter_in_a_path_cannot_ask_its_volume() {
         let folder = tempfile::tempdir().unwrap();
-        fs::create_dir(folder.path().join("js")).unwrap();
-        fs::write(folder.path().join("index.html"), "page").unwrap();
-        fs::write(folder.path().join("js/main.js"), "1").unwrap();
-        let root = folder.path().canonicalize().unwrap();
-        let scanned = manifest_of(&["index.html", "js/main.js"]);
-        let build = Build::open(folder.path())
-            .unwrap()
-            .only_the_files_of(&scanned);
-        fs::write(folder.path().join("js/late.js"), "2").unwrap();
-        fs::write(folder.path().join("js/index.html"), "late page").unwrap();
-        assert_eq!(build.file("/"), Some(root.join("index.html")));
-        assert_eq!(build.file("/js/main.js"), Some(root.join("js/main.js")));
-        assert_eq!(build.file("/js/late.js"), None);
-        assert_eq!(build.file("/js/"), None);
-        // With no scan, the folder as it is now is the build.
-        let unscanned = Build::open(folder.path()).unwrap();
-        assert_eq!(unscanned.file("/js/late.js"), Some(root.join("js/late.js")));
-    }
-
-    #[test]
-    fn a_file_of_the_scan_that_has_gone_or_became_a_skipped_one_names_nothing() {
-        let folder = tempfile::tempdir().unwrap();
-        fs::create_dir(folder.path().join(".git")).unwrap();
-        fs::write(folder.path().join(".git/config"), "secret").unwrap();
-        // A manifest that a scan would never give: the skip rule holds for it all the same.
-        let scanned = manifest_of(&["gone.js", ".git/config"]);
-        let build = Build::open(folder.path())
-            .unwrap()
-            .only_the_files_of(&scanned);
-        assert_eq!(build.file("/gone.js"), None);
-        assert_eq!(build.file("/.git/config"), None);
+        write_file(folder.path(), "1/2", "data");
+        assert!(!Build::open(folder.path()).unwrap().folds_case);
     }
 
     #[test]
@@ -421,13 +558,34 @@ mod tests {
         let zip = folder.path().join("build.zip");
         fs::write(&zip, "PK").unwrap();
         assert!(matches!(Build::open(&zip), Err(ServeError::Build(_))));
+        assert!(matches!(check_folder(&zip), Err(ServeError::Build(_))));
+        assert!(check_folder(folder.path()).is_ok());
+    }
+
+    #[test]
+    fn a_build_file_at_the_probe_s_path_is_an_error_and_one_beside_it_is_not() {
+        let beside = build_of(
+            &[("__dyno/data.json", "{}"), ("__dyno/probe.json", "{}")],
+            false,
+        );
+        assert!(check_probe_path(&beside).is_ok());
+        let at_it = build_of(&[("__dyno/probe.js", "the build's")], false);
+        let error = check_probe_path(&at_it).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "the build has a file at __dyno/probe.js, which is where a served run gives the page \
+             dyno's own probe: give the file another name"
+        );
+        // On a volume that folds case, the page would get the same file under another case.
+        let in_another_case = build_of(&[("__DYNO/Probe.js", "the build's")], true);
+        assert!(check_probe_path(&in_another_case).is_err());
     }
 
     #[test]
     fn a_range_request_gets_part_of_a_media_file() {
         let response = file_response(
             Path::new("a.mp3"),
-            b"0123456789".to_vec(),
+            b"0123456789",
             Some("bytes=2-4"),
             Pages::WithProbe,
         );
@@ -444,7 +602,7 @@ mod tests {
     fn a_range_past_the_end_of_a_file_is_refused_with_its_length() {
         let response = file_response(
             Path::new("a.mp3"),
-            b"0123".to_vec(),
+            b"0123",
             Some("bytes=10-"),
             Pages::WithProbe,
         );
@@ -460,7 +618,7 @@ mod tests {
     fn an_html_page_is_sent_whole_with_the_probe() {
         let response = file_response(
             Path::new("index.html"),
-            b"<head>".to_vec(),
+            b"<head>",
             Some("bytes=0-1"),
             Pages::WithProbe,
         );
@@ -472,7 +630,7 @@ mod tests {
     fn an_html_page_as_it_is_has_no_probe_and_is_a_file_like_any_other() {
         let whole = file_response(
             Path::new("index.html"),
-            b"<head></head>".to_vec(),
+            b"<head></head>",
             None,
             Pages::AsTheyAre,
         );
@@ -480,7 +638,7 @@ mod tests {
         assert_eq!(whole.content_type, "text/html; charset=utf-8");
         let part = file_response(
             Path::new("index.html"),
-            b"<head></head>".to_vec(),
+            b"<head></head>",
             Some("bytes=0-5"),
             Pages::AsTheyAre,
         );

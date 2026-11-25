@@ -3,7 +3,7 @@
 mod common;
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{Ipv6Addr, TcpStream, UdpSocket};
+use std::net::TcpStream;
 use std::process::{Child, Command, Stdio};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -222,10 +222,11 @@ fn a_served_check_takes_its_environment_from_the_user_agent() {
 }
 
 #[test]
-fn a_served_check_gives_the_browser_the_files_of_its_scan_and_no_others() {
+fn a_served_check_gives_the_browser_the_bytes_of_its_scan_and_nothing_else() {
     let folder = tempfile::tempdir().unwrap();
     let build = folder.path().join("build");
     copy_dir(&data_dir().join("tiny-build"), &build);
+    let scanned_script = std::fs::read_to_string(build.join("js/game.js")).unwrap();
     // What the scan skips is not in the build id.
     std::fs::create_dir(build.join(".git")).unwrap();
     std::fs::write(build.join(".git/config"), "not the build's").unwrap();
@@ -235,9 +236,10 @@ fn a_served_check_gives_the_browser_the_files_of_its_scan_and_no_others() {
         &["check", &build.display().to_string(), "--driver", "serve"],
     );
     let harness = served.harness.clone();
-    // dyno has scanned the build by the time it prints the URL. A file that comes after is not
-    // in the build id either.
+    // dyno has scanned the build by the time it prints the URL. After that, a file is added,
+    // and one is edited: neither the new file nor the new bytes are what the build id covers.
     std::fs::write(build.join("late.js"), "late").unwrap();
+    std::fs::write(build.join("js/game.js"), "edited after the scan").unwrap();
     let (_, page) = exchange(&harness, "GET", "/", "");
     let game = page
         .split("const GAME_URL = \"http://")
@@ -249,6 +251,9 @@ fn a_served_check_gives_the_browser_the_files_of_its_scan_and_no_others() {
         let (status, _) = exchange(&game, "GET", path, "");
         assert_eq!(status, "HTTP/1.1 404 Not Found", "{path}");
     }
+    let (status, script) = exchange(&game, "GET", "/js/game.js", "");
+    assert_eq!(status, "HTTP/1.1 200 OK");
+    assert_eq!(script, scanned_script);
     open_as_browser(&harness, "");
     let result: serde_json::Value = serde_json::from_str(&served.finish().stdout).unwrap();
     // Every file of the build id is one that the server gives.
@@ -261,6 +266,63 @@ fn a_served_check_gives_the_browser_the_files_of_its_scan_and_no_others() {
         assert!(!path.contains(".git") && path != "late.js", "{path}");
     }
     assert_eq!(result["run"]["build_link"], "served");
+}
+
+#[test]
+fn a_build_with_a_file_at_the_probe_s_path_stops_a_served_check_before_the_phone() {
+    let folder = tempfile::tempdir().unwrap();
+    let build = folder.path().join("build");
+    copy_dir(&data_dir().join("tiny-build"), &build);
+    std::fs::create_dir(build.join("__dyno")).unwrap();
+    std::fs::write(build.join("__dyno/probe.js"), "the build's own").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_dyno"))
+        .args(["check", &build.display().to_string()])
+        .args(["--driver", "serve", "--serve-port", "0", "--device"])
+        .current_dir(data_dir())
+        .env("DYNO_FAKE_PHONE", "")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert_eq!(output.status.code(), Some(64), "{stderr}");
+    assert!(
+        stderr.contains(
+            "the build has a file at __dyno/probe.js, which is where a served run gives the page \
+             dyno's own probe: give the file another name"
+        ),
+        "{stderr}"
+    );
+    // The phone was not touched.
+    assert!(!stderr.contains("recording the"), "{stderr}");
+}
+
+#[test]
+fn a_build_file_beside_the_probe_s_path_is_served_as_the_build_s() {
+    let folder = tempfile::tempdir().unwrap();
+    let build = folder.path().join("build");
+    copy_dir(&data_dir().join("tiny-build"), &build);
+    std::fs::create_dir(build.join("__dyno")).unwrap();
+    std::fs::write(build.join("__dyno/data.json"), "{\"the build's\":1}").unwrap();
+    let served = start(
+        &[],
+        &["check", &build.display().to_string(), "--driver", "serve"],
+    );
+    let harness = served.harness.clone();
+    let (_, page) = exchange(&harness, "GET", "/", "");
+    let game = page
+        .split("const GAME_URL = \"http://")
+        .nth(1)
+        .and_then(|rest| rest.split('/').next())
+        .unwrap()
+        .to_owned();
+    let (status, body) = exchange(&game, "GET", "/__dyno/data.json", "");
+    assert_eq!(status, "HTTP/1.1 200 OK");
+    assert_eq!(body, "{\"the build's\":1}");
+    // The probe is still at its own path.
+    let (status, probe) = exchange(&game, "GET", "/__dyno/probe.js", "");
+    assert_eq!(status, "HTTP/1.1 200 OK");
+    assert!(probe.contains("data-dyno-relay"), "{probe}");
+    open_as_browser(&harness, "");
+    served.finish();
 }
 
 /// The fake phone's UDID (crates/dyno-ios/src/fake.rs).
@@ -505,7 +567,7 @@ fn a_launch_that_fails_says_to_open_the_page_by_hand_and_the_check_runs() {
     assert!(
         outcome.stderr.contains(
             "dyno check: Safari did not open the page: the fake phone did not open it. Open the \
-             URL below on the iPhone 14 Pro Max by hand."
+             URL above on the iPhone 14 Pro Max by hand."
         ),
         "{}",
         outcome.stderr
@@ -650,13 +712,6 @@ fn own_address_path() -> (String, &'static str) {
     (address.to_string(), path)
 }
 
-/// Whether this machine has the IPv6 loopback address, which stands in for a tunnel address in
-/// these tests: the fake devicectl gives it as the phone's, and this machine's own address on the
-/// way to it is the same one. Some containers have none.
-fn has_ipv6_loopback() -> bool {
-    UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).is_ok()
-}
-
 /// A device check of the fake phone at the address that dyno chooses, with this environment and
 /// these extra flags, run to the end with this test as the phone's browser. It gives the
 /// outcome, the result and the harness page's host and port.
@@ -664,7 +719,16 @@ fn device_check_where_dyno_chooses(
     env: &[(&str, &str)],
     args: &[&str],
 ) -> (Outcome, serde_json::Value, String) {
-    let mut all_env = vec![("DYNO_FAKE_PHONE", "")];
+    device_check_of_phone_where_dyno_chooses("", env, args)
+}
+
+/// [`device_check_where_dyno_chooses`], for a fake phone with these settings.
+fn device_check_of_phone_where_dyno_chooses(
+    phone: &str,
+    env: &[(&str, &str)],
+    args: &[&str],
+) -> (Outcome, serde_json::Value, String) {
+    let mut all_env = vec![("DYNO_FAKE_PHONE", phone)];
     all_env.extend_from_slice(env);
     let mut all_args = vec!["check", "tiny-build", "--driver", "serve", "--device"];
     all_args.extend_from_slice(args);
@@ -678,29 +742,19 @@ fn device_check_where_dyno_chooses(
 
 const NOT_OVER_THE_DEVICE_LINK: &str = "dyno check: the page is not served over the device link: ";
 
+/// The fake phone's setting for this machine's address in its tunnel. The loopback address
+/// stands in for a tunnel's: this machine has it, and it is not the local network address.
+const TUNNEL_AT_LOOPBACK: &str = "tunnel=127.0.0.1";
+
 #[test]
 fn a_device_check_serves_over_the_device_link_when_this_machine_has_a_tunnel_to_the_phone() {
-    if !has_ipv6_loopback() {
-        return;
-    }
     let folder = tempfile::tempdir().unwrap();
     let launched = folder.path().join("launched");
-    let phone = format!("launched={}", launched.display());
-    let xcrun = fake_xcrun();
-    let served = start_where_dyno_chooses(
-        &[
-            ("DYNO_FAKE_PHONE", phone.as_str()),
-            ("DYNO_XCRUN", xcrun.as_str()),
-            ("FAKE_XCRUN_TUNNEL", "::1"),
-        ],
-        &["check", "tiny-build", "--driver", "serve", "--device"],
-    );
-    let harness = served.harness.clone();
-    open_as_browser(&harness, "");
-    let outcome = served.finish();
-    // The servers are at this machine's address on the way to the phone's tunnel address, and
-    // that is the page the phone's Safari was told to open.
-    assert!(harness.starts_with("[::1]:"), "{harness}");
+    let phone = format!("{TUNNEL_AT_LOOPBACK};launched={}", launched.display());
+    let (outcome, result, harness) = device_check_of_phone_where_dyno_chooses(&phone, &[], &[]);
+    // The servers are at the tunnel address, and that is the page the phone's Safari was told
+    // to open, once and no more.
+    assert!(harness.starts_with("127.0.0.1:"), "{harness}");
     assert_eq!(
         std::fs::read_to_string(&launched).unwrap(),
         format!("http://{harness}/")
@@ -713,15 +767,130 @@ fn a_device_check_serves_over_the_device_link_when_this_machine_has_a_tunnel_to_
         "{}",
         outcome.stderr
     );
-    assert!(
-        !outcome.stderr.contains(NOT_OVER_THE_DEVICE_LINK),
-        "{}",
-        outcome.stderr
-    );
-    let result: serde_json::Value = serde_json::from_str(&outcome.stdout).unwrap();
+    for not_said in [NOT_OVER_THE_DEVICE_LINK, "Asking Safari for"] {
+        assert!(!outcome.stderr.contains(not_said), "{}", outcome.stderr);
+    }
+    // The browser's first request came to the tunnel address.
     assert_eq!(result["run"]["serve_path"], "tunnel");
     let footprint = run_measure(&result, "device.phys_footprint");
     assert_eq!(footprint["status"], "measured", "{footprint}");
+    // The page is at the local network address too, unless this machine has no network, and
+    // dyno says when it asks Safari for that address.
+    let (address, path) = own_address_path();
+    let also_at = format!("dyno check: the page is also at http://{address}:");
+    assert_eq!(
+        outcome.stderr.contains(&also_at),
+        path == "local_network",
+        "{}",
+        outcome.stderr
+    );
+    assert_eq!(
+        outcome
+            .stderr
+            .contains("With no request over the device link in 15 s, dyno asks Safari for it."),
+        path == "local_network",
+        "{}",
+        outcome.stderr
+    );
+}
+
+#[test]
+fn with_no_request_over_the_device_link_safari_is_asked_for_the_local_network_address() {
+    let (address, path) = own_address_path();
+    if path != "local_network" {
+        // A machine with no network has no second address for a phone.
+        return;
+    }
+    let folder = tempfile::tempdir().unwrap();
+    let launched = folder.path().join("launched");
+    let phone = format!("{TUNNEL_AT_LOOPBACK};launched={}", launched.display());
+    let served = start_where_dyno_chooses(
+        &[("DYNO_FAKE_PHONE", phone.as_str())],
+        &["check", "tiny-build", "--driver", "serve", "--device"],
+    );
+    let at_tunnel = format!("http://{}/", served.harness);
+    // The phone's Safari never comes to the tunnel address, as when the tunnel has gone. After
+    // 15 s dyno asks Safari for the local network address.
+    let until = Instant::now() + Duration::from_secs(60);
+    let at_local = loop {
+        let asked = std::fs::read_to_string(&launched).unwrap_or_default();
+        if !asked.is_empty() && asked != at_tunnel {
+            break asked;
+        }
+        assert!(
+            Instant::now() < until,
+            "Safari was asked for {asked:?} only"
+        );
+        thread::sleep(Duration::from_millis(100));
+    };
+    assert!(
+        at_local.starts_with(&format!("http://{address}:")),
+        "{at_local}"
+    );
+    let harness = at_local
+        .trim_start_matches("http://")
+        .trim_end_matches('/')
+        .to_owned();
+    open_as_browser(&harness, "");
+    let outcome = served.finish();
+    assert!(
+        outcome.stderr.contains(&format!(
+            "dyno check: no request came over the device link in 15 s. Asking Safari for \
+             {at_local}, which needs the phone on this machine's network."
+        )),
+        "{}",
+        outcome.stderr
+    );
+    // The path is the one the browser came by, not the one that was tried first.
+    let result: serde_json::Value = serde_json::from_str(&outcome.stdout).unwrap();
+    assert_eq!(result["run"]["serve_path"], "local_network");
+    let footprint = run_measure(&result, "device.phys_footprint");
+    assert_eq!(footprint["status"], "measured", "{footprint}");
+}
+
+#[test]
+fn with_no_open_dyno_names_both_addresses_and_asks_safari_for_neither() {
+    let (outcome, result, harness) =
+        device_check_of_phone_where_dyno_chooses(TUNNEL_AT_LOOPBACK, &[], &["--no-open"]);
+    assert!(harness.starts_with("127.0.0.1:"), "{harness}");
+    let (address, path) = own_address_path();
+    assert_eq!(
+        outcome.stderr.contains(&format!(
+            "dyno check: the page is also at http://{address}:"
+        )),
+        path == "local_network",
+        "{}",
+        outcome.stderr
+    );
+    // A person opens the page, so dyno says nothing of asking Safari, and asks it for nothing.
+    for not_said in [
+        "dyno asks Safari for it",
+        "Asking Safari for",
+        "in Safari on",
+    ] {
+        assert!(!outcome.stderr.contains(not_said), "{}", outcome.stderr);
+    }
+    // The person opened the first address, so that is the path.
+    assert_eq!(result["run"]["serve_path"], "tunnel");
+}
+
+#[test]
+fn a_phone_address_from_devicectl_that_is_this_machine_s_own_is_no_tunnel() {
+    let xcrun = fake_xcrun();
+    // The loopback address is in its own /64 network, but no phone is at it.
+    let env = [("DYNO_XCRUN", xcrun.as_str()), ("FAKE_XCRUN_TUNNEL", "::1")];
+    let (outcome, result, harness) = device_check_where_dyno_chooses(&env, &[]);
+    let (address, path) = own_address_path();
+    assert!(harness.starts_with(&format!("{address}:")), "{harness}");
+    assert_eq!(result["run"]["serve_path"], path);
+    assert!(
+        outcome.stderr.contains(&format!(
+            "{NOT_OVER_THE_DEVICE_LINK}devicectl gave ::1 as the phone's tunnel address, which \
+             is not an address of another machine in a tunnel."
+        )),
+        "{}",
+        outcome.stderr
+    );
 }
 
 #[test]
@@ -814,9 +983,8 @@ fn a_devicectl_that_fails_leaves_the_check_on_the_local_network() {
 
 #[test]
 fn a_given_serve_host_wins_over_the_tunnel_address() {
-    let xcrun = fake_xcrun();
-    let env = [("DYNO_XCRUN", xcrun.as_str()), ("FAKE_XCRUN_TUNNEL", "::1")];
-    let (outcome, result, harness) = device_check(&[], &env, &[]);
+    // The fake phone has a tunnel address that is not the given one.
+    let (outcome, result, harness) = device_check(&["tunnel=192.0.2.9"], &[], &[]);
     assert!(harness.starts_with("127.0.0.1:"), "{harness}");
     assert_eq!(result["run"]["serve_path"], "given");
     // The tunnel was not looked for, so nothing is said about it.

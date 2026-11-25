@@ -1,6 +1,6 @@
 # The dyno command line
 
-dyno has eight commands. `check`, `compare` and `doctor` each write one JSON result to stdout, or to the file `--out` names. Each one also writes a short summary for people to stderr. `mcp` gives `check` and `compare` to an MCP client instead. `login`, `logout`, `upload` and `link` sign in to the dyno site, upload results to it and link builds to its games, and write only to stderr. The summary has no stable format, so no tool may parse it. There is no other output format.
+dyno has ten commands. `check`, `compare`, `doctor`, `verify` and `receipt` each write one JSON result to stdout, or to the file `--out` names. Each one also writes a short summary for people to stderr. `mcp` gives `check` and `compare` to an MCP client instead. `login`, `logout`, `upload` and `link` sign in to the dyno site, upload results to it and link builds to its games, and write only to stderr. The summary has no stable format, so no tool may parse it. There is no other output format.
 
 The check summary gives the status and why, the decoded memory and the build size, and each rule that warns or fails with its 3 largest fixes. Sizes are in MB with one decimal. A floor shows as "at least", and a range shows its two ends. The last lines tell you where the full result is, and give its `result_hash`.
 
@@ -216,6 +216,24 @@ Links a build folder or .zip to its game on the dyno site, so that every later `
 
 dyno reads the build and the file before it asks the site. So a build that is not a folder or a .zip or cannot be read, or a file that does not parse, cannot take the entry, or is not the nearest `dyno.toml` above the build, is a usage error (64) that makes no game. So is a game id the site does not know, or a token it does not take. A site that cannot be reached, or a file that cannot be written, is an I/O error (70).
 
+### `dyno verify <RECEIPT>` (Phase 3)
+
+Checks a lab's signed receipt for a result: that a public key you trust signed it, and, when you ask, that the result file and the build you hold are the ones it is for. A lab is someone who runs dyno on real phones for people who do not own them. [`receipts.md`](receipts.md) gives the receipt format, the checks, the verdict and how to run a lab.
+
+| Flag                 | Phase | What it does                                                                                                         |
+| -------------------- | ----- | -------------------------------------------------------------------------------------------------------------------- |
+| `--key <KEY>`        | 3     | A public key of the lab that you trust: its raw 32 bytes in base64url. Give the flag again for each more key.        |
+| `--keys <FILE\|URL>` | 3     | The lab's public keys document, which also says when each key was retired: a file, or an https URL.                  |
+| `--result <FILE>`    | 3     | Also check that this result file is the one the receipt is for.                                                      |
+| `--build <BUILD>`    | 3     | Also check that this build folder or .zip has the receipt's build id, worked out by the code that `dyno check` uses. |
+| `--out <FILE>`       | 3     | Write the JSON verdict to this file instead of stdout.                                                               |
+
+With no `--key` and no `--keys`, verify refuses with a usage error (64): a receipt that brought its own key would prove nothing. It exits with 0 when the receipt is verified and with 1 when it is not. A file that is not a receipt, or a key, result or build that cannot be read, is a usage error (64) with no verdict. verify opens a connection only when `--keys` is a URL, and a URL that cannot be reached is an I/O error (70).
+
+### `dyno receipt keygen` and `dyno receipt sign` (Phase 3)
+
+What a lab needs to sign receipts. `keygen` makes a key pair: a private key file, which it never writes over, and the public keys document. `sign` makes the receipt for a result file of a check with a run on a device, such as one with `--device`. See [Run a lab](receipts.md#run-a-lab) for the flags, the private key file and the result field behind each receipt field.
+
 ## Upload results to the dyno site
 
 The dyno site at <https://dynoapp.io> keeps your results, such as the device runs from a phone, so that your team can see them. To upload:
@@ -286,8 +304,8 @@ A `floor` uncertainty alone does not make a value partial. Only `scope.not_cover
 
 | Code | Meaning                                                                                                             |
 | ---- | ------------------------------------------------------------------------------------------------------------------- |
-| 0    | `pass`, or `warn`                                                                                                   |
-| 1    | `fail`: a budget or a static rule fails                                                                             |
+| 0    | `pass`, or `warn`. For `dyno verify`: the receipt is verified                                                       |
+| 1    | `fail`: a budget or a static rule fails. For `dyno verify`: the receipt is not verified                             |
 | 2    | `incomplete`                                                                                                        |
 | 3    | `invalid`: a required measure failed its check, a measure row does not fit the check, or an input result was edited |
 | 64   | Usage or config error: bad flags, an unreadable target, budget, games or result file, or no token or a bad token    |

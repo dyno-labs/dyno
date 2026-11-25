@@ -1,18 +1,22 @@
 //! The served run: dyno serves the build, with the probe, and a harness page to any browser on
 //! the network, such as Safari on an iPhone, Safari in the iOS Simulator or a desktop browser.
 //!
-//! The servers are at one address of this machine, which the browser must reach. There are two
+//! The servers are at an address of this machine, which the browser must reach. There are two
 //! paths from a phone to this machine. One is the local network, which a guest Wi-Fi or a cloud
 //! device lab often does not give. The other is the device link itself: the tunnel that reads the
 //! phone has an address for each end, and the phone's Safari can load a page from this machine's.
-//! So a run on a phone serves at the tunnel address when the caller has one
-//! ([`ServeOptions::tunnel_host`]), and at the local network address otherwise.
-//! [`ServeDriver::serve_path`] says which.
+//!
+//! A tunnel can go away between the moment its address was read and the moment the browser asks
+//! for the page. So a run on a phone whose caller has a tunnel address
+//! ([`ServeOptions::tunnel_host`]) serves at both addresses, and asks the browser for the tunnel's
+//! first ([`ServeDriver::run_opening`]). When no request has come to the harness page a stated
+//! time after that, it asks the browser for the local network address. Whichever way the page
+//! was asked for, [`ServeDriver::serve_path`] says where the browser's first request to the
+//! harness page came, not where it was sent.
 //!
 //! Two servers run on one host, on two ports, so the game frame is cross-origin to the harness
 //! page around it. The game server serves the build folder and adds the probe's script tag to
-//! each HTML page. It serves the files that the static scan lists for the build, and no others
-//! ([`files`]). Every request it serves, but the probe's own, is a game request. The harness
+//! each HTML page. It serves the bytes that the static scan read, and nothing else ([`files`]). Every request it serves, but the probe's own, is a game request. The harness
 //! server serves the harness page, which relays the probe's events to dyno over HTTP, as the
 //! browser has no driver binding. The run gives the same runner protocol messages as the CDP
 //! driver, so `dyno_run::lab` reads both the same way.
@@ -37,8 +41,9 @@ use dyno_schema::environment::{
 use dyno_schema::result::{DriverInfo, ServePath};
 use dyno_schema::runner::{DriverMessage, RunRequest};
 use dyno_schema::scrub::scrub;
+use tokio::sync::mpsc;
 
-use crate::files::Build;
+use crate::files::{Build, check_probe_path};
 use crate::local::LocalBrowser;
 
 pub use crate::build_server::BuildServer;
@@ -60,16 +65,27 @@ pub const DEFAULT_PORT: u16 = 7370;
 /// How long a run waits for a browser to open the harness page when no time is given.
 pub const DEFAULT_WAIT_FOR_BROWSER: Duration = Duration::from_secs(10 * 60);
 
+/// How long a run waits for the browser's first request at the tunnel address, once the browser
+/// was asked for it, before it asks the browser for the local network address. Safari on a phone
+/// opens a page in about a second or two, and a second ask restarts Safari, so the wait is long
+/// enough not to stop a page that is on its way.
+pub const DEFAULT_WAIT_FOR_TUNNEL: Duration = Duration::from_secs(15);
+
 /// Where and how a served run serves.
 #[derive(Clone, Debug)]
 pub struct ServeOptions {
-    /// The address a browser reaches this machine at. None takes the tunnel address when there
-    /// is one, and else this machine's address on its local network.
+    /// The one address a browser reaches this machine at. None takes the tunnel address when
+    /// there is one, with this machine's address on its local network after it, and else the
+    /// local network address alone.
     pub host: Option<String>,
     /// This machine's address inside the device link's tunnel to the phone, when the phone can
-    /// reach a server there. With no `host`, the servers are there. When they cannot be bound
-    /// there, they are on the local network address, as with no tunnel address.
+    /// reach a server there. With no `host`, the servers are there, and at the local network
+    /// address too. When they cannot be bound there, they are at the local network address
+    /// alone, as with no tunnel address.
     pub tunnel_host: Option<IpAddr>,
+    /// How long the run waits for the browser's first request at the tunnel address before it
+    /// asks the browser for the local network address.
+    pub wait_for_tunnel: Duration,
     /// The harness page's port. The game's is the next one. 0 takes two free ports.
     pub port: u16,
     /// How long the run waits for a browser to open the harness page.
@@ -92,24 +108,39 @@ pub enum ServeError {
     Runtime(String),
     #[error("cannot start the browser to open the page with: {0}")]
     OpenWith(String),
+    /// Whoever opens the page in the browser said to stop the run, and why.
+    #[error("{0}")]
+    Stopped(String),
 }
 
-/// The served-run driver, with its two servers bound.
+/// What became of a request to open the harness page in the browser.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Opened {
+    /// The browser was told to open the page.
+    Yes,
+    /// The browser was not told, so a person opens the page. The run asks for no other address.
+    No,
+    /// The run must stop now, for this reason, such as a locked phone.
+    Stop(String),
+}
+
+/// The served-run driver, with its servers bound.
 #[derive(Debug)]
 pub struct ServeDriver {
     build: Build,
-    harness: TcpListener,
-    game: TcpListener,
-    harness_url: String,
-    game_url: String,
-    serve_path: ServePath,
+    /// Where the two servers are, in the order the browser is asked: one place, or the tunnel
+    /// address and then the local network address.
+    places: Vec<Place>,
     /// Why the servers are not at the tunnel address the options gave.
     tunnel_refused: Option<String>,
     wait_for_browser: Duration,
+    wait_for_tunnel: Duration,
     open_with: Option<PathBuf>,
     last_run: Option<RunTimes>,
     /// The user agent of the browser that opened the page in the last run.
     last_user_agent: Option<String>,
+    /// Where the browser's first request to the harness page came in the last run.
+    last_path: Option<ServePath>,
 }
 
 /// When a served run's steps happened, in ms since the Unix epoch on this machine's clock. A
@@ -135,53 +166,65 @@ impl ServeDriver {
         ServeDriver::bind_build(Build::open(build)?, options)
     }
 
-    /// [`ServeDriver::bind`], for a build that is open already, such as one that serves only the
-    /// files of its scan ([`Build::only_the_files_of`]).
+    /// [`ServeDriver::bind`], for a build that is open already, such as the build of a scan
+    /// ([`Build::of_scan`]). A build with a file of its own at the probe's path is an error.
     pub fn bind_build(build: Build, options: &ServeOptions) -> Result<ServeDriver, ServeError> {
+        check_probe_path(&build)?;
         let mut tunnel_refused = None;
-        let at_tunnel = match (&options.host, options.tunnel_host) {
-            (None, Some(tunnel)) => match Servers::bind(&tunnel.to_string(), options.port) {
-                Ok(servers) => Some(servers),
-                // The tunnel can go between the moment its address was read and now, and then
-                // the address is no longer this machine's.
-                Err(error) => {
-                    tunnel_refused = Some(error.to_string());
-                    None
+        let places = match (&options.host, options.tunnel_host) {
+            (Some(host), _) => vec![Place::bind(host, options.port, ServePath::Given)?],
+            (None, tunnel) => {
+                let at_tunnel = tunnel.and_then(|tunnel| {
+                    // The tunnel can go between the moment its address was read and now, and
+                    // then the address is no longer this machine's.
+                    Place::bind(&tunnel.to_string(), options.port, ServePath::Tunnel)
+                        .map_err(|error| tunnel_refused = Some(error.to_string()))
+                        .ok()
+                });
+                let local = local_network_address();
+                let at_local = |path| Place::bind(&local.to_string(), options.port, path);
+                match at_tunnel {
+                    // A phone cannot reach the loopback address, so it is no second path. A
+                    // local network address that cannot be bound leaves the tunnel alone.
+                    Some(at_tunnel) if local.is_loopback() => vec![at_tunnel],
+                    Some(at_tunnel) => std::iter::once(at_tunnel)
+                        .chain(at_local(ServePath::LocalNetwork).ok())
+                        .collect(),
+                    None if local.is_loopback() => vec![at_local(ServePath::Loopback)?],
+                    None => vec![at_local(ServePath::LocalNetwork)?],
                 }
-            },
-            _ => None,
-        };
-        let (servers, serve_path) = match (at_tunnel, &options.host) {
-            (Some(servers), _) => (servers, ServePath::Tunnel),
-            (None, Some(host)) => (Servers::bind(host, options.port)?, ServePath::Given),
-            (None, None) => {
-                let address = local_network_address();
-                let path = if address.is_loopback() {
-                    ServePath::Loopback
-                } else {
-                    ServePath::LocalNetwork
-                };
-                (Servers::bind(&address.to_string(), options.port)?, path)
             }
         };
         Ok(ServeDriver {
-            harness_url: servers.harness_url,
-            game_url: servers.game_url,
-            serve_path,
-            tunnel_refused,
             build,
-            harness: servers.harness,
-            game: servers.game,
+            places,
+            tunnel_refused,
             wait_for_browser: options.wait_for_browser,
+            wait_for_tunnel: options.wait_for_tunnel,
             open_with: options.open_with.clone(),
             last_run: None,
             last_user_agent: None,
+            last_path: None,
         })
     }
 
-    /// The path a browser takes to the servers: which of this machine's addresses they are at.
-    pub fn serve_path(&self) -> ServePath {
-        self.serve_path
+    /// The path the browser is asked for first: which of this machine's addresses the URLs of
+    /// [`ServeDriver::harness_url`] and [`ServeDriver::game_url`] name.
+    pub fn asked_path(&self) -> ServePath {
+        self.first().path
+    }
+
+    /// The path the browser took in the last run: the place its first request to the harness
+    /// page came to. None before a run, and when no request came.
+    pub fn serve_path(&self) -> Option<ServePath> {
+        self.last_path
+    }
+
+    /// The harness page's URL at the local network address, when the servers are there as well
+    /// as at the tunnel address. A run asks the browser for it when no request came to the
+    /// tunnel address in time.
+    pub fn fallback_harness_url(&self) -> Option<&str> {
+        self.places.get(1).map(|place| place.harness_url.as_str())
     }
 
     /// Why the servers are not at the tunnel address that the options gave. None when they are
@@ -190,19 +233,24 @@ impl ServeDriver {
         self.tunnel_refused.as_deref()
     }
 
+    /// The first place: the one the browser is asked for first. A driver has one at least.
+    fn first(&self) -> &Place {
+        &self.places[0]
+    }
+
     /// The times of the last run that a browser opened. None before one.
     pub fn last_run(&self) -> Option<RunTimes> {
         self.last_run
     }
 
-    /// The URL to open in the browser: the harness page.
+    /// The URL to open in the browser: the harness page, at the address asked for first.
     pub fn harness_url(&self) -> &str {
-        &self.harness_url
+        &self.first().harness_url
     }
 
-    /// The game server's URL: the build's root.
+    /// The game server's URL: the build's root, at the address asked for first.
     pub fn game_url(&self) -> &str {
-        &self.game_url
+        &self.first().game_url
     }
 
     /// The launch URL of a run: the game server's URL with this query string, such as a demo
@@ -210,20 +258,32 @@ impl ServeDriver {
     /// in its frame, so a run request names this one.
     pub fn launch_url(&self, query: Option<&str>) -> String {
         match query.map(|query| query.trim_start_matches('?')) {
-            Some(query) if !query.is_empty() => format!("{}?{query}", self.game_url),
-            _ => self.game_url.clone(),
+            Some(query) if !query.is_empty() => format!("{}?{query}", self.game_url()),
+            _ => self.game_url().to_owned(),
         }
     }
-}
 
-impl Driver for ServeDriver {
-    fn name(&self) -> &str {
-        DRIVER_NAME
+    /// Runs the request as [`Driver::run`] does, and has `open` open the harness page in the
+    /// browser. `open` gets the page's URL once the servers serve, so the browser's first
+    /// request is answered at once. When the servers are at a tunnel address and at the local
+    /// network address, `open` said the browser was told, and no request has come to the harness
+    /// page [`ServeOptions::wait_for_tunnel`] later, `open` gets the URL at the local network
+    /// address.
+    ///
+    /// `open` runs on a thread of its own, because it can take as long as the phone does.
+    pub fn run_opening(
+        &mut self,
+        request: &RunRequest,
+        open: &mut (dyn FnMut(&str) -> Opened + Send),
+    ) -> Result<Vec<DriverMessage>, DriverError> {
+        self.run_with(request, Some(open))
     }
 
-    /// With `open_with`, the browser starts before the run waits for it, and its processes'
-    /// memory goes in just before the run's last message.
-    fn run(&mut self, request: &RunRequest) -> Result<Vec<DriverMessage>, DriverError> {
+    fn run_with(
+        &mut self,
+        request: &RunRequest,
+        open: Option<&mut (dyn FnMut(&str) -> Opened + Send)>,
+    ) -> Result<Vec<DriverMessage>, DriverError> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -231,13 +291,28 @@ impl Driver for ServeDriver {
         let local = self
             .open_with
             .as_deref()
-            .map(|program| LocalBrowser::open(program, &self.harness_url))
+            .map(|program| LocalBrowser::open(program, self.harness_url()))
             .transpose()
             .map_err(|error| driver_error(&error))?;
+        let outcome = match open {
+            None => runtime.block_on(run::run(self, request, None)),
+            Some(open) => std::thread::scope(|scope| {
+                let (ask, mut asked) = mpsc::unbounded_channel::<String>();
+                let (answer, answers) = mpsc::unbounded_channel();
+                // The thread ends when the run drops its end, and the scope waits for it.
+                scope.spawn(move || {
+                    while let Some(url) = asked.blocking_recv() {
+                        if answer.send(open(&url)).is_err() {
+                            break;
+                        }
+                    }
+                });
+                runtime.block_on(run::run(self, request, Some(run::Asks { ask, answers })))
+            }),
+        };
+        self.last_path = outcome.first_request.map(|place| self.places[place].path);
         // An error drops the local browser, which stops it.
-        let served = runtime
-            .block_on(run::run(self, request))
-            .map_err(|error| driver_error(&error))?;
+        let served = outcome.served.map_err(|error| driver_error(&error))?;
         let mut messages = served.messages;
         if let Some(local) = local {
             let times = served.times;
@@ -253,6 +328,18 @@ impl Driver for ServeDriver {
         self.last_run = Some(served.times);
         self.last_user_agent = Some(served.user_agent);
         Ok(messages)
+    }
+}
+
+impl Driver for ServeDriver {
+    fn name(&self) -> &str {
+        DRIVER_NAME
+    }
+
+    /// With `open_with`, the browser starts before the run waits for it, and its processes'
+    /// memory goes in just before the run's last message.
+    fn run(&mut self, request: &RunRequest) -> Result<Vec<DriverMessage>, DriverError> {
+        self.run_with(request, None)
     }
 
     /// Safari gives the page no heap reading, and the harness page has no other way to read it.
@@ -281,18 +368,21 @@ fn driver_error(error: &ServeError) -> DriverError {
     DriverError::new(DriverErrorCode::Run, &error.to_string())
 }
 
-/// The two servers, bound at one host, with their URLs.
-struct Servers {
+/// The two servers, bound at one address of this machine, with their URLs.
+#[derive(Debug)]
+struct Place {
     harness: TcpListener,
     game: TcpListener,
     harness_url: String,
     game_url: String,
+    /// The path a browser takes to this address.
+    path: ServePath,
 }
 
-impl Servers {
+impl Place {
     /// Binds the harness page's server on `port` of `host`, and the game's on the next port.
     /// Port 0 takes two free ports.
-    fn bind(host: &str, port: u16) -> Result<Servers, ServeError> {
+    fn bind(host: &str, port: u16, path: ServePath) -> Result<Place, ServeError> {
         // An address is bound as it is. A name could be any of this machine's addresses.
         let bind_to = host
             .parse::<IpAddr>()
@@ -306,11 +396,12 @@ impl Servers {
         };
         let harness = listen(bind_to, port)?;
         let game = listen(bind_to, game_port)?;
-        Ok(Servers {
+        Ok(Place {
             harness_url: url(host, &harness)?,
             game_url: url(host, &game)?,
             harness,
             game,
+            path,
         })
     }
 }
@@ -620,6 +711,7 @@ mod tests {
         let options = ServeOptions {
             host: None,
             tunnel_host: None,
+            wait_for_tunnel: DEFAULT_WAIT_FOR_TUNNEL,
             port: 0,
             wait_for_browser: Duration::from_secs(1),
             open_with: None,
@@ -631,8 +723,11 @@ mod tests {
             "{}",
             driver.harness_url()
         );
-        assert_eq!(driver.serve_path(), local_path(address));
+        assert_eq!(driver.asked_path(), local_path(address));
         assert_eq!(driver.tunnel_refused(), None);
+        assert_eq!(driver.fallback_harness_url(), None);
+        // No browser has asked for the page yet, so no path was taken.
+        assert_eq!(driver.serve_path(), None);
         assert_eq!(driver.name(), DRIVER_NAME);
     }
 
@@ -651,6 +746,7 @@ mod tests {
         ServeOptions {
             host: host.map(str::to_owned),
             tunnel_host: Some(tunnel.parse().unwrap()),
+            wait_for_tunnel: DEFAULT_WAIT_FOR_TUNNEL,
             port: 0,
             wait_for_browser: Duration::from_secs(1),
             open_with: None,
@@ -661,15 +757,29 @@ mod tests {
     const NOT_THIS_MACHINE: &str = "192.0.2.9";
 
     #[test]
-    fn with_a_tunnel_address_the_servers_are_there() {
+    fn with_a_tunnel_address_the_browser_is_asked_for_it_first() {
         let folder = tempfile::tempdir().unwrap();
         // The loopback address stands in for the tunnel's: this machine has it.
         let options = options_with_tunnel("127.0.0.1", None);
         let driver = ServeDriver::bind(folder.path(), &options).unwrap();
         assert!(driver.harness_url().starts_with("http://127.0.0.1:"));
         assert!(driver.game_url().starts_with("http://127.0.0.1:"));
-        assert_eq!(driver.serve_path(), ServePath::Tunnel);
+        assert_eq!(driver.asked_path(), ServePath::Tunnel);
         assert_eq!(driver.tunnel_refused(), None);
+    }
+
+    #[test]
+    fn with_a_tunnel_address_the_servers_are_at_the_local_network_address_too() {
+        let folder = tempfile::tempdir().unwrap();
+        let options = options_with_tunnel("127.0.0.1", None);
+        let driver = ServeDriver::bind(folder.path(), &options).unwrap();
+        let local = local_network_address();
+        match driver.fallback_harness_url() {
+            Some(url) => assert!(url.starts_with(&format!("http://{local}:")), "{url}"),
+            // A phone cannot reach the loopback address, so a machine with no network has no
+            // second place.
+            None => assert!(local.is_loopback()),
+        }
     }
 
     #[test]
@@ -683,7 +793,8 @@ mod tests {
             "{}",
             driver.harness_url()
         );
-        assert_eq!(driver.serve_path(), local_path(address));
+        assert_eq!(driver.asked_path(), local_path(address));
+        assert_eq!(driver.fallback_harness_url(), None);
         let refused = driver.tunnel_refused().unwrap();
         assert!(
             refused.starts_with(&format!("cannot serve on {NOT_THIS_MACHINE}:0: ")),
@@ -697,9 +808,10 @@ mod tests {
         let options = options_with_tunnel(NOT_THIS_MACHINE, Some("127.0.0.1"));
         let driver = ServeDriver::bind(folder.path(), &options).unwrap();
         assert!(driver.harness_url().starts_with("http://127.0.0.1:"));
-        assert_eq!(driver.serve_path(), ServePath::Given);
-        // The tunnel address was never tried.
+        assert_eq!(driver.asked_path(), ServePath::Given);
+        // The tunnel address was never tried, and the given address is the only one.
         assert_eq!(driver.tunnel_refused(), None);
+        assert_eq!(driver.fallback_harness_url(), None);
     }
 
     #[test]
@@ -718,12 +830,25 @@ mod tests {
         let options = options_with_tunnel("::1", None);
         let driver = ServeDriver::bind(folder.path(), &options).unwrap();
         // A machine with no IPv6 loopback falls back; the URL shape is tested where it has one.
-        if driver.serve_path() == ServePath::Tunnel {
+        if driver.asked_path() == ServePath::Tunnel {
             assert!(driver.harness_url().starts_with("http://[::1]:"));
             assert!(driver.game_url().starts_with("http://[::1]:"));
         } else {
             assert!(driver.tunnel_refused().is_some());
         }
+    }
+
+    #[test]
+    fn a_build_with_a_file_at_the_probe_s_path_cannot_be_served_to_a_run() {
+        let folder = tempfile::tempdir().unwrap();
+        std::fs::create_dir(folder.path().join("__dyno")).unwrap();
+        std::fs::write(folder.path().join("__dyno/probe.js"), "the build's").unwrap();
+        let options = options_with_tunnel("127.0.0.1", Some("127.0.0.1"));
+        let error = ServeDriver::bind(folder.path(), &options).unwrap_err();
+        assert!(matches!(error, ServeError::Build(_)), "{error}");
+        assert!(error.to_string().contains("__dyno/probe.js"), "{error}");
+        // The build server adds no probe, so the file is the build's there.
+        assert!(BuildServer::start(folder.path()).is_ok());
     }
 
     #[test]
@@ -733,6 +858,7 @@ mod tests {
         let options = ServeOptions {
             host: Some("127.0.0.1".to_owned()),
             tunnel_host: None,
+            wait_for_tunnel: DEFAULT_WAIT_FOR_TUNNEL,
             port: taken.local_addr().unwrap().port(),
             wait_for_browser: Duration::from_secs(1),
             open_with: None,
@@ -747,6 +873,7 @@ mod tests {
         let options = ServeOptions {
             host: Some("127.0.0.1".to_owned()),
             tunnel_host: None,
+            wait_for_tunnel: DEFAULT_WAIT_FOR_TUNNEL,
             port: 0,
             wait_for_browser: Duration::from_secs(1),
             open_with: None,
@@ -763,6 +890,7 @@ mod tests {
         let options = ServeOptions {
             host: Some("127.0.0.1".to_owned()),
             tunnel_host: None,
+            wait_for_tunnel: DEFAULT_WAIT_FOR_TUNNEL,
             port: 0,
             wait_for_browser: Duration::from_secs(1),
             open_with: None,
@@ -783,6 +911,7 @@ mod tests {
         let options = ServeOptions {
             host: Some("::1".to_owned()),
             tunnel_host: None,
+            wait_for_tunnel: DEFAULT_WAIT_FOR_TUNNEL,
             port: 0,
             wait_for_browser: Duration::from_secs(1),
             open_with: None,
@@ -799,6 +928,7 @@ mod tests {
         let options = ServeOptions {
             host: Some("127.0.0.1".to_owned()),
             tunnel_host: None,
+            wait_for_tunnel: DEFAULT_WAIT_FOR_TUNNEL,
             port: u16::MAX,
             wait_for_browser: Duration::from_secs(1),
             open_with: None,

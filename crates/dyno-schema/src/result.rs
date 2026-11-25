@@ -139,7 +139,9 @@ pub struct RunInfo {
     #[ts(optional = nullable)]
     pub environment: Option<Environment>,
     /// The path the browser took to the page of a served run (`--driver serve`): which of this
-    /// machine's addresses dyno served it at. Null for any other check.
+    /// machine's addresses its first request to the harness page came to. That is the path
+    /// that was used, not one that was only tried. Null when no browser asked for the page, and
+    /// for any other check.
     #[serde(default)]
     #[ts(optional = nullable)]
     pub serve_path: Option<ServePath>,
@@ -227,7 +229,8 @@ pub enum BuildLink {
     Asserted,
 }
 
-/// The path a browser takes to the page that a served run serves: the address dyno served at.
+/// The path a browser took to the page that a served run serves: the address of this machine
+/// that its first request to the harness page came to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum ServePath {
@@ -239,7 +242,8 @@ pub enum ServePath {
     /// The loopback address, when this machine is on no network. Only a browser on this machine
     /// reaches it, such as Safari in the iOS Simulator.
     Loopback,
-    /// The address that `--serve-host` gave. dyno does not know which path it is.
+    /// The address that `--serve-host` gave, which is then the only one. dyno does not know
+    /// which path it is.
     Given,
 }
 

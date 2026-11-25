@@ -3,7 +3,6 @@
 
 mod common;
 
-use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::Path;
@@ -118,92 +117,60 @@ fn litter_is_skipped_in_any_folder() {
     assert_eq!(paths(&scan(build.path())), ["index.html"]);
 }
 
-/// Every path under `folder` that gives a file when links are followed, relative to it: what a
-/// server would give if it followed any path it was asked for.
-fn every_reachable_file(folder: &Path) -> BTreeSet<String> {
-    walkdir::WalkDir::new(folder)
-        .follow_links(true)
-        .into_iter()
-        .map(Result::unwrap)
-        .filter(|entry| entry.file_type().is_file())
-        .map(|entry| {
-            let relative = entry.path().strip_prefix(folder).unwrap();
-            RelPath::from_path(relative).unwrap().as_str().to_owned()
-        })
-        .collect()
-}
-
 #[cfg(unix)]
 #[test]
-fn a_path_is_a_listed_file_exactly_when_the_inventory_lists_it() {
+fn the_scan_keeps_the_bytes_of_every_file_it_lists_and_of_no_other() {
     use std::os::unix::fs::symlink;
 
-    let outside = folder_with(&[("secret.js", b"secret"), ("assets/hidden.png", b"png")]);
+    let outside = folder_with(&[("secret.js", b"secret")]);
     let build = folder_with(&[
         ("index.html", b"<html>"),
         ("js/main.js", b"1"),
         ("assets/a b.png", b"png"),
     ]);
-    // The folder with its own links resolved, as a server holds it.
-    let root = build.path().canonicalize().unwrap();
     for name in LITTER {
-        write_file(&root, &format!("assets/{name}"), b"litter");
-        write_file(&root, &format!("{name}/inside.js"), b"litter");
+        write_file(build.path(), &format!("assets/{name}"), b"litter");
+        write_file(build.path(), &format!("{name}/inside.js"), b"litter");
     }
-    // Links out of the build, and links to a file and a folder that the inventory lists.
-    symlink(outside.path().join("secret.js"), root.join("linked.js")).unwrap();
-    symlink(outside.path().join("assets"), root.join("linked-assets")).unwrap();
-    symlink(root.join("js/main.js"), root.join("same-main.js")).unwrap();
-    symlink(root.join("js"), root.join("same-js")).unwrap();
+    symlink(
+        outside.path().join("secret.js"),
+        build.path().join("linked.js"),
+    )
+    .unwrap();
+    symlink(build.path().join("js"), build.path().join("same-js")).unwrap();
 
-    let inventory = scan(&root);
-    let listed: BTreeSet<String> = paths(&inventory).into_iter().map(str::to_owned).collect();
-    assert_eq!(
-        listed,
-        BTreeSet::from(["assets/a b.png", "index.html", "js/main.js"].map(str::to_owned))
-    );
-    let reachable = every_reachable_file(&root);
-    assert!(reachable.is_superset(&listed));
-    // 5 litter files, 5 files in litter folders, 2 files through links out of the build, and 2
-    // through links inside it.
-    assert_eq!(reachable.len(), listed.len() + 14, "{reachable:?}");
-    for path in &reachable {
-        let file = inventory::listed_file(&root, &RelPath::new(path).unwrap());
-        if listed.contains(path) {
-            assert_eq!(file, Some(root.join(path)), "{path}");
-        } else {
-            assert_eq!(file, None, "{path}");
-        }
+    let (manifest, files) = scan(build.path()).into_manifest_and_files();
+    let manifest = manifest.unwrap();
+    let listed: Vec<&str> = manifest.files.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(listed, ["assets/a b.png", "index.html", "js/main.js"]);
+    let kept: Vec<&str> = files.paths().map(RelPath::as_str).collect();
+    assert_eq!(kept, listed);
+    // The bytes are the ones the manifest's hashes are of.
+    for file in &manifest.files {
+        let bytes = files.get(&file.path).unwrap();
+        assert_eq!(sha256_hex(bytes), file.sha256, "{:?}", file.path);
+        assert_eq!(bytes.len() as u64, file.bytes, "{:?}", file.path);
     }
+    assert_eq!(files.get(&RelPath::new("linked.js").unwrap()), None);
+    assert_eq!(files.get(&RelPath::new(".git/inside.js").unwrap()), None);
 }
 
 #[test]
-fn a_path_that_names_no_file_is_not_a_listed_file() {
-    let build = folder_with(&[("index.html", b"<html>"), ("js/main.js", b"1")]);
-    let root = build.path().canonicalize().unwrap();
-    for path in ["missing.js", "js", "js/missing.js", "index.html/inside"] {
-        let path = RelPath::new(path).unwrap();
-        assert_eq!(inventory::listed_file(&root, &path), None, "{path:?}");
-    }
-}
-
-#[test]
-fn every_file_of_every_fixture_folder_is_a_listed_file() {
-    let mut folders = 0;
-    for fixture in fixtures().into_iter().filter(|f| f.build.is_dir()) {
-        folders += 1;
-        let root = fixture.build.canonicalize().unwrap();
-        for file in scan(&root).files() {
-            assert_eq!(
-                inventory::listed_file(&root, &file.path),
-                Some(root.join(file.path.as_str())),
-                "{}: {:?}",
-                fixture.name,
-                file.path
-            );
-        }
-    }
-    assert!(folders > 0);
+fn the_kept_bytes_do_not_follow_the_folder_after_the_scan() {
+    let build = folder_with(&[("index.html", b"<html>")]);
+    let (_, files) = scan(build.path()).into_manifest_and_files();
+    write_file(build.path(), "index.html", b"<html>changed");
+    write_file(build.path(), "late.js", b"late");
+    let index = RelPath::new("index.html").unwrap();
+    assert_eq!(files.get(&index), Some(&b"<html>"[..]));
+    assert_eq!(files.get(&RelPath::new("late.js").unwrap()), None);
+    // A copy shares the bytes: it is the same allocation, not a second build in memory.
+    let copy = files.clone();
+    assert!(std::ptr::eq(
+        files.get(&index).unwrap(),
+        copy.get(&index).unwrap()
+    ));
+    assert_eq!(format!("{files:?}"), "BuildFiles { files: 1, bytes: 6 }");
 }
 
 #[test]

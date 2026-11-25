@@ -8,7 +8,11 @@
 //! - `footprints=<bytes>,<bytes>,...`: the page process's footprint in each recording, in turn.
 //!   Default: 200 MiB.
 //! - `kill-after-ms=<ms>`: jetsam kills the page process this long after the recording starts.
-//! - `launched=<file>`: where a launch writes the URL that Safari opens.
+//! - `launched=<file>`: where a launch writes the URL that Safari opens. A later launch writes
+//!   over an earlier one's.
+//! - `tunnel=<address>`: this machine's address in the phone's tunnel, where the phone's Safari
+//!   reaches a server on this machine. A real phone has one only on a Mac, which this setting
+//!   stands in for on any machine. Default: none, as on Linux.
 //!
 //! The phone is an iPhone 14 Pro Max (`iPhone15,3`) on iOS 26.6.2 (23G90) with 6 GiB of memory,
 //! with the UDID [`FAKE_UDID`]. Its page process is pid 412; Safari's GPU process (pid 90, 40 MiB)
@@ -16,11 +20,12 @@
 //! 100 ms.
 
 use std::fs;
+use std::net::IpAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 use std::time::Duration;
 
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Instant, Interval, interval, sleep_until};
 
 use crate::WEB_CONTENT;
@@ -56,6 +61,7 @@ struct Settings {
     footprints: Vec<u64>,
     kill_after: Option<Duration>,
     launched: Option<String>,
+    tunnel: Option<IpAddr>,
 }
 
 impl Settings {
@@ -76,6 +82,7 @@ impl Settings {
                     settings.kill_after = value.parse().ok().map(Duration::from_millis);
                 }
                 "launched" => settings.launched = Some(value.to_owned()),
+                "tunnel" => settings.tunnel = value.parse().ok(),
                 _ => {}
             }
         }
@@ -87,11 +94,16 @@ impl Settings {
     }
 }
 
+/// This machine's address in the fake phone's tunnel, when the settings give one.
+pub(crate) fn tunnel_host(spec: &str) -> Option<IpAddr> {
+    Settings::parse(spec).tunnel
+}
+
 /// Records the fake phone, as [`crate::phone::session`] records a real one.
 pub(crate) async fn session(
     spec: &str,
     address: &Address,
-    open: oneshot::Receiver<String>,
+    open: mpsc::UnboundedReceiver<String>,
     events: &Sender<Event>,
     stop: oneshot::Receiver<()>,
 ) -> Option<Recording> {
@@ -144,6 +156,7 @@ pub(crate) async fn session(
         killed_at,
         ended: settings.fails("log"),
     };
+    let settings = &settings;
     let launch = |url: String| async move {
         if settings.fails("launch-hangs") {
             std::future::pending::<()>().await;
@@ -228,7 +241,8 @@ mod tests {
     #[test]
     fn every_setting_is_read_and_unknown_ones_are_left_out() {
         let settings = Settings::parse(
-            "phones=0; fail=launch;footprints=1,2,x;kill-after-ms=1500;launched=/tmp/a;what=1;bare",
+            "phones=0; fail=launch;footprints=1,2,x;kill-after-ms=1500;launched=/tmp/a;what=1;bare;\
+             tunnel=fd7b:e5b:6f53::2",
         );
         assert_eq!(
             settings,
@@ -238,6 +252,7 @@ mod tests {
                 footprints: vec![1, 2],
                 kill_after: Some(Duration::from_millis(1_500)),
                 launched: Some("/tmp/a".to_owned()),
+                tunnel: Some("fd7b:e5b:6f53::2".parse().unwrap()),
             }
         );
         assert_eq!(Settings::parse(""), Settings::default());

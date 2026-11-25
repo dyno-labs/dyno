@@ -5,15 +5,15 @@
 //! section 3, decision R3). It does not cover external URLs, so `bundle` lists them.
 //!
 //! The inventory is the build: what it leaves out is not part of the build, and the build id does
-//! not cover it. A server that gives a build to a browser must give the same files and no others,
-//! so the rule is here for it too: [`is_skipped_name`] for the names, and [`listed_file`] for one
-//! path of a build folder.
+//! not cover it. The inventory keeps every file's bytes, and a server that gives a build to a
+//! browser gives those bytes and no others (`BuildFiles`), so there is one rule for what a
+//! build's files are, and it is the walk here.
 
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use dyno_schema::canonical::sha256_hex;
 use dyno_schema::ids::MeasureId;
@@ -224,26 +224,9 @@ fn read_zip_within(
 
 /// Whether a file or folder of this name is left out of a build, anywhere in it: operating
 /// system litter and version control. A folder of such a name is left out with all it holds.
-pub fn is_skipped_name(name: impl AsRef<OsStr>) -> bool {
+fn is_skipped_name(name: impl AsRef<OsStr>) -> bool {
     let name = name.as_ref();
     SKIPPED_NAMES.iter().any(|skipped| name == *skipped)
-}
-
-/// The file that `path` names in the build folder `build`, when the inventory of that folder
-/// lists it. `build` must have its own links resolved, as `Path::canonicalize` gives it.
-///
-/// None for a path the inventory leaves out: one with a skipped name in it, one that reaches
-/// its file through a symbolic link, and one that names no file. The walk does not follow links,
-/// so a listed file is reached by its own path, and resolving that path's links changes nothing.
-pub fn listed_file(build: &Path, path: &RelPath) -> Option<PathBuf> {
-    if path.as_str().split('/').any(is_skipped_name) {
-        return None;
-    }
-    let file: PathBuf = std::iter::once(build.as_os_str())
-        .chain(path.as_str().split('/').map(OsStr::new))
-        .collect();
-    let resolved = file.canonicalize().ok()?;
-    (resolved == file && resolved.is_file()).then_some(file)
 }
 
 /// Strips the one folder every entry sits under, as zipping a build folder makes it. With an

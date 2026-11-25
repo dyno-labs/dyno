@@ -149,6 +149,31 @@ pub fn serve_lines(harness_url: &str, wait: Duration, path: ServePath) -> Vec<St
     ]
 }
 
+/// Where else the page is, when it is served at a tunnel address and at the local network
+/// address. With `asks_after`, dyno asks Safari for this address itself when no request has come
+/// over the device link after that long.
+pub fn also_at_line(harness_url: &str, asks_after: Option<Duration>) -> String {
+    let also = format!(
+        "dyno check: the page is also at {harness_url}, for a phone on this machine's network."
+    );
+    match asks_after {
+        Some(wait) => format!(
+            "{also} With no request over the device link in {} s, dyno asks Safari for it.",
+            wait.as_secs()
+        ),
+        None => also,
+    }
+}
+
+/// What dyno says when it asks Safari for the page at the local network address.
+pub fn asking_again_line(waited: Duration, harness_url: &str) -> String {
+    format!(
+        "dyno check: no request came over the device link in {} s. Asking Safari for \
+         {harness_url}, which needs the phone on this machine's network.",
+        waited.as_secs()
+    )
+}
+
 /// Why a run on a phone does not serve its page over the device link.
 pub fn no_tunnel_line(reason: &str) -> String {
     format!("dyno check: the page is not served over the device link: {reason}.")
@@ -882,6 +907,28 @@ mod tests {
             ServePath::LocalNetwork,
         );
         assert!(lines[1].ends_with("Waiting up to 2 minutes."), "{lines:?}");
+    }
+
+    #[test]
+    fn a_page_at_two_addresses_names_the_second_and_when_dyno_asks_for_it() {
+        let wait = Duration::from_secs(15);
+        assert_eq!(
+            also_at_line("http://192.0.2.1:7370/", Some(wait)),
+            "dyno check: the page is also at http://192.0.2.1:7370/, for a phone on this \
+             machine's network. With no request over the device link in 15 s, dyno asks Safari \
+             for it."
+        );
+        // With `--no-open` a person opens the page, so dyno asks for nothing.
+        assert_eq!(
+            also_at_line("http://192.0.2.1:7370/", None),
+            "dyno check: the page is also at http://192.0.2.1:7370/, for a phone on this \
+             machine's network."
+        );
+        assert_eq!(
+            asking_again_line(wait, "http://192.0.2.1:7370/"),
+            "dyno check: no request came over the device link in 15 s. Asking Safari for \
+             http://192.0.2.1:7370/, which needs the phone on this machine's network."
+        );
     }
 
     #[test]

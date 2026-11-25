@@ -6,6 +6,8 @@
 //! `HostProfile`.
 
 use std::collections::BTreeMap;
+use std::fmt;
+use std::sync::Arc;
 
 use dyno_schema::ids::MeasureId;
 use dyno_schema::manifest::{BuildManifest, FileKind, ManifestFile};
@@ -30,7 +32,51 @@ pub struct FamilyScan<S> {
 pub struct Inventory {
     /// None until the inventory is implemented.
     manifest: Option<BuildManifest>,
-    contents: BTreeMap<RelPath, Vec<u8>>,
+    contents: BuildFiles,
+}
+
+/// The bytes of every file of a build, by path, as the inventory read them: the bytes that the
+/// build id covers. A server that gives a build to a browser gives these, so what the browser
+/// loads is what was scanned, whatever happens to the folder after the scan.
+///
+/// A copy shares the bytes, so keeping one after the scan costs no second copy of the build.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct BuildFiles(Arc<BTreeMap<RelPath, Vec<u8>>>);
+
+impl BuildFiles {
+    /// A file's bytes, if the build has the file.
+    pub fn get(&self, path: &RelPath) -> Option<&[u8]> {
+        self.0.get(path).map(Vec::as_slice)
+    }
+
+    /// A file's path as the build has it, with its bytes, if the build has the file.
+    pub fn entry(&self, path: &RelPath) -> Option<(&RelPath, &[u8])> {
+        let (path, bytes) = self.0.get_key_value(path)?;
+        Some((path, bytes.as_slice()))
+    }
+
+    /// Every file's path, sorted.
+    pub fn paths(&self) -> impl Iterator<Item = &RelPath> {
+        self.0.keys()
+    }
+}
+
+impl From<BTreeMap<RelPath, Vec<u8>>> for BuildFiles {
+    fn from(files: BTreeMap<RelPath, Vec<u8>>) -> BuildFiles {
+        BuildFiles(Arc::new(files))
+    }
+}
+
+/// The count and size of the files, not their bytes.
+impl fmt::Debug for BuildFiles {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let bytes: usize = self.0.values().map(Vec::len).sum();
+        formatter
+            .debug_struct("BuildFiles")
+            .field("files", &self.0.len())
+            .field("bytes", &bytes)
+            .finish()
+    }
 }
 
 /// The rendering engine, as far as texture mipmaps go (design section 7.3).
@@ -291,7 +337,7 @@ impl Inventory {
     pub fn new(manifest: BuildManifest, contents: BTreeMap<RelPath, Vec<u8>>) -> Inventory {
         Inventory {
             manifest: Some(manifest),
-            contents,
+            contents: contents.into(),
         }
     }
 
@@ -310,12 +356,17 @@ impl Inventory {
 
     /// A file's bytes, if the build has the file.
     pub fn contents(&self, path: &RelPath) -> Option<&[u8]> {
-        self.contents.get(path).map(Vec::as_slice)
+        self.contents.get(path)
     }
 
     /// The manifest for the result. None until the inventory is implemented.
     pub fn into_manifest(self) -> Option<BuildManifest> {
         self.manifest
+    }
+
+    /// The manifest for the result, and the bytes of every file in it.
+    pub fn into_manifest_and_files(self) -> (Option<BuildManifest>, BuildFiles) {
+        (self.manifest, self.contents)
     }
 }
 

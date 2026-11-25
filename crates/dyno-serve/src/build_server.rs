@@ -2,10 +2,10 @@
 //!
 //! `dyno check <build> --browser` loads the build in the CDP driver's Chromium. That driver adds
 //! the probe and reads the game's requests on its own, so this server is the served run's game
-//! server without the probe's tag, the harness page or the run: the same files, which are those
-//! the static scan lists and no others, and the same content types, byte ranges, `no-store` and
-//! path checks. It is on 127.0.0.1, and the CDP driver puts its
-//! harness page on `localhost` for a game there, so the game frame stays cross-site.
+//! server without the probe's tag, the harness page or the run: the same files, which are the
+//! bytes that the static scan read and nothing else, and the same content types, byte ranges,
+//! `no-store` and path checks. It is on 127.0.0.1, and the CDP driver puts its harness page on
+//! `localhost` for a game there, so the game frame stays cross-site.
 
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::Path;
@@ -37,8 +37,8 @@ impl BuildServer {
         BuildServer::start_build(Build::open(build)?)
     }
 
-    /// [`BuildServer::start`], for a build that is open already, such as one that serves only
-    /// the files of its scan ([`Build::only_the_files_of`]).
+    /// [`BuildServer::start`], for a build that is open already, such as the build of a scan
+    /// ([`Build::of_scan`]).
     pub fn start_build(build: Build) -> Result<BuildServer, ServeError> {
         let build = Arc::new(build);
         let listener = listen(IpAddr::V4(LOOPBACK), 0)?;

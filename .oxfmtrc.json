@@ -15,6 +15,7 @@
     // Scan inputs and the templates copied into them: their bytes are the test.
     "crates/*/tests/data/**",
     "fixtures/*/build/**",
+    "fixtures/receipts/*.json",
     "fixtures/src/html/**"
   ]
 }

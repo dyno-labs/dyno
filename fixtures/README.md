@@ -25,6 +25,8 @@ fixtures/
     expected.toml
   golden-hashes.json        the status, exit code and result_hash of `dyno check` on
                             each build, for the parity check of other copies of dyno
+  receipts/                 one signed receipt with the result and the test key that made
+                            it, for `dyno verify` and for other signers (see below)
 ```
 
 `golden-hashes.json` is generated: a test in `crates/dyno-cli/tests/parity.rs` fails when it is
@@ -53,6 +55,26 @@ contains, and nothing else from that project.
 
 `pixi8-inline/build/assets/fonts/fixture.woff2` is not a font. It is the
 `wOF2` magic followed by zeros, so the byte buckets see a font file.
+
+## The known-answer receipt
+
+`receipts/` is not a game build, and `generate.sh` does not make it. It holds one receipt with
+everything that made it, so that `dyno verify` and any other implementation of the receipt format
+can test against the same bytes. [`docs/receipts.md`](../docs/receipts.md#the-known-answer-receipt)
+states each value.
+
+- `result.json` is what `dyno check crates/dyno-cli/tests/data/tiny-build --driver serve --device
+  --runs 3` wrote, with the fake phone of dyno's own tests (`DYNO_FAKE_PHONE`) and a script as the
+  browser. No real phone gave its numbers.
+- `test-private-key.json` and `keys.json` are the first test key of RFC 8032, section 7.1. Its
+  private key is public, so never trust it for a real receipt.
+- `receipt.json` is what `dyno receipt sign` wrote for them, and `receipt.canonical.json` is the
+  bytes that are signed.
+
+These files are frozen. A new dyno version does not write them again: a receipt that a lab signed
+must verify with every later dyno, and these files are the test of that. Make them again only
+when a result of the fixture's dyno version no longer reads, and then change the values in the
+doc and in `crates/dyno-receipt/tests/known_answer.rs` with them.
 
 ## expected.toml
 

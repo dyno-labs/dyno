@@ -53,7 +53,7 @@ Options:
           [phase 1] With --driver serve, the address a browser reaches this machine at. Default: with --device on a Mac, this machine's address in the device link's tunnel to the phone, when it has one; else this machine's address on its local network
 
       --serve-port <PORT>
-          [phase 1] With --driver serve, the harness page's port. The game is on the next one [default: 7370]
+          [phase 1] With --driver serve, the harness page's port. The game is on a free port, new for each run [default: 7370]
 
       --serve-query <QUERY>
           [phase 1] With --driver serve, the query string the game loads with, such as a demo session's sessionID and rgs_url. No result records it

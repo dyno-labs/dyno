@@ -1267,7 +1267,7 @@ fn nothing_the_game_frame_can_read_holds_the_key_and_the_frame_cannot_start_or_e
 }
 
 #[test]
-fn each_run_has_a_key_of_its_own_and_a_spent_key_opens_nothing() {
+fn each_run_has_a_key_and_a_game_port_of_its_own_and_a_tab_from_an_earlier_run_reaches_neither() {
     let options = ServeOptions {
         host: Some("127.0.0.1".to_owned()),
         tunnel_host: None,
@@ -1277,6 +1277,7 @@ fn each_run_has_a_key_of_its_own_and_a_spent_key_opens_nothing() {
     };
     let (_build, mut driver, request) = page_run(&options);
     let first = driver.harness_url().to_owned();
+    let first_game = driver.game_url().to_owned();
     let (driver, messages) = thread::scope(|scope| {
         let run = scope.spawn(|| {
             let messages = driver.run(&request);
@@ -1289,15 +1290,112 @@ fn each_run_has_a_key_of_its_own_and_a_spent_key_opens_nothing() {
         messages.unwrap().last(),
         Some(DriverMessage::Done { .. })
     ));
-    // The same address and port, and a new key.
-    let second = driver.harness_url().to_owned();
-    assert_ne!(second, first);
-    assert_eq!(without_key(&second), without_key(&first));
+    // A driver serves one run: a second would share the first's key and game port.
     let mut driver = driver;
+    let again = driver.run(&request).unwrap_err();
+    assert!(
+        again.detail().contains("serve one run"),
+        "{}",
+        again.detail()
+    );
+    drop(driver);
+
+    // The next run binds again, at the same harness port, as each run of --runs does.
+    let port = server(&first)
+        .0
+        .rsplit(':')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let (_build, mut driver, request) = page_run(&ServeOptions { port, ..options });
+    let second = driver.harness_url().to_owned();
+    let second_game = driver.game_url().to_owned();
+    assert_eq!(without_key(&second), without_key(&first));
+    assert_ne!(second, first);
+    assert_ne!(second_game, first_game);
     let run = thread::spawn(move || driver.run(&request));
-    // The first run's URL is refused in the second run.
+    // A tab left from the first run, with its URL and its game frame: the harness refuses its
+    // key, and its frame's game server is gone.
     assert_every_route_refused(&with_key(&second, server(&first).1.unwrap()));
+    let old_game = server(&first_game).0.to_owned();
+    assert!(
+        TcpStream::connect(&old_game).is_err(),
+        "{old_game} still answers"
+    );
     play_browser(&second);
+    let messages = run.join().unwrap().unwrap();
+    assert!(matches!(messages.last(), Some(DriverMessage::Done { .. })));
+    let requests: Vec<&str> = messages
+        .iter()
+        .filter_map(|message| match message {
+            DriverMessage::Request { url, .. } => Some(url.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(requests, [second_game.as_str()]);
+}
+
+#[test]
+fn a_refusal_comes_on_the_head_whatever_body_follows_and_a_head_request_gets_no_body() {
+    let options = ServeOptions {
+        host: Some("127.0.0.1".to_owned()),
+        tunnel_host: None,
+        port: 0,
+        wait_for_browser: Duration::from_secs(30),
+        open_with: None,
+    };
+    let (_build, mut driver, request) = page_run(&options);
+    let harness = driver.harness_url().to_owned();
+    let game = driver.game_url().to_owned();
+    let run = thread::spawn(move || driver.run(&request));
+    let (address, key) = server(&harness);
+
+    // A keyless post that names a body far over the limit, and sends a part of it, still gets
+    // the 403: dyno reads no body before it checks the key.
+    let mut socket = TcpStream::connect(address).unwrap();
+    write!(
+        socket,
+        "POST /__dyno/events HTTP/1.1\r\nHost: {address}\r\nContent-Length: 99999999\r\n\r\n"
+    )
+    .unwrap();
+    socket.write_all(&[b'x'; 64 * 1024]).unwrap();
+    let mut response = String::new();
+    socket.read_to_string(&mut response).unwrap();
+    assert!(
+        response.starts_with("HTTP/1.1 403 Forbidden\r\n"),
+        "{response}"
+    );
+
+    // HEAD answers carry no body: a refused one, the page's, and a refused game request.
+    for (url, path, headers) in [
+        (address, "/", String::new()),
+        (address, "/", format!("X-Dyno-Key: {}\r\n", key.unwrap())),
+        (server(&game).0, "/", String::new()),
+    ] {
+        let (status, body) = send(url, "HEAD", path, &headers, "");
+        assert_eq!(body, "", "{status}");
+    }
+    assert_eq!(
+        send(address, "HEAD", "/", "", "").0,
+        "HTTP/1.1 403 Forbidden"
+    );
+    assert_eq!(
+        send(
+            address,
+            "HEAD",
+            "/",
+            &format!("X-Dyno-Key: {}\r\n", key.unwrap()),
+            ""
+        )
+        .0,
+        "HTTP/1.1 200 OK"
+    );
+    assert_eq!(
+        send(server(&game).0, "HEAD", "/", "", "").0,
+        "HTTP/1.1 403 Forbidden"
+    );
+    play_browser(&harness);
     assert!(matches!(
         run.join().unwrap().unwrap().last(),
         Some(DriverMessage::Done { .. })

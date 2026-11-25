@@ -696,6 +696,93 @@ fn the_path_is_the_one_of_the_page_that_ran_whatever_else_was_asked_for() {
 }
 
 #[test]
+fn the_run_says_no_request_came_only_once_the_opener_has_finished_trying() {
+    let options = options_with_a_tunnel(Duration::from_secs(30));
+    let (_build, mut driver, request) = page_run(&options);
+    let harness = driver.harness_url().to_owned();
+    let opener_returned = Mutex::new(None);
+    let said_at = Mutex::new(None);
+    let started = Instant::now();
+    // The opener tries for 600 ms, as a launch that falls back to devicectl does. The time to
+    // say that no request came is 100 ms, which passes while it tries.
+    let mut open = |_: &str| {
+        thread::sleep(Duration::from_millis(600));
+        *opener_returned.lock().unwrap() = Some(Instant::now());
+        Ok(())
+    };
+    let mut say = || *said_at.lock().unwrap() = Some(Instant::now());
+    let watching = thread::scope(|scope| {
+        let run = scope.spawn(|| {
+            driver.run_watched(
+                &request,
+                Some(&mut open),
+                Some((Duration::from_millis(100), &mut say)),
+            )
+        });
+        // Nothing is said while the opener tries, though the time has passed.
+        thread::sleep(Duration::from_millis(400));
+        let said_while_trying = said_at.lock().unwrap().is_some();
+        // The page then runs, at the first address.
+        let until = Instant::now() + Duration::from_secs(10);
+        while said_at.lock().unwrap().is_none() {
+            assert!(Instant::now() < until, "the run never said no request came");
+            thread::sleep(Duration::from_millis(20));
+        }
+        play_browser(&harness);
+        (said_while_trying, run.join().unwrap())
+    });
+    let (said_while_trying, messages) = watching;
+    assert!(!said_while_trying);
+    assert!(matches!(
+        messages.unwrap().last(),
+        Some(DriverMessage::Done { .. })
+    ));
+    let returned = opener_returned.lock().unwrap().unwrap();
+    let said = said_at.lock().unwrap().unwrap();
+    assert!(
+        said >= returned,
+        "said {said:?} before the opener returned at {returned:?}"
+    );
+    assert!(said.duration_since(started) >= Duration::from_millis(600));
+}
+
+#[test]
+fn the_run_says_nothing_when_a_request_came_while_the_opener_tried() {
+    let options = options_with_a_tunnel(Duration::from_secs(30));
+    let (_build, mut driver, request) = page_run(&options);
+    let harness = driver.harness_url().to_owned();
+    let said = AtomicUsize::new(0);
+    // The browser asks for the page while the opener is still trying, after the time to say
+    // that no request came has passed.
+    let mut open = |url: &str| {
+        thread::sleep(Duration::from_millis(300));
+        assert_eq!(get(url, "/").0, "HTTP/1.1 200 OK");
+        thread::sleep(Duration::from_millis(300));
+        Ok(())
+    };
+    let mut say = || {
+        said.fetch_add(1, Ordering::SeqCst);
+    };
+    let messages = thread::scope(|scope| {
+        let run = scope.spawn(|| {
+            driver.run_watched(
+                &request,
+                Some(&mut open),
+                Some((Duration::from_millis(100), &mut say)),
+            )
+        });
+        thread::sleep(Duration::from_millis(900));
+        play_browser(&harness);
+        run.join().unwrap()
+    });
+    assert!(matches!(
+        messages.unwrap().last(),
+        Some(DriverMessage::Done { .. })
+    ));
+    assert_eq!(said.load(Ordering::SeqCst), 0);
+}
+
+#[test]
 fn a_run_that_no_page_came_of_took_no_path_and_was_told_once() {
     let options = options_with_a_tunnel(Duration::from_millis(700));
     let (_build, driver, request) = page_run(&options);

@@ -9,7 +9,8 @@
 //! reads it, and a device run waits for this program while it records the phone.
 
 use std::ffi::{OsStr, OsString};
-use std::io::{Read, Seek, SeekFrom};
+use std::fs::File;
+use std::io::Read;
 use std::net::IpAddr;
 use std::process::{Child, Command, Stdio};
 use std::thread;
@@ -83,14 +84,18 @@ fn tunnel_address_within(xcrun: &OsStr, udid: &str, deadline: Duration) -> Resul
 ///
 /// The program's error output goes to a file, not a pipe. A pipe ends only when the last
 /// program that holds it has gone, so a program that the first one left behind could keep dyno
-/// reading. dyno reads what the file has when the program ends, up to [`MOST_WORDS`].
+/// reading. dyno reads what the file has when the program ends, from its start, up to
+/// [`MOST_WORDS`]. It reads through a handle of its own, opened for reading: a program left
+/// behind writes on through the handle it was given, and cannot move where dyno reads.
 fn run_within(mut command: Command, deadline: Duration) -> Result<(), String> {
     let cannot_run = |error: std::io::Error| format!("cannot run devicectl: {error}");
-    let mut said = tempfile::tempfile().map_err(cannot_run)?;
+    // The file is deleted when this goes, once dyno has read it.
+    let said = tempfile::NamedTempFile::new().map_err(cannot_run)?;
+    let for_the_program = said.reopen().map_err(cannot_run)?;
     command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(said.try_clone().map_err(cannot_run)?);
+        .stderr(for_the_program);
     // The program leads a process group of its own, so that the group can be ended as one.
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut command, 0);
@@ -115,9 +120,7 @@ fn run_within(mut command: Command, deadline: Duration) -> Result<(), String> {
     if status.success() {
         return Ok(());
     }
-    let mut words = Vec::new();
-    let _ = said.seek(SeekFrom::Start(0));
-    let _ = said.take(MOST_WORDS).read_to_end(&mut words);
+    let words = read_from_start(&said);
     // devicectl's errors take several lines, and the reason is printed on one, so the lines
     // are joined.
     let words = String::from_utf8_lossy(&words);
@@ -134,6 +137,17 @@ fn run_within(mut command: Command, deadline: Duration) -> Result<(), String> {
             lines.join(" ")
         }
     ))
+}
+
+/// What the file holds from its start, up to [`MOST_WORDS`], read through a handle of its own.
+/// A program that writes to the file through its own handle cannot move where this reads, and
+/// this read does not move where that program writes.
+fn read_from_start(said: &tempfile::NamedTempFile) -> Vec<u8> {
+    let mut words = Vec::new();
+    if let Ok(reader) = File::open(said.path()) {
+        let _ = reader.take(MOST_WORDS).read_to_end(&mut words);
+    }
+    words
 }
 
 /// Ends the program and every program it started, and waits for the program, so none is left
@@ -231,19 +245,55 @@ mod tests {
         );
     }
 
-    /// Whether a process with this id is still there 5 s on. A killed process whose parent has
-    /// gone stays a zombie, which signal 0 still finds, until the system reaps it.
+    /// Whether a process with this id is still running 5 s on. A process that is gone has
+    /// ended, and so has a zombie: a killed process whose parent has gone, which a first process
+    /// that does not reap, as in some containers, can leave for good.
     #[cfg(unix)]
-    fn still_there(pid: i32) -> bool {
-        let pid = rustix::process::Pid::from_raw(pid).unwrap();
+    fn still_running(pid: i32) -> bool {
         let until = Instant::now() + Duration::from_secs(5);
-        while rustix::process::test_kill_process(pid).is_ok() {
+        while is_running(pid) {
             if Instant::now() > until {
                 return true;
             }
             thread::sleep(POLL);
         }
         false
+    }
+
+    /// Whether a process with this id is there and not a zombie. Linux says in `/proc` what
+    /// state a process is in; elsewhere signal 0 says only whether it is there, and a Mac's
+    /// first process reaps a zombie at once.
+    #[cfg(unix)]
+    fn is_running(pid: i32) -> bool {
+        if std::path::Path::new("/proc/self/stat").exists() {
+            return std::fs::read_to_string(format!("/proc/{pid}/stat"))
+                .is_ok_and(|stat| !is_zombie(&stat));
+        }
+        let pid = rustix::process::Pid::from_raw(pid).unwrap();
+        rustix::process::test_kill_process(pid).is_ok()
+    }
+
+    /// Whether a line of `/proc/<pid>/stat` is a zombie's. The state is the field after the
+    /// name, which is in brackets and can hold spaces and brackets of its own.
+    fn is_zombie(stat: &str) -> bool {
+        stat.rsplit_once(')')
+            .and_then(|(_, rest)| rest.split_whitespace().next())
+            == Some("Z")
+    }
+
+    #[test]
+    fn a_zombie_has_ended_and_a_sleeping_or_running_process_has_not() {
+        assert!(is_zombie("4242 (sleep) Z 1 4242 4242 0 -1"));
+        assert!(is_zombie("4242 (a) b (c)) Z 1 4242 4242 0 -1"));
+        assert!(!is_zombie("4242 (sleep) S 1 4242 4242 0 -1"));
+        assert!(!is_zombie("4242 (Z) R 1 4242 4242 0 -1"));
+        assert!(!is_zombie(""));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn this_process_is_running() {
+        assert!(is_running(i32::try_from(std::process::id()).unwrap()));
     }
 
     #[cfg(unix)]
@@ -262,7 +312,7 @@ mod tests {
         );
         // The wrapper wrote the id of the program it started, which sleeps for minutes.
         let started = std::fs::read_to_string(folder.path().join("devices.json.pid")).unwrap();
-        assert!(!still_there(started.trim().parse().unwrap()));
+        assert!(!still_running(started.trim().parse().unwrap()));
     }
 
     #[cfg(unix)]
@@ -278,6 +328,61 @@ mod tests {
             "devicectl: ERROR: devicectl failed for the test, and left a program behind."
         );
         assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    #[test]
+    fn dyno_s_read_and_the_program_s_writes_each_keep_their_own_place_in_the_file() {
+        use std::io::Write;
+
+        let said = tempfile::NamedTempFile::new().unwrap();
+        // The handle the program gets, as `run_within` gives it.
+        let mut program = said.reopen().unwrap();
+        let reason = b"ERROR: the reason.\n";
+        program.write_all(reason).unwrap();
+        program
+            .write_all(&vec![b'x'; MOST_WORDS as usize + 1_000])
+            .unwrap();
+        let words = read_from_start(&said);
+        assert_eq!(words.len(), MOST_WORDS as usize);
+        assert!(words.starts_with(reason));
+        // dyno stopped at its bound, inside the file. A program that writes on still writes at
+        // its own end, not where dyno stopped reading, so nothing dyno read is overwritten.
+        program.write_all(b"!").unwrap();
+        let file = std::fs::read(said.path()).unwrap();
+        assert_eq!(file.len(), reason.len() + MOST_WORDS as usize + 1_000 + 1);
+        assert_eq!(file[MOST_WORDS as usize], b'x');
+        assert_eq!(file.last(), Some(&b'!'));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_program_left_behind_that_writes_on_cannot_move_or_overwrite_what_dyno_reads() {
+        let folder = tempfile::tempdir().unwrap();
+        let writer_pid = folder.path().join("writer.pid");
+        let mut command = Command::new(stub("scribbling-xcrun.sh"));
+        command.arg(&writer_pid);
+        let error = run_within(command, Duration::from_secs(30)).unwrap_err();
+        // The program left behind wrote on after the failure, through the handle it was given.
+        // dyno read from the start, so the reason is first, and read no more than its bound.
+        assert!(
+            error
+                .starts_with("devicectl: ERROR: devicectl failed for the test, and left a writer."),
+            "{}",
+            &error[..error.len().min(200)]
+        );
+        assert!(
+            error.len() <= MOST_WORDS as usize + "devicectl: ".len(),
+            "{}",
+            error.len()
+        );
+        // The test ends the writer that its stub started, by its id, and no other process.
+        let pid: i32 = std::fs::read_to_string(&writer_pid)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let pid = rustix::process::Pid::from_raw(pid).unwrap();
+        let _ = rustix::process::kill_process(pid, rustix::process::Signal::KILL);
     }
 
     #[cfg(unix)]

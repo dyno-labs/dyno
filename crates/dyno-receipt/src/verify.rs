@@ -49,6 +49,10 @@ pub struct Evidence<'a> {
 /// Verifies a receipt file's JSON against the keys that the caller trusts, and compares it with
 /// the evidence. It gives a verdict for every receipt of version 1, and an error for anything
 /// else.
+///
+/// Read the receipt and the result with `dyno_schema::canonical::parse_json`, which refuses an
+/// object with one name twice. A plain parser drops one of the two values, so the file could
+/// verify here while another reader sees the other value.
 pub fn verify(
     envelope: &Value,
     keys: &[TrustedKey],
@@ -114,9 +118,11 @@ impl Signed {
             .get("receipt")
             .filter(|receipt| receipt.is_object())
             .ok_or_else(|| not_a_receipt("it has no `receipt` object"))?;
+        // The version is a number, and a number has many spellings: `1`, `1.0` and `1e0` are
+        // all version 1, and all are `1` in the bytes that are signed.
         match json.get("receipt_version") {
             Some(Value::Number(version))
-                if version.as_u64() == Some(u64::from(RECEIPT_VERSION)) => {}
+                if version.as_f64() == Some(f64::from(RECEIPT_VERSION)) => {}
             Some(Value::Number(version)) => {
                 return Err(ReceiptError::AnotherVersion(version.clone()));
             }
@@ -136,7 +142,10 @@ impl Signed {
             .ok_or_else(|| {
                 not_a_receipt("its `signature` is not 64 bytes in base64url with no padding")
             })?;
-        let mut receipt: Receipt = serde_json::from_value(json.clone())
+        // The typed receipt takes the version as the whole number it is, whatever its spelling.
+        let mut fields = json.clone();
+        fields["receipt_version"] = RECEIPT_VERSION.into();
+        let mut receipt: Receipt = serde_json::from_value(fields)
             .map_err(|error| ReceiptError::NotAReceipt(error.to_string()))?;
         let shapes = [
             (
@@ -209,8 +218,15 @@ fn find_signer<'a>(
         actual: Some(key_id.clone()),
         reason: None,
     });
-    // Two keys share a key id only when one was given twice, so the first that signed is it.
-    let signer = named.find(|key| key.signed(signed.canonical.as_bytes(), &signed.signature));
+    // The same key can be given more than once, such as alone and in a keys document, and only
+    // the document says when the lab retired it. So among the entries of the key that signed,
+    // the one that says the most decides, whichever came first.
+    let signer = named
+        .find(|key| key.signed(signed.canonical.as_bytes(), &signed.signature))
+        .and_then(|first| {
+            let same_key = keys.iter().filter(|key| key.is_same_key(first));
+            same_key.min_by_key(|key| key.precedence())
+        });
     checks.push(match signer {
         Some(_) => VerifyCheck {
             id: VerifyCheckId::Signature,
@@ -309,24 +325,39 @@ fn compare_with_result(
             None => format!("the result has no build id, and the receipt is for build {expected}"),
         },
     ));
-    checks.push(compare(
-        VerifyCheckId::ResultHash,
-        receipt.result_hash.as_deref(),
-        text_at("/result_hash"),
-        signature_holds,
-        NO_RESULT,
-        |expected, actual| {
-            format!(
-                "the result states the hash {}, and the receipt states {}",
-                actual.unwrap_or("none"),
-                if expected.is_empty() {
-                    "none"
-                } else {
-                    expected
-                }
-            )
+    // A `result_hash` that is there and is not text is not a hash. It must not pass as "no
+    // hash", which is what a receipt's null states.
+    let hash = result.and_then(|result| result.get("result_hash"));
+    let not_text = hash.filter(|hash| !hash.is_null() && !hash.is_string());
+    checks.push(match not_text {
+        Some(not_text) if signature_holds => VerifyCheck {
+            id: VerifyCheckId::ResultHash,
+            outcome: VerifyOutcome::Mismatch,
+            expected: receipt.result_hash.clone(),
+            actual: None,
+            reason: Some(format!(
+                "the result's result_hash is {not_text}, which is not text, so it is no hash"
+            )),
         },
-    ));
+        _ => compare(
+            VerifyCheckId::ResultHash,
+            receipt.result_hash.as_deref(),
+            text_at("/result_hash"),
+            signature_holds,
+            NO_RESULT,
+            |expected, actual| {
+                format!(
+                    "the result states the hash {}, and the receipt states {}",
+                    actual.unwrap_or("none"),
+                    if expected.is_empty() {
+                        "none"
+                    } else {
+                        expected
+                    }
+                )
+            },
+        ),
+    });
 }
 
 /// One check that compares what the receipt states with what dyno found.

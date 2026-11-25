@@ -1,0 +1,20 @@
+[package]
+name = "dyno-receipt"
+description = "A lab's signed receipt for a check result: the keys, the signing and the verifying."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+base64.workspace = true
+dyno-schema.workspace = true
+ring.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+time.workspace = true
+
+[lints]
+workspace = true

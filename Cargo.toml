@@ -16,6 +16,7 @@ repository = "https://github.com/dyno-labs/dyno"
 # Our crates.
 dyno-cdp = { path = "crates/dyno-cdp" }
 dyno-ios = { path = "crates/dyno-ios" }
+dyno-receipt = { path = "crates/dyno-receipt" }
 dyno-run = { path = "crates/dyno-run" }
 dyno-schema = { path = "crates/dyno-schema" }
 dyno-score = { path = "crates/dyno-score" }
@@ -33,8 +34,6 @@ serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
 serde_json_canonicalizer = "0.4.1"
 sha2 = "0.11.1"
 thiserror = "2.0.21"
-# The date and time of a result's timestamp. Already in the tree through plist.
-time = { version = "0.3.55", default-features = false, features = ["std"] }
 toml = "1.2.1"
 ts-rs = "12.0.1"
 url = "2.5.9"
@@ -133,6 +132,14 @@ idevice = { version = "=0.1.68", default-features = false, features = [
   "usbmuxd",
 ] }
 plist = "1.8.0"
+
+# Receipts, `dyno verify` and `dyno receipt`: Ed25519 signatures, base64url and RFC 3339 times.
+# All three are already in the tree, so the binary gains no code: ring is the crypto library of
+# rustls, which does the TLS of ureq and idevice, and base64 and time come with plist.
+# time also writes the date and time of a result's timestamp.
+base64 = "0.23.1"
+ring = "0.17.14"
+time = { version = "0.3.55", features = ["formatting", "parsing"] }
 
 # `dyno link` edits dyno.toml and keeps its comments. From the same project as toml, whose parts
 # are already in the tree.

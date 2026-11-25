@@ -119,6 +119,8 @@ pub fn device_parts() -> (Deterministic, RunInfo) {
                 memory_bytes: Some(5_905_580_032),
             }),
         }),
+        serve_path: None,
+        lab: None,
         started_at: "2026-11-25T09:58:00.000Z".to_owned(),
         duration_ms: 90_000,
         machine: Machine {

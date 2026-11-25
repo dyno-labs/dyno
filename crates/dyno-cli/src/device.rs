@@ -1,10 +1,14 @@
 //! `--device`: a recording of the phone while its Safari runs a served check, read into the
 //! device measures.
+//!
+//! The recording starts first. Then the check serves the page, at this machine's address in the
+//! device link's tunnel when it has one, and only then opens the page in the phone's Safari.
 
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 
 use dyno_ios::recording::Link;
-use dyno_ios::{Address, DeviceError, OpenedWith, Recorder, RunWindow};
+use dyno_ios::{Address, DeviceError, NoTunnelAddress, OpenedWith, Recorder, RunWindow};
 use dyno_schema::environment::{EnvironmentDevice, EnvironmentOs};
 use dyno_schema::measure::Measure;
 use dyno_schema::timeline::Timeline;
@@ -19,54 +23,65 @@ pub struct DeviceRun {
     save_to: Option<PathBuf>,
 }
 
-/// Chooses the phone, starts recording it, and opens `open` in its Safari when given. The
-/// recording is saved to `save_to` when given. A problem the person fixes, such as no phone or a
-/// locked one, is a usage error. Safari that does not open is not: the person can open the page.
-pub fn start(
-    address: &Address,
-    open: Option<&str>,
-    save_to: Option<&Path>,
-) -> Result<DeviceRun, CliError> {
-    let recorder = Recorder::start(address, open).map_err(|error| match error {
-        DeviceError::Record(_) => CliError::internal(error),
-        _ => CliError::usage(error),
-    })?;
+/// Chooses the phone and starts recording it. The recording is saved to `save_to` when given.
+/// A problem the person fixes, such as no phone, is a usage error.
+pub fn start(address: &Address, save_to: Option<&Path>) -> Result<DeviceRun, CliError> {
+    let recorder = Recorder::start(address).map_err(device_error)?;
     Ok(DeviceRun {
         recorder,
         save_to: save_to.map(Path::to_owned),
     })
 }
 
+/// A problem the person fixes, such as no phone or a locked one, is a usage error. A recording
+/// that does not start is not theirs to fix.
+fn device_error(error: DeviceError) -> CliError {
+    match error {
+        DeviceError::Record(_) => CliError::internal(error),
+        _ => CliError::usage(error),
+    }
+}
+
 impl DeviceRun {
-    /// What `--device` prints once the recording is on: whether Safari opened the page, and
-    /// what it records.
-    pub fn lines(&self) -> Vec<String> {
+    /// What `--device` prints once the recording is on: what it records.
+    pub fn recording_line(&self) -> String {
         let phone = self.recorder.phone();
-        let model = phone.model();
-        let mut lines = Vec::new();
-        match self.recorder.opened() {
-            Some(Ok(OpenedWith::CoreDevice)) => {
-                lines.push(format!(
-                    "dyno check: opened the page in Safari on the {model}."
-                ));
-            }
-            Some(Ok(OpenedWith::Devicectl)) => lines.push(format!(
-                "dyno check: opened the page in Safari on the {model}, with devicectl."
-            )),
-            Some(Err(error)) => lines.push(format!(
-                "dyno check: {error}. Open the URL below on the {model} by hand."
-            )),
-            None => {}
-        }
         let link = match phone.link {
             Link::Usb => "on USB",
             Link::Network => "on the network",
         };
-        lines.push(format!(
-            "dyno check: recording the {model}, iOS {}, {link}.",
+        format!(
+            "dyno check: recording the {}, iOS {}, {link}.",
+            phone.model(),
             phone.os_version
-        ));
-        lines
+        )
+    }
+
+    /// This machine's address inside the device link's tunnel to the phone, to serve the page
+    /// at, or why it has none.
+    pub fn tunnel_host(&self) -> Result<IpAddr, NoTunnelAddress> {
+        self.recorder.tunnel_host()
+    }
+
+    /// Opens `url` in the phone's Safari, and gives what to print: whether Safari opened it. A
+    /// locked phone is a usage error. Safari that does not open the page is not an error: the
+    /// person can open it.
+    pub fn open(&mut self, url: &str) -> Result<String, CliError> {
+        self.recorder.open(url).map_err(device_error)?;
+        let model = self.recorder.phone().model();
+        Ok(match self.recorder.opened() {
+            Some(Ok(OpenedWith::CoreDevice)) => {
+                format!("dyno check: opened the page in Safari on the {model}.")
+            }
+            Some(Ok(OpenedWith::Devicectl)) => {
+                format!("dyno check: opened the page in Safari on the {model}, with devicectl.")
+            }
+            Some(Err(error)) => {
+                format!("dyno check: {error}. Open the URL below on the {model} by hand.")
+            }
+            // `open` always leaves an answer.
+            None => format!("dyno check: open the URL below on the {model} by hand."),
+        })
     }
 
     /// Stops the recording, saves it when asked, and gives the device measures of the run with the

@@ -20,6 +20,7 @@ pub mod environment;
 pub mod generate;
 pub mod host;
 pub mod ids;
+pub mod lab;
 pub mod launch_url;
 pub mod library;
 pub mod link;

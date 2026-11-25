@@ -18,7 +18,7 @@ use dyno_schema::measure::{Measure, MeasureStatus, MeasureValue, UncertaintyKind
 use dyno_schema::receipt::{
     Receipt, ReceiptMeasure, VerifyCheck, VerifyCheckId, VerifyOutcome, VerifyResult,
 };
-use dyno_schema::result::{CheckResult, Deterministic};
+use dyno_schema::result::{CheckResult, Deterministic, ServePath};
 use dyno_schema::rule::{Finding, Fix, FixAction};
 use dyno_schema::status::{Status, Verdict};
 use dyno_score::status::status_of_finding;
@@ -128,17 +128,30 @@ pub fn print_summary(lines: &[String]) {
     }
 }
 
-/// What to do for a served run: open the harness page in the browser to test.
-pub fn serve_lines(harness_url: &str, wait: Duration) -> Vec<String> {
+/// What to do for a served run: open the harness page in the browser to test. The second line
+/// says what the browser needs to reach the page, which depends on the path it is served on.
+pub fn serve_lines(harness_url: &str, wait: Duration, path: ServePath) -> Vec<String> {
+    let needs = match path {
+        ServePath::Tunnel => {
+            "the page is served over the device link, so the phone needs no network path to this \
+             machine"
+        }
+        _ => "the phone must be on this machine's network",
+    };
     vec![
         format!(
             "dyno check: open {harness_url} in the browser to test, such as Safari on the iPhone."
         ),
         format!(
-            "dyno check: the phone must be on this machine's network. Waiting up to {} minutes.",
+            "dyno check: {needs}. Waiting up to {} minutes.",
             wait.as_secs().div_ceil(60)
         ),
     ]
+}
+
+/// Why a run on a phone does not serve its page over the device link.
+pub fn no_tunnel_line(reason: &str) -> String {
+    format!("dyno check: the page is not served over the device link: {reason}.")
 }
 
 /// The status and why, the key numbers, the advice, and where the full result is.
@@ -731,6 +744,7 @@ fn name<T: Serialize>(value: T) -> String {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::time::Duration;
 
     use dyno_schema::budget::BudgetLimit;
     use dyno_schema::ids::BudgetId;
@@ -830,6 +844,53 @@ mod tests {
             ..a_check(status)
         };
         status_reason(&check, &[])
+    }
+
+    #[test]
+    fn a_page_on_the_device_link_needs_no_network_and_any_other_needs_this_machine_s() {
+        let wait = Duration::from_secs(10 * 60);
+        let on_the_link = serve_lines("http://[fd00::2]:7370/", wait, ServePath::Tunnel);
+        assert_eq!(
+            on_the_link,
+            [
+                "dyno check: open http://[fd00::2]:7370/ in the browser to test, such as Safari \
+                 on the iPhone.",
+                "dyno check: the page is served over the device link, so the phone needs no \
+                 network path to this machine. Waiting up to 10 minutes.",
+            ]
+        );
+        for path in [
+            ServePath::LocalNetwork,
+            ServePath::Loopback,
+            ServePath::Given,
+        ] {
+            let lines = serve_lines("http://192.0.2.1:7370/", wait, path);
+            assert_eq!(
+                lines[1],
+                "dyno check: the phone must be on this machine's network. Waiting up to 10 \
+                 minutes.",
+                "{path:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_wait_is_said_in_whole_minutes_rounded_up() {
+        let lines = serve_lines(
+            "http://192.0.2.1:7370/",
+            Duration::from_secs(61),
+            ServePath::LocalNetwork,
+        );
+        assert!(lines[1].ends_with("Waiting up to 2 minutes."), "{lines:?}");
+    }
+
+    #[test]
+    fn a_run_that_is_not_on_the_device_link_says_why() {
+        assert_eq!(
+            no_tunnel_line("this Mac has no tunnel to the phone now"),
+            "dyno check: the page is not served over the device link: this Mac has no tunnel to \
+             the phone now."
+        );
     }
 
     #[test]

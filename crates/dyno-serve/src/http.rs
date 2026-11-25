@@ -1,7 +1,12 @@
 //! A small HTTP/1.1 server side: one request per connection, and the connection closes after the
 //! response.
+//!
+//! The server speaks plain HTTP only. Safari tries HTTPS on a port before it falls back to HTTP,
+//! so a connection can start with a TLS client hello. The server refuses that at once, with a
+//! TLS alert, so the browser falls back without waiting for an answer that never comes.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -17,6 +22,17 @@ const MAX_HEADERS: usize = 64;
 
 /// The end of a request head.
 const HEAD_END: &[u8] = b"\r\n\r\n";
+
+/// The first byte of a TLS connection: the type of a handshake record, which holds the client
+/// hello. An HTTP request starts with its method, which is letters, so one byte tells them apart.
+const TLS_HANDSHAKE_RECORD: u8 = 0x16;
+
+/// The server's answer to a TLS client hello: one alert record (type 0x15, TLS 1.2, 2 bytes) with
+/// a fatal (2) `handshake_failure` (40). A TLS client reads it as "no TLS here", and stops.
+const TLS_REFUSAL: [u8; 7] = [0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28];
+
+/// How long the server reads what a refused TLS client still sends, before it closes.
+const TLS_REFUSAL_DRAIN: Duration = Duration::from_secs(1);
 
 /// One request, as the server needs it.
 #[derive(Debug)]
@@ -61,11 +77,15 @@ where
 }
 
 /// Reads one request. None when the client hung up, or sent too much or something that is not
-/// HTTP.
+/// HTTP. A TLS client hello is refused as soon as its first byte comes.
 pub async fn read_request(socket: &mut TcpStream) -> Option<Request> {
     let mut buffer = Vec::with_capacity(4096);
     let mut chunk = [0_u8; 4096];
     let head_length = loop {
+        if buffer.first() == Some(&TLS_HANDSHAKE_RECORD) {
+            refuse_tls(socket).await;
+            return None;
+        }
         if let Some(end) = memchr::memmem::find(&buffer, HEAD_END) {
             break end + HEAD_END.len();
         }
@@ -117,6 +137,22 @@ pub async fn read_request(socket: &mut TcpStream) -> Option<Request> {
         range,
         body,
     })
+}
+
+/// Tells a TLS client that this port has no TLS, and closes. A client hello has no end of a
+/// request head, so without this the server would wait for more while the client waits for the
+/// server's hello, until the client gives up.
+///
+/// The server reads on for a moment after its answer. A socket closed with bytes still unread
+/// resets the connection, and a reset can reach the client before the alert does.
+async fn refuse_tls(socket: &mut TcpStream) {
+    if socket.write_all(&TLS_REFUSAL).await.is_err() {
+        return;
+    }
+    let _ = socket.shutdown().await;
+    let mut rest = [0_u8; 4096];
+    let drained = async { while matches!(socket.read(&mut rest).await, Ok(count) if count > 0) {} };
+    let _ = tokio::time::timeout(TLS_REFUSAL_DRAIN, drained).await;
 }
 
 /// Writes the response, without its body for a HEAD request, and closes the connection. Returns
@@ -244,6 +280,72 @@ mod tests {
                 String::from_utf8_lossy(bytes)
             );
         }
+    }
+
+    /// The start of a TLS 1.3 client hello, as a browser sends it: a handshake record (0x16) of
+    /// 512 bytes that holds a client hello (0x01). The rest of the record never comes.
+    const CLIENT_HELLO_START: [u8; 11] = [
+        0x16, 0x03, 0x01, 0x02, 0x00, 0x01, 0x00, 0x01, 0xfc, 0x03, 0x03,
+    ];
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_tls_client_hello_is_refused_at_once_with_an_alert() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            read_request(&mut socket).await
+        });
+        // The client sends the start of its hello and waits for the server's, as a browser does:
+        // it does not close, and it sends no end of a request head.
+        let mut client = TcpStream::connect(address).await.unwrap();
+        client.write_all(&CLIENT_HELLO_START).await.unwrap();
+        let mut answer = Vec::new();
+        let answered =
+            tokio::time::timeout(Duration::from_millis(500), client.read_to_end(&mut answer)).await;
+        assert!(answered.is_ok(), "the server did not answer and close");
+        assert_eq!(answer, TLS_REFUSAL);
+        // The alert is fatal, and says the handshake failed.
+        assert_eq!(answer[5..], [2, 40]);
+        drop(client);
+        assert!(server.await.unwrap().is_none());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_tls_client_hello_is_known_by_its_first_byte_alone() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            read_request(&mut socket).await
+        });
+        let mut client = TcpStream::connect(address).await.unwrap();
+        client.write_all(&CLIENT_HELLO_START[..1]).await.unwrap();
+        let mut answer = Vec::new();
+        tokio::time::timeout(Duration::from_millis(500), client.read_to_end(&mut answer))
+            .await
+            .expect("the server did not answer and close")
+            .unwrap();
+        assert_eq!(answer, TLS_REFUSAL);
+        drop(client);
+        assert!(server.await.unwrap().is_none());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_refused_tls_client_that_stays_open_does_not_hold_the_server() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let mut client = TcpStream::connect(address).await.unwrap();
+        client.write_all(&CLIENT_HELLO_START).await.unwrap();
+        let (mut socket, _) = listener.accept().await.unwrap();
+        // The client never closes, so the server stops reading by itself.
+        let refused = tokio::time::timeout(
+            TLS_REFUSAL_DRAIN + Duration::from_secs(1),
+            read_request(&mut socket),
+        )
+        .await;
+        assert!(matches!(refused, Ok(None)), "{refused:?}");
+        drop(client);
     }
 
     #[tokio::test(flavor = "current_thread")]

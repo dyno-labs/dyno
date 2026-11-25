@@ -6,6 +6,7 @@ import type { Finding } from "./Finding";
 import type { Machine } from "./Machine";
 import type { Measure } from "./Measure";
 import type { Release } from "./Release";
+import type { ServePath } from "./ServePath";
 import type { Target } from "./Target";
 import type { TierReport } from "./TierReport";
 import type { Timeline } from "./Timeline";
@@ -32,6 +33,16 @@ build_link?: BuildLink | null,
  * device run, or when the run failed before the browser said what it was.
  */
 environment?: Environment | null, 
+/**
+ * The path the browser took to the page of a served run (`--driver serve`): which of this
+ * machine's addresses dyno served it at. Null for any other check.
+ */
+serve_path?: ServePath | null, 
+/**
+ * The kind of lab that ran the check, as `--lab` names it, such as "desk", "rig" or
+ * "devicefarm". Null when no name was given.
+ */
+lab?: string | null, 
 /**
  * RFC 3339 UTC time the check started.
  */

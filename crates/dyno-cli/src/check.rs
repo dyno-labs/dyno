@@ -4,6 +4,11 @@
 //! run if it has a launch URL, or a build that `--browser` or `--driver serve` serves. The status
 //! and exit code come from the deterministic part alone. [`check_target`] gives one result and
 //! writes nothing, so the MCP `check` tool calls it too.
+//!
+//! A served run on a phone (`--driver serve --device`) goes in this order: record the phone,
+//! serve the page, open it in the phone's Safari, run. The page is served after the recording
+//! starts, because the device link that records the phone can also be the path its Safari loads
+//! the page on, and only a connected phone says where that is ([`serve_to`]).
 
 use std::path::{Path, PathBuf};
 
@@ -20,7 +25,8 @@ use dyno_schema::link::find_link;
 use dyno_schema::measure::Measure;
 use dyno_schema::profile::{HostProfile, Scenario};
 use dyno_schema::result::{
-    BuildLink, CheckResult, Deterministic, DriverInfo, Inputs, Release, RunInfo, Target, Versions,
+    BuildLink, CheckResult, Deterministic, DriverInfo, Inputs, Release, RunInfo, ServePath, Target,
+    Versions,
 };
 use dyno_schema::rule::Finding;
 use dyno_schema::runner::{RUNNER_PROTOCOL_VERSION, RunRequest};
@@ -31,6 +37,7 @@ use dyno_score::SCORING_VERSION;
 use dyno_score::budget::budget_verdicts;
 use dyno_score::model::{MODEL_VERSION, model_measures, provisional_tier};
 use dyno_score::status::{overall_status, run_coverage, worst};
+use dyno_serve::files::Build;
 use dyno_serve::{
     BuildServer, DEFAULT_PORT, DEFAULT_WAIT_FOR_BROWSER, ServeDriver, ServeError, ServeOptions,
 };
@@ -80,6 +87,8 @@ pub struct CheckOptions {
     /// The query string the served game loads with. It can hold a session, so no result
     /// records it.
     serve_query: Option<String>,
+    /// The kind of lab that runs the check, as `--lab` names it.
+    lab: Option<String>,
 }
 
 /// The game frame is idle after this long with no new requests.
@@ -132,11 +141,14 @@ pub fn run(args: CheckArgs) -> Result<Status, CliError> {
         browser: args.browser,
         serve: ServeOptions {
             host: args.serve_host,
+            // A run on a phone asks the phone's recording for it.
+            tunnel_host: None,
             port: args.serve_port.unwrap_or(DEFAULT_PORT),
             wait_for_browser: DEFAULT_WAIT_FOR_BROWSER,
             open_with: args.open_with,
         },
         serve_query: args.serve_query,
+        lab: args.lab,
         ..CheckOptions::new(args.host_profile, args.budget.as_deref())?
     };
     // Not signed in is an error before the check, not after it.
@@ -290,11 +302,13 @@ impl CheckOptions {
             browser: false,
             serve: ServeOptions {
                 host: None,
+                tunnel_host: None,
                 port: DEFAULT_PORT,
                 wait_for_browser: DEFAULT_WAIT_FOR_BROWSER,
                 open_with: None,
             },
             serve_query: None,
+            lab: None,
         })
     }
 }
@@ -456,21 +470,25 @@ fn check_one(
     let clock = Clock::start();
     let run_id = Uuid::new_v4().to_string();
     let device_runs = options.device_runs.filter(|_| options.device);
-    // A served run's launch URL is dyno's own server. The result records the build, not that URL.
-    // `--runs` serves each run's build on its own, after the scan.
-    let served = match (&options.driver, &target.build, device_runs) {
-        (DriverArg::Serve, Some(build), None) => Some(serve(build, &options.serve)?),
+    // `--driver serve` serves the build after the scan: once, or with `--runs` once for each run.
+    // Its launch URL is dyno's own server. The result records the build, not that URL.
+    let served_build = match (&options.driver, &target.build) {
+        (DriverArg::Serve, Some(build)) => Some(build),
         _ => None,
     };
+    // A build that cannot be served, such as a .zip, stops the check before the scan and before
+    // the phone is touched.
+    if let Some(build) = served_build {
+        Build::open(build).map_err(serve_error)?;
+    }
     // `--browser` serves the build on 127.0.0.1 to the CDP driver's Chromium until the check ends.
     let build_server = match (&target.build, options.browser) {
         (Some(build), true) => Some(BuildServer::start(build).map_err(serve_error)?),
         _ => None,
     };
-    let launch_url = match (&served, &build_server) {
-        (Some(driver), _) => Some(served_launch_url(driver, options.serve_query.as_deref())?),
-        (None, Some(server)) => Some(LaunchUrl::parse(server.url()).map_err(CliError::internal)?),
-        (None, None) => target.launch_url.clone(),
+    let launch_url = match &build_server {
+        Some(server) => Some(LaunchUrl::parse(server.url()).map_err(CliError::internal)?),
+        None => target.launch_url.clone(),
     };
     // The result records the URL that `--browser` loaded, which has no query string. A served
     // run's URL can hold a session from `--serve-query`, so it is not recorded.
@@ -478,7 +496,7 @@ fn check_one(
         Some(_) => launch_url.as_ref().map(LaunchUrl::recorded),
         None => target.launch_url.as_ref().map(LaunchUrl::recorded),
     };
-    let has_launch_url = launch_url.is_some() || device_runs.is_some();
+    let has_launch_url = launch_url.is_some() || served_build.is_some();
 
     let scan = match &target.build {
         Some(build) => dyno_static::scan(build, &options.host_profile, options.budget.as_ref())
@@ -491,9 +509,10 @@ fn check_one(
     };
 
     let mut run_measures = model_measures(has_launch_url);
-    let browser = match (device_runs, &target.build) {
-        (Some(runs), Some(build)) => device_runs_run(build, runs, options)?,
-        _ => browser_run(served, launch_url.as_ref(), options)?,
+    let browser = match (served_build, device_runs) {
+        (Some(build), Some(runs)) => device_runs_run(build, runs, options)?,
+        (Some(build), None) => served_run(build, options)?,
+        (None, _) => browser_run(launch_url.as_ref(), options),
     };
     run_measures.extend(browser.measures);
 
@@ -537,6 +556,8 @@ fn check_one(
             options.driver == DriverArg::Serve || options.browser,
         )),
         environment: browser.environment,
+        serve_path: browser.serve_path,
+        lab: options.lab.clone(),
         started_at: clock.started_at(),
         duration_ms: clock.elapsed_ms(),
         machine: machine(),
@@ -568,46 +589,51 @@ struct BrowserRun {
     driver: Option<DriverInfo>,
     environment: Option<Environment>,
     timeline: Option<Timeline>,
+    /// The path a served run's page took to the browser. None when dyno served no page.
+    serve_path: Option<ServePath>,
 }
 
-/// The browser run of a check with a launch URL, and with `--device` the device run around it.
-/// With no launch URL, nothing runs.
-fn browser_run(
-    mut served: Option<ServeDriver>,
-    launch_url: Option<&LaunchUrl>,
-    options: &CheckOptions,
-) -> Result<BrowserRun, CliError> {
-    let mut browser = BrowserRun::default();
+/// The browser run of a check with a launch URL, in the driver that `--driver` names. With no
+/// launch URL, nothing runs.
+fn browser_run(launch_url: Option<&LaunchUrl>, options: &CheckOptions) -> BrowserRun {
+    let Some(launch_url) = launch_url else {
+        return BrowserRun::default();
+    };
+    let request = run_request(launch_url, options);
+    let lab = dyno_run::run_lab(new_driver(&options.driver).as_mut(), &request);
+    BrowserRun {
+        measures: lab.measures,
+        findings: lab.findings,
+        driver: lab.driver,
+        environment: lab.environment,
+        timeline: lab.timeline,
+        serve_path: None,
+    }
+}
+
+/// The run of a check that `--driver serve` serves, and with `--device` the device run around it.
+fn served_run(build: &Path, options: &CheckOptions) -> Result<BrowserRun, CliError> {
     // The recording starts before the person is told to open the page, so it sees the whole run.
-    // Safari opens the page once the recording is on. The page waits for the run to start.
-    let device_run = match (&served, options.device) {
-        (Some(served), true) => Some(start_device_run(
-            served,
+    let mut device_run = match options.device {
+        true => Some(start_device_run(
             options.device_recording.as_deref(),
             options,
         )?),
-        _ => None,
+        false => None,
     };
-    if let Some(served) = &served {
-        output::print_summary(&output::serve_lines(
-            served.harness_url(),
-            options.serve.wait_for_browser,
-        ));
-    }
-    if let Some(launch_url) = launch_url {
-        let request = run_request(launch_url, options);
-        let lab = match served.as_mut() {
-            Some(served) => dyno_run::run_lab(served, &request),
-            None => dyno_run::run_lab(new_driver(&options.driver).as_mut(), &request),
-        };
-        browser.measures = lab.measures;
-        browser.findings = lab.findings;
-        browser.driver = lab.driver;
-        browser.environment = lab.environment;
-        browser.timeline = lab.timeline;
-    }
+    let query = options.serve_query.as_deref();
+    let (mut served, request) = serve_to(build, query, device_run.as_mut(), options)?;
+    let lab = dyno_run::run_lab(&mut served, &request);
+    let mut browser = BrowserRun {
+        measures: lab.measures,
+        findings: lab.findings,
+        driver: lab.driver,
+        environment: lab.environment,
+        timeline: lab.timeline,
+        serve_path: Some(served.serve_path()),
+    };
     if let Some(device_run) = device_run {
-        let finished = device_run.finish(served.as_ref().and_then(ServeDriver::last_run));
+        let finished = device_run.finish(served.last_run());
         browser.environment = with_phone(browser.environment, finished.os, finished.device);
         // Safari on the phone reads no memory itself, so the phone's timeline is the run's.
         browser.timeline = browser.timeline.or(finished.timeline);
@@ -625,10 +651,10 @@ enum RunOf {
 }
 
 /// `--runs`: N runs of the empty build and N of the game, in turn, each served on its own and
-/// opened in a fresh Safari with its own recording. The lab measures, the driver, the browser and
-/// the timeline come from the first game run that completed, or else the first game run, and the
-/// phone from the first game run whose recording named it. The device measures come from every
-/// run.
+/// opened in a fresh Safari with its own recording. The lab measures, the driver, the browser,
+/// the timeline and the path the page took come from the first game run that completed, or else
+/// the first game run, and the phone from the first game run whose recording named it. The device
+/// measures come from every run.
 fn device_runs_run(
     build: &Path,
     runs: u32,
@@ -639,6 +665,7 @@ fn device_runs_run(
     let mut empty_device = Vec::new();
     let mut game_labs = Vec::new();
     let mut game_timelines = Vec::new();
+    let mut game_paths = Vec::new();
     let mut phone = None;
     for run in 1..=runs {
         for of in [RunOf::EmptyBuild, RunOf::Game] {
@@ -647,17 +674,12 @@ fn device_runs_run(
                 RunOf::Game => (build, options.serve_query.as_deref(), "the game", "game"),
             };
             output::print_summary(&[format!("dyno check: run {run} of {runs} of {name}.")]);
-            let mut served = serve(path, &options.serve)?;
-            let request = run_request(&served_launch_url(&served, query)?, options);
             let recording = options
                 .device_recording
                 .as_deref()
                 .map(|saved| device::run_recording(saved, recording_name, run));
-            let device_run = start_device_run(&served, recording.as_deref(), options)?;
-            output::print_summary(&output::serve_lines(
-                served.harness_url(),
-                options.serve.wait_for_browser,
-            ));
+            let mut device_run = start_device_run(recording.as_deref(), options)?;
+            let (mut served, request) = serve_to(path, query, Some(&mut device_run), options)?;
             let lab = dyno_run::run_lab(&mut served, &request);
             let finished = device_run.finish(served.last_run());
             match of {
@@ -668,6 +690,7 @@ fn device_runs_run(
                     }
                     game_device.push(finished.measures);
                     game_timelines.push(finished.timeline);
+                    game_paths.push(served.serve_path());
                     game_labs.push(lab);
                 }
             }
@@ -680,6 +703,7 @@ fn device_runs_run(
         .unwrap_or(0);
     let lab = game_labs.swap_remove(first_completed);
     let phone_timeline = game_timelines.swap_remove(first_completed);
+    let serve_path = game_paths.swap_remove(first_completed);
     let environment = match phone {
         Some((os, device)) => with_phone(lab.environment, os, device),
         None => lab.environment,
@@ -692,23 +716,60 @@ fn device_runs_run(
         driver: lab.driver,
         environment,
         timeline: lab.timeline.or(phone_timeline),
+        serve_path: Some(serve_path),
     })
 }
 
-/// Starts recording the phone, opens the served page in its Safari unless `--no-open`, and says
-/// so.
+/// Starts recording the phone, and says so.
 fn start_device_run(
-    served: &ServeDriver,
     recording: Option<&Path>,
     options: &CheckOptions,
 ) -> Result<DeviceRun, CliError> {
-    let device_run = device::start(
-        &options.device_address,
-        options.device_open.then(|| served.harness_url()),
-        recording,
-    )?;
-    output::print_summary(&device_run.lines());
+    let device_run = device::start(&options.device_address, recording)?;
+    output::print_summary(&[device_run.recording_line()]);
     Ok(device_run)
+}
+
+/// Serves `build` for one run, and gives the servers with the run's request. With a phone that
+/// is being recorded, it then opens the page in the phone's Safari, unless `--no-open`. It says
+/// where the page is and what the browser needs to reach it.
+///
+/// The page's address is the first of these: the one `--serve-host` gives; with a phone, this
+/// machine's address in the device link's tunnel, when it has one; this machine's address on its
+/// local network. A run on a phone that does not serve over the device link says why.
+fn serve_to(
+    build: &Path,
+    query: Option<&str>,
+    mut device_run: Option<&mut DeviceRun>,
+    options: &CheckOptions,
+) -> Result<(ServeDriver, RunRequest), CliError> {
+    let mut serve_options = options.serve.clone();
+    let mut no_tunnel = None;
+    // `--serve-host` wins, so the tunnel is not looked for.
+    if let (Some(device_run), None) = (&device_run, &serve_options.host) {
+        match device_run.tunnel_host() {
+            Ok(host) => serve_options.tunnel_host = Some(host),
+            Err(why) => no_tunnel = Some(why.to_string()),
+        }
+    }
+    let served = ServeDriver::bind(build, &serve_options).map_err(serve_error)?;
+    // A launch URL that does not parse stops the check before Safari opens anything.
+    let request = run_request(&served_launch_url(&served, query)?, options);
+    let no_tunnel = no_tunnel.or_else(|| served.tunnel_refused().map(str::to_owned));
+    if let Some(reason) = no_tunnel {
+        output::print_summary(&[output::no_tunnel_line(&reason)]);
+    }
+    if let Some(device_run) = device_run.as_mut()
+        && options.device_open
+    {
+        output::print_summary(&[device_run.open(served.harness_url())?]);
+    }
+    output::print_summary(&output::serve_lines(
+        served.harness_url(),
+        options.serve.wait_for_browser,
+        served.serve_path(),
+    ));
+    Ok((served, request))
 }
 
 /// The environment with the OS and the device of a device run's phone. They know the model, the
@@ -768,11 +829,6 @@ fn new_driver(driver: &DriverArg) -> Box<dyn Driver> {
         DriverArg::Cdp | DriverArg::Serve => Box::new(CdpDriver),
         DriverArg::Exec(program) => Box::new(ExecDriver::new(program)),
     }
-}
-
-/// Binds the served run's servers.
-fn serve(build: &Path, options: &ServeOptions) -> Result<ServeDriver, CliError> {
-    ServeDriver::bind(build, options).map_err(serve_error)
 }
 
 /// A build that is not a folder is a usage error; a port in use is an I/O error.

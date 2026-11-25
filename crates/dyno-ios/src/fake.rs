@@ -91,7 +91,7 @@ impl Settings {
 pub(crate) async fn session(
     spec: &str,
     address: &Address,
-    open: Option<String>,
+    open: oneshot::Receiver<String>,
     events: &Sender<Event>,
     stop: oneshot::Receiver<()>,
 ) -> Option<Recording> {
@@ -144,7 +144,7 @@ pub(crate) async fn session(
         killed_at,
         ended: settings.fails("log"),
     };
-    let launch = open.map(|url| async move {
+    let launch = |url: String| async move {
         if settings.fails("launch-hangs") {
             std::future::pending::<()>().await;
         }
@@ -160,8 +160,8 @@ pub(crate) async fn session(
             let _ = fs::write(file, &url);
         }
         Ok(())
-    });
-    Some(started(phone, samples, lines, launch, events, stop).await)
+    };
+    Some(started(phone, samples, lines, open, launch, events, stop).await)
 }
 
 struct Samples {

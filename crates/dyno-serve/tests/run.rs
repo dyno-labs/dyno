@@ -5,7 +5,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use dyno_run::Driver;
 use dyno_schema::ids::MeasureId;
@@ -74,6 +74,7 @@ fn a_browser_that_opens_the_harness_page_gives_a_full_run() {
     fs::write(build.path().join("game.js"), "console.log('game')").unwrap();
     let options = ServeOptions {
         host: Some("127.0.0.1".to_owned()),
+        tunnel_host: None,
         port: 0,
         wait_for_browser: Duration::from_secs(30),
         open_with: None,
@@ -273,6 +274,7 @@ fn a_run_that_no_browser_opens_fails_with_a_reason() {
     let build = tempfile::tempdir().unwrap();
     let options = ServeOptions {
         host: Some("127.0.0.1".to_owned()),
+        tunnel_host: None,
         port: 0,
         wait_for_browser: Duration::from_millis(200),
         open_with: None,
@@ -301,6 +303,7 @@ fn a_run_that_never_goes_idle_ends_with_an_error_and_bad_requests_are_refused() 
     fs::write(build.path().join("game.js"), "console.log('game')").unwrap();
     let options = ServeOptions {
         host: Some("127.0.0.1".to_owned()),
+        tunnel_host: None,
         port: 0,
         wait_for_browser: Duration::from_secs(30),
         open_with: None,
@@ -359,6 +362,7 @@ fn a_page_that_does_not_send_what_it_held_ends_the_run_with_an_error() {
     fs::write(build.path().join("index.html"), "<head>").unwrap();
     let options = ServeOptions {
         host: Some("127.0.0.1".to_owned()),
+        tunnel_host: None,
         port: 0,
         wait_for_browser: Duration::from_secs(30),
         open_with: None,
@@ -405,6 +409,100 @@ fn a_page_that_does_not_send_what_it_held_ends_the_run_with_an_error() {
     assert_eq!(message, "the harness page did not send the events it held");
 }
 
+/// What a server answers a browser that starts a TLS connection on its port and waits for the
+/// server's hello, and how long the answer took. The browser sends the start of a client hello,
+/// which is all a plain HTTP server needs to know it.
+fn try_tls(url: &str) -> (Vec<u8>, Duration) {
+    let address = url.trim_start_matches("http://").trim_end_matches('/');
+    let mut socket = TcpStream::connect(address).unwrap();
+    // Safari waits far longer than this for the server's hello.
+    socket
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    let started = Instant::now();
+    socket
+        .write_all(&[
+            0x16, 0x03, 0x01, 0x02, 0x00, 0x01, 0x00, 0x01, 0xfc, 0x03, 0x03,
+        ])
+        .unwrap();
+    let mut answer = Vec::new();
+    socket.read_to_end(&mut answer).unwrap();
+    (answer, started.elapsed())
+}
+
+#[test]
+fn a_browser_that_tries_https_first_is_refused_at_once_and_its_http_run_completes() {
+    let build = tempfile::tempdir().unwrap();
+    fs::write(build.path().join("index.html"), "<head>").unwrap();
+    let options = ServeOptions {
+        host: Some("127.0.0.1".to_owned()),
+        tunnel_host: None,
+        port: 0,
+        wait_for_browser: Duration::from_secs(30),
+        open_with: None,
+    };
+    let mut driver = ServeDriver::bind(build.path(), &options).unwrap();
+    let harness = driver.harness_url().to_owned();
+    let game = driver.game_url().to_owned();
+    let request = RunRequest {
+        protocol_version: RUNNER_PROTOCOL_VERSION,
+        launch_url: driver.launch_url(None),
+        host_profile: HostProfile::reels(),
+        scenario: Scenario::Alone,
+        spins: None,
+        idle_after_ms: 300,
+        timeout_ms: 20_000,
+    };
+    let run = thread::spawn(move || driver.run(&request));
+
+    // Safari tries HTTPS on each port before plain HTTP. Each server says at once, with a fatal
+    // TLS alert, that it has no TLS.
+    for server in [&harness, &game] {
+        let (answer, took) = try_tls(server);
+        assert_eq!(
+            answer,
+            [0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28],
+            "{server}"
+        );
+        assert!(took < Duration::from_secs(1), "{server}: {took:?}");
+    }
+
+    // The fall back to HTTP then runs as if the browser had never tried.
+    assert_eq!(get(&harness, "/").0, "HTTP/1.1 200 OK");
+    post(&harness, "/__dyno/hello", r#"{"user_agent":"curl/8.0"}"#);
+    get(&game, "/");
+    post(
+        &harness,
+        "/__dyno/events",
+        r#"[{"kind":"document","time_origin":1050,"device_pixel_ratio":3}]"#,
+    );
+    assert_eq!(next_command(&harness), r#"{"command":"self_check"}"#);
+    post(
+        &harness,
+        "/__dyno/events",
+        r#"[{"kind":"self_check","webgl_renderer":null}]"#,
+    );
+    assert_eq!(
+        next_command(&harness),
+        r#"{"command":"send","name":"reels:active"}"#
+    );
+    assert_eq!(next_command(&harness), r#"{"command":"flush"}"#);
+    post(&harness, "/__dyno/events", r#"[{"kind":"flushed"}]"#);
+    assert_eq!(next_command(&harness), r#"{"command":"done"}"#);
+
+    let messages = run.join().unwrap().unwrap();
+    assert!(
+        matches!(messages.last(), Some(DriverMessage::Done { .. })),
+        "{messages:?}"
+    );
+    // The refused connection to the game server is not a game request: only the page is.
+    let requests = messages
+        .iter()
+        .filter(|message| matches!(message, DriverMessage::Request { .. }))
+        .count();
+    assert_eq!(requests, 1, "{messages:?}");
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn a_browser_that_dyno_starts_gives_its_memory_before_the_last_message_and_is_stopped() {
@@ -421,6 +519,7 @@ fn a_browser_that_dyno_starts_gives_its_memory_before_the_last_message_and_is_st
     fs::set_permissions(&program, permissions).unwrap();
     let options = ServeOptions {
         host: Some("127.0.0.1".to_owned()),
+        tunnel_host: None,
         port: 0,
         wait_for_browser: Duration::from_secs(30),
         open_with: Some(program),

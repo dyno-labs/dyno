@@ -63,12 +63,12 @@ struct Opened {
     log: SyslogRelayClient,
 }
 
-/// Records the phone at `address` until `stop`, and opens `open` in its Safari once the recording
-/// is on. It says on `events` when the recording starts, or why it did not. usbmuxd is where
-/// `USBMUXD_SOCKET_ADDRESS` says, or in its usual place.
+/// Records the phone at `address` until `stop`, and opens the URL that `open` gives in its Safari
+/// once the recording is on. It says on `events` when the recording starts, or why it did not.
+/// usbmuxd is where `USBMUXD_SOCKET_ADDRESS` says, or in its usual place.
 pub(crate) async fn session(
     address: &Address,
-    open: Option<String>,
+    open: oneshot::Receiver<String>,
     events: &Sender<Event>,
     stop: oneshot::Receiver<()>,
 ) -> Option<Recording> {
@@ -80,7 +80,7 @@ pub(crate) async fn session(
 async fn session_through(
     usbmuxd: &UsbmuxdAddr,
     address: &Address,
-    open: Option<String>,
+    open: oneshot::Receiver<String>,
     events: &Sender<Event>,
     stop: oneshot::Receiver<()>,
 ) -> Option<Recording> {
@@ -104,9 +104,14 @@ async fn session_through(
     };
     let phone = tunnel.phone.clone();
     let app_service = tunnel.handshake.services.get(APP_SERVICE).map(|s| s.port);
-    let launch = open.map(|url| launch_safari(&mut tunnel.adapter, app_service, url));
+    let adapter = &mut tunnel.adapter;
+    // The launch keeps the adapter for as long as it runs, so the closure gives it away.
+    let launch = move |url| {
+        let adapter = adapter;
+        launch_safari(adapter, app_service, url)
+    };
     let samples = Tap { channel, columns };
-    Some(started(phone, samples, Log(log), launch, events, stop).await)
+    Some(started(phone, samples, Log(log), open, launch, events, stop).await)
 }
 
 async fn open_services(usbmuxd: &UsbmuxdAddr, address: &Address) -> Result<Opened, DeviceError> {
@@ -169,6 +174,9 @@ async fn connect(usbmuxd: &UsbmuxdAddr, address: &Address) -> Result<Tunnel, Dev
     let failed = |error: IdeviceError| DeviceError::Connect(error.to_string());
     let proxy = CoreDeviceProxy::connect(&*provider).await.map_err(failed)?;
     let rsd_port = proxy.tunnel_info().server_rsd_port;
+    // The tunnel's handshake also gives this machine's address in it (`client_address`), but
+    // no page can be served there: the software tunnel only opens connections to the phone, and
+    // takes none from it. `crate::tunnel` says what it would need.
     let mut adapter = proxy
         .create_software_tunnel()
         .map_err(failed)?
@@ -466,8 +474,9 @@ mod tests {
         let usbmuxd = fake_usbmuxd(folder.path(), &[(PHONE, "USB")]);
         let (events_to, events) = mpsc::channel();
         let (_stop, stop) = oneshot::channel();
+        let (_open, open) = oneshot::channel();
         let address = Address::Usbmuxd { udid: None };
-        let recording = block_on(session_through(&usbmuxd, &address, None, &events_to, stop));
+        let recording = block_on(session_through(&usbmuxd, &address, open, &events_to, stop));
         assert!(recording.is_none());
         let Ok(Event::Failed(error)) = events.try_recv() else {
             panic!("the session did not say it failed");

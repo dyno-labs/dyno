@@ -5,8 +5,8 @@
 //! coverage: with a launch URL or `--device` it says whether this machine's run gave every
 //! required measure, and so does the status it feeds. `run` holds the rest: what differs between
 //! machines and runs, and the labels that must not change the hash. That is timestamps,
-//! durations, the machine, the tool build, target paths and URLs, release labels, and the
-//! browser, device and model values. The hash excludes it.
+//! durations, the machine, the tool build, target paths and URLs, release labels, the lab's name,
+//! the path a served page took, and the browser, device and model values. The hash excludes it.
 
 use std::collections::HashSet;
 use std::hash::Hash;
@@ -138,6 +138,16 @@ pub struct RunInfo {
     #[serde(default)]
     #[ts(optional = nullable)]
     pub environment: Option<Environment>,
+    /// The path the browser took to the page of a served run (`--driver serve`): which of this
+    /// machine's addresses dyno served it at. Null for any other check.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub serve_path: Option<ServePath>,
+    /// The kind of lab that ran the check, as `--lab` names it, such as "desk", "rig" or
+    /// "devicefarm". Null when no name was given.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub lab: Option<String>,
     /// RFC 3339 UTC time the check started.
     pub started_at: String,
     pub duration_ms: u64,
@@ -215,6 +225,22 @@ pub enum BuildLink {
     Served,
     /// A build and a separate launch URL. dyno did not check that the URL serves that build.
     Asserted,
+}
+
+/// The path a browser takes to the page that a served run serves: the address dyno served at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum ServePath {
+    /// This machine's address inside the device link's tunnel to the phone. The phone needs no
+    /// network path to this machine.
+    Tunnel,
+    /// This machine's address on its local network. The browser must be on that network.
+    LocalNetwork,
+    /// The loopback address, when this machine is on no network. Only a browser on this machine
+    /// reaches it, such as Safari in the iOS Simulator.
+    Loopback,
+    /// The address that `--serve-host` gave. dyno does not know which path it is.
+    Given,
 }
 
 /// The browser driver behind a run: the Rust CDP driver, or a fallback subprocess.

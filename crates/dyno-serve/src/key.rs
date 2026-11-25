@@ -29,6 +29,11 @@ pub const KEY_PARAMETER: &str = "key";
 /// The header that carries the key in the harness page's own requests.
 pub const KEY_HEADER: &str = "X-Dyno-Key";
 
+/// The header that marks dyno's own refusal of a request without the run's key, so the page can
+/// tell it from a 403 that something between it and dyno made, such as a proxy, which must not
+/// stop a run.
+pub const REFUSED_HEADER: (&str, &str) = ("X-Dyno-Refused", "key");
+
 /// How many random bytes a key has: 128 bits.
 const KEY_BYTES: usize = 16;
 

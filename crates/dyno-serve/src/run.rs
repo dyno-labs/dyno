@@ -39,7 +39,7 @@ use tokio::time::Instant;
 use crate::files::{Build, PROBE_PATH, Pages, build_response};
 use crate::harness::{EVENTS_PATH, HELLO_PATH, NEXT_PATH, REFERRER_POLICY, page};
 use crate::http::{Response, accept, read_body, read_head, refuse, write_response};
-use crate::key::RunKey;
+use crate::key::{REFUSED_HEADER, RunKey};
 use crate::{DRIVER_NAME, Place, RunTimes, ServeDriver, ServeError, browser_name};
 
 /// How often the run checks whether the frame is idle.
@@ -664,11 +664,14 @@ async fn serve_harness(at: Arc<At>, mut socket: TcpStream) {
         .as_deref()
         .is_some_and(|key| shared.key.matches(key));
     if !keyed {
-        let refused = Response::shared(
+        let mut refused = Response::shared(
             "403 Forbidden",
             "text/plain; charset=utf-8",
             NO_KEY.as_bytes(),
         );
+        refused
+            .headers
+            .push((REFUSED_HEADER.0, REFUSED_HEADER.1.to_owned()));
         refuse(&mut socket, &refused, head_only).await;
         return;
     }

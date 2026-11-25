@@ -36,9 +36,12 @@ pub const NEXT_PATH: &str = "/__dyno/next";
 ///
 /// The page takes a message only from its frame's window while that window holds the game's
 /// origin, and posts to the frame only at that origin: a frame that went to another site keeps
-/// its window, and must neither add to the run nor hear the active message. A 403 means the
-/// page's key opens no run, because its run is over or it was never asked for. The page then
-/// stops, and removes its frame, so a tab that missed `done` cannot go on and reach a later run.
+/// its window, and must neither add to the run nor hear the active message. dyno's own refusal of
+/// the key, a 403 with its refusal header, means the page's key opens no run, because its run is
+/// over or it was never asked for. The page then stops, and removes its frame, so a tab that
+/// missed `done` cannot go on and reach a later run. Any other answer, such as a 403 that a proxy
+/// made, does not stop it. A batch that did not arrive goes back in the queue only while the page
+/// runs.
 const PAGE: &str = r#"<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -63,6 +66,7 @@ const stop = (text) => {
   document.body.append(note);
   note.textContent = text;
 };
+const refusedByDyno = (answer) => answer.status === 403 && answer.headers.get("X-Dyno-Refused") === "key";
 const refused = () => stop("dyno: this page's URL opens no run. Close this tab, and open the URL that dyno printed for the run.");
 const post = (path, body) =>
   fetch(path, { method: "POST", headers: { "Content-Type": "text/plain", "X-Dyno-Key": KEY }, body: JSON.stringify(body) });
@@ -76,10 +80,10 @@ const flush = async () => {
     try {
       answer = await post("/__dyno/events", batch);
     } catch {
-      queue.unshift(...batch);
+      if (!stopped) queue.unshift(...batch);
       break;
     }
-    if (answer.status === 403) refused();
+    if (refusedByDyno(answer)) refused();
   }
   sending = false;
 };
@@ -111,12 +115,12 @@ const obey = async () => {
     let command;
     try {
       answer = await fetch("/__dyno/next", { headers: { "X-Dyno-Key": KEY } });
-      if (answer.status !== 403) command = await answer.json();
+      if (!refusedByDyno(answer)) command = await answer.json();
     } catch {
       await new Promise((resolve) => setTimeout(resolve, 1000));
       continue;
     }
-    if (answer.status === 403) return refused();
+    if (refusedByDyno(answer)) return refused();
     if (stopped) return;
     if (command.command === "self_check") {
       queue.push({ kind: "self_check", webgl_renderer: webglRenderer() });
@@ -141,7 +145,7 @@ const obey = async () => {
     note.textContent = "dyno: cannot reach dyno. Is the run still waiting?";
     return;
   }
-  if (answer.status === 403) return refused();
+  if (refusedByDyno(answer)) return refused();
   if (!answer.ok) {
     note.textContent = "dyno: a run is already under way here. Close this tab.";
     return;
@@ -203,7 +207,7 @@ fn script_string(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::key::KEY_HEADER;
+    use crate::key::{KEY_HEADER, REFUSED_HEADER};
 
     fn page(game_url: &str) -> String {
         super::page(game_url, &RunKey::new().unwrap())
@@ -246,10 +250,19 @@ mod tests {
     #[test]
     fn a_refused_request_stops_the_page_and_removes_its_frame() {
         let page = page("http://h/");
-        // Each of the page's three requests stops the page on a 403: the hello, the posts of
-        // events and the poll.
-        assert_eq!(page.matches("answer.status === 403").count(), 3, "{page}");
+        // Each of the page's three requests stops the page on dyno's own refusal, and on no other
+        // 403: the hello, the posts of events and the poll.
+        assert!(page.contains(&format!(
+            r#"const refusedByDyno = (answer) => answer.status === 403 && answer.headers.get("{}") === "{}";"#,
+            REFUSED_HEADER.0, REFUSED_HEADER.1
+        )));
+        // The poll asks twice: before it reads a command from the answer, and after.
+        assert_eq!(page.matches("refusedByDyno(answer)").count(), 4, "{page}");
+        assert_eq!(page.matches("403").count(), 1, "{page}");
         assert_eq!(page.matches("refused()").count(), 3, "{page}");
+        // A batch that failed goes back in the queue only while the page runs.
+        assert!(page.contains("if (!stopped) queue.unshift(...batch);"));
+        assert_eq!(page.matches("queue.unshift(").count(), 1, "{page}");
         // A stopped page sends nothing more, polls no more and has no frame.
         assert!(page.contains("if (sending || stopped) return;"));
         assert!(page.contains("while (!stopped) {"));

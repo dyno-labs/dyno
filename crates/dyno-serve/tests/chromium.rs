@@ -13,21 +13,26 @@ use std::time::Duration;
 use dyno_run::Driver;
 use dyno_schema::probe::ProbeEvent;
 use dyno_schema::profile::{HostProfile, Scenario};
-use dyno_schema::runner::{DriverMessage, RUNNER_PROTOCOL_VERSION, RunRequest};
+use dyno_schema::runner::{DriverMessage, RUNNER_PROTOCOL_VERSION, RunMark, RunRequest};
 use dyno_serve::{ServeDriver, ServeOptions};
 
 /// A game that tells its host what it knows of the page around it, and then tries to drive the
-/// run itself: it posts a frame document with a pixel ratio of 99 and the end of a flush to the
-/// harness server, with no key, as the game of another check could. Its launch query names the
-/// harness server's origin, which a game of another check could learn. A no-cors fetch fails only
-/// when no server answered, so the game says which of its tries got an answer.
+/// run itself, as the game of another check could: each request is one the harness server would
+/// take but for the key. It posts a frame document with a pixel ratio of 99 and the end of a
+/// flush, says hello, and polls for a command. Its launch query names the harness server's
+/// origin, which a game of another check could learn. A no-cors fetch fails only when no server
+/// answered, so the game says which of its tries got an answer.
 const GAME: &str = r#"
 parent.postMessage("referrer:" + document.referrer, "*");
 parent.postMessage("ancestors:" + Array.from(location.ancestorOrigins || []).join(" "), "*");
 const harness = new URLSearchParams(location.search).get("harness");
-const forged = JSON.stringify([{ kind: "document", time_origin: 1, device_pixel_ratio: 99 }, { kind: "flushed" }]);
-for (const path of ["/__dyno/events", "/__dyno/hello", "/__dyno/next"]) {
-  fetch(harness + path, { method: "POST", mode: "no-cors", body: forged }).then(
+const tries = [
+  ["/__dyno/events", "POST", JSON.stringify([{ kind: "document", time_origin: 1, device_pixel_ratio: 99 }, { kind: "flushed" }])],
+  ["/__dyno/hello", "POST", JSON.stringify({ user_agent: "intruder" })],
+  ["/__dyno/next", "GET", undefined],
+];
+for (const [path, method, body] of tries) {
+  fetch(harness + path, { method, mode: "no-cors", body }).then(
     () => parent.postMessage("answered:" + path, "*"),
     () => parent.postMessage("unreached:" + path, "*"),
   );
@@ -120,8 +125,8 @@ fn in_chromium_the_page_drives_the_run_with_its_key_and_the_frame_learns_none_of
     );
     assert!(told.iter().all(|name| !name.contains("key")), "{told:?}");
     // The game's tries reached the harness server, and it answered each. It took none of them:
-    // the self-check has the frame's own pixel ratio, from its one document, so the forged
-    // events, which are well formed, were refused.
+    // the run has one frame document, the frame's own, and the self-check has its pixel ratio.
+    // Had the forged document been taken, there would be two, whichever came last.
     for path in ["/__dyno/events", "/__dyno/hello", "/__dyno/next"] {
         assert!(
             told.contains(&format!("answered:{path}").as_str()),
@@ -138,4 +143,17 @@ fn in_chromium_the_page_drives_the_run_with_its_key_and_the_frame_learns_none_of
         self_check.is_some_and(|ratio| ratio != 99.0),
         "{self_check:?}"
     );
+    let documents = messages
+        .iter()
+        .filter(|message| {
+            matches!(
+                message,
+                DriverMessage::Mark {
+                    mark: RunMark::FrameDocument,
+                    ..
+                }
+            )
+        })
+        .count();
+    assert_eq!(documents, 1, "{messages:?}");
 }

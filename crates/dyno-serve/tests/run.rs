@@ -40,6 +40,18 @@ fn exchange(url: &str, method: &str, path: &str, body: &str) -> (String, String)
 /// One HTTP exchange with the server at `address`, with these headers as they are: the status
 /// line and the body.
 fn send(address: &str, method: &str, target: &str, headers: &str, body: &str) -> (String, String) {
+    let (head, body) = send_whole(address, method, target, headers, body);
+    (head.lines().next().unwrap().to_owned(), body)
+}
+
+/// [`send`], with the whole head of the response: its status line and its headers.
+fn send_whole(
+    address: &str,
+    method: &str,
+    target: &str,
+    headers: &str,
+    body: &str,
+) -> (String, String) {
     let mut socket = TcpStream::connect(address).unwrap();
     write!(
         socket,
@@ -50,8 +62,7 @@ fn send(address: &str, method: &str, target: &str, headers: &str, body: &str) ->
     let mut response = String::new();
     socket.read_to_string(&mut response).unwrap();
     let (head, body) = response.split_once("\r\n\r\n").unwrap();
-    let status = head.lines().next().unwrap().to_owned();
-    (status, body.to_owned())
+    (head.to_owned(), body.to_owned())
 }
 
 fn get(url: &str, path: &str) -> (String, String) {
@@ -1061,9 +1072,15 @@ fn assert_every_route_refused(url: &str) {
             (format!("{path}#key={key}"), String::new()),
         ];
         for (target, headers) in tries {
-            let (status, answer) = send(address, method, &target, &headers, body);
+            let (head, answer) = send_whole(address, method, &target, &headers, body);
+            // dyno marks its own refusal, which is the only 403 that stops the page.
+            assert!(
+                head.lines().any(|line| line == "X-Dyno-Refused: key"),
+                "{method} {target}: {head}"
+            );
+            let status = head.lines().next().unwrap();
             assert_eq!(
-                (status.as_str(), answer.as_str()),
+                (status, answer.as_str()),
                 (
                     "HTTP/1.1 403 Forbidden",
                     "dyno: this run needs the URL that dyno printed for it.\n"
@@ -1441,8 +1458,11 @@ fn the_game_server_answers_only_the_page_s_address_and_only_after_its_hello() {
     let game = driver.game_url().to_owned();
     let run = thread::spawn(move || driver.run(&request));
 
-    // Before the hello there is no frame, so the game server answers no one.
-    assert_eq!(get(&game, "/").0, "HTTP/1.1 403 Forbidden");
+    // Before the hello there is no frame, so the game server answers no one. Its refusal is not
+    // the key's, which only the harness page reads.
+    let (head, _) = send_whole(server(&game).0, "GET", "/", "", "");
+    assert!(head.starts_with("HTTP/1.1 403 Forbidden\r\n"), "{head}");
+    assert!(!head.contains("X-Dyno-Refused"), "{head}");
     assert_eq!(get(&game, "/__dyno/probe.js").0, "HTTP/1.1 403 Forbidden");
     // The page says hello from 127.0.0.1, so the game is served there.
     post(&harness, "/__dyno/hello", r#"{"user_agent":"curl/8.0"}"#);

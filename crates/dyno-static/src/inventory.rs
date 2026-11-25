@@ -4,7 +4,7 @@
 //! they read. The build id covers every file's path and SHA-256, so a rename changes it (design
 //! section 3, decision R3). It does not cover external URLs, so `bundle` lists them.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io::Read;
@@ -17,7 +17,9 @@ use dyno_schema::measure::{Evidence, Measure, MeasureStatus, MeasureValue, Metho
 use dyno_schema::path::RelPath;
 use walkdir::WalkDir;
 use zip::ZipArchive;
+use zip::read::Config;
 use zip::result::ZipError;
+use zip::unstable::read::ZipIterable;
 
 use crate::ScanError;
 use crate::model::{FamilyScan, Inventory, saturating_i64};
@@ -159,13 +161,8 @@ fn read_zip_within(
         path: build.to_path_buf(),
         source,
     })?;
+    check_one_reading(build, &file, limits)?;
     let mut archive = ZipArchive::new(file).map_err(bad_zip)?;
-    // The archive keeps one entry for each name, so the loop below never sees a second one.
-    // Another program can unpack the other entry, and then the build id would be for files that
-    // nobody ran.
-    if archive.has_duplicate_names() {
-        return Err(ScanError::SameNameTwiceInZip(build.to_path_buf()));
-    }
     if archive.len() > limits.entries {
         return Err(too_large(format!(
             "it has {} entries, more than {}",
@@ -214,6 +211,48 @@ fn read_zip_within(
         files.insert(path, contents);
     }
     Ok(files)
+}
+
+/// Refuses a zip that two programs can unpack as two builds, before any entry is read.
+///
+/// A zip names each entry twice: in the central directory at its end, and in a local header
+/// before the entry's bytes. `ZipArchive` reads the central directory and keeps one entry for
+/// each name. So this pass walks every record of the central directory, and refuses:
+///
+/// - two file entries with one name, because programs differ in which of the two they keep. A
+///   folder named twice is the same folder, so it is fine;
+/// - an entry whose local header does not say what its central record says, such as another
+///   name, because a program that reads local headers would unpack another build.
+///
+/// The second check is the zip crate's own. Its reader that keeps entries with one name apart is
+/// in the crate's `unstable` module, which is why Cargo.toml pins the crate's exact version.
+fn check_one_reading(build: &Path, file: &File, limits: ZipLimits) -> Result<(), ScanError> {
+    let bad_zip = |source: ZipError| ScanError::BadZip {
+        path: build.to_path_buf(),
+        source,
+    };
+    let mut records = ZipIterable::try_new(file, Config::default())
+        .map_err(bad_zip)?
+        .enforce_header_consistency(true);
+    // The names below are kept in memory, so the count is checked first.
+    if records.len() > limits.entries {
+        return Err(ScanError::ZipTooLarge {
+            path: build.to_path_buf(),
+            reason: format!(
+                "it has {} entries, more than {}",
+                records.len(),
+                limits.entries
+            ),
+        });
+    }
+    let mut file_names = HashSet::new();
+    for record in records.files().map_err(bad_zip)? {
+        let record = record.map_err(bad_zip)?;
+        if !record.is_dir() && !file_names.insert(record.name_raw().to_vec()) {
+            return Err(ScanError::SameNameTwiceInZip(build.to_path_buf()));
+        }
+    }
+    Ok(())
 }
 
 fn is_skipped_name(name: impl AsRef<OsStr>) -> bool {
@@ -348,20 +387,31 @@ mod tests {
         );
     }
 
-    /// Renames every entry called `from` to `to`, a name of the same length, in its local header
-    /// and in the central directory, as a crafted zip can.
-    fn rename_entries(zip: &Path, from: &[u8], to: &[u8]) {
+    /// Where an entry's name is written in a zip.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum NamedIn {
+        /// The entry's local header only, before its bytes.
+        LocalHeader,
+        /// The local header and the central directory.
+        BothPlaces,
+    }
+
+    /// Renames the entry called `from` to `to`, a name of the same length, as a crafted zip can.
+    fn rename_entry(zip: &Path, from: &[u8], to: &[u8], place: NamedIn) {
         assert_eq!(from.len(), to.len());
         let mut bytes = fs::read(zip).unwrap();
-        let mut renamed = 0;
-        for at in 0..bytes.len() - from.len() {
-            if &bytes[at..at + from.len()] == from {
-                bytes[at..at + to.len()].copy_from_slice(to);
-                renamed += 1;
-            }
+        let found: Vec<usize> = (0..bytes.len() - from.len())
+            .filter(|&at| &bytes[at..at + from.len()] == from)
+            .collect();
+        // Once in the entry's local header, and once in the central directory after it.
+        assert_eq!(found.len(), 2);
+        let renamed = match place {
+            NamedIn::LocalHeader => &found[..1],
+            NamedIn::BothPlaces => &found[..],
+        };
+        for &at in renamed {
+            bytes[at..at + to.len()].copy_from_slice(to);
         }
-        // Once in the entry's local header, and once in the central directory.
-        assert_eq!(renamed, 2);
         fs::write(zip, bytes).unwrap();
     }
 
@@ -374,7 +424,7 @@ mod tests {
             ("gamf.js", b"console.log('two')"),
         ]);
         assert_eq!(scan(zip.path()).unwrap().summary.files().len(), 3);
-        rename_entries(zip.path(), b"gamf.js", b"game.js");
+        rename_entry(zip.path(), b"gamf.js", b"game.js", NamedIn::BothPlaces);
         let result = scan(zip.path());
         let Err(ScanError::SameNameTwiceInZip(path)) = &result else {
             panic!("{:?}", result.map(|scan| scan.measures));
@@ -382,6 +432,58 @@ mod tests {
         assert_eq!(path, zip.path());
         let said = result.unwrap_err().to_string();
         assert!(said.contains("two entries with the same name"), "{said}");
+    }
+
+    #[test]
+    fn a_zip_that_names_one_folder_twice_is_read() {
+        // A folder named twice is one folder, whichever record a program follows.
+        let zip = tempfile::Builder::new().suffix(".zip").tempfile().unwrap();
+        let mut writer = ZipWriter::new(zip.reopen().unwrap());
+        let options = SimpleFileOptions::default();
+        writer.add_directory("assets-a/", options).unwrap();
+        writer.add_directory("assets-b/", options).unwrap();
+        writer.start_file("assets-a/game.js", options).unwrap();
+        writer.write_all(b"console.log('one')").unwrap();
+        writer.finish().unwrap();
+        rename_entry(zip.path(), b"assets-b/", b"assets-a/", NamedIn::BothPlaces);
+
+        let inventory = scan(zip.path()).unwrap().summary;
+        let paths: Vec<&str> = inventory
+            .files()
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect();
+        assert_eq!(paths, ["game.js"]);
+    }
+
+    #[test]
+    fn a_zip_whose_local_header_names_an_entry_another_way_is_refused() {
+        // The central directory says game.js. A program that unpacks by local headers would
+        // write evil.js, so it would run another build than the one dyno hashed.
+        let zip = zip_with(&[
+            ("index.html", b"<script src=game.js></script>"),
+            ("game.js", b"console.log('one')"),
+        ]);
+        rename_entry(zip.path(), b"game.js", b"evil.js", NamedIn::LocalHeader);
+        let result = scan(zip.path());
+        let Err(ScanError::BadZip { source, .. }) = &result else {
+            panic!("{:?}", result.map(|scan| scan.measures));
+        };
+        assert!(
+            source.to_string().contains("header inconsistency"),
+            "{source}"
+        );
+    }
+
+    #[test]
+    fn a_zip_with_too_many_records_of_one_name_is_refused_before_they_are_kept() {
+        let zip = zip_with(&[("a.js", b"1"), ("b.js", b"2"), ("c.js", b"3")]);
+        let file = File::open(zip.path()).unwrap();
+        let result = check_one_reading(zip.path(), &file, limits(100, 2));
+        let Err(ScanError::ZipTooLarge { reason, .. }) = result else {
+            panic!("{result:?}");
+        };
+        assert_eq!(reason, "it has 3 entries, more than 2");
     }
 
     #[test]

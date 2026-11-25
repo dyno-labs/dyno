@@ -35,9 +35,8 @@ build_link?: BuildLink | null,
 environment?: Environment | null, 
 /**
  * The path the browser took to the page of a served run (`--driver serve`): which of this
- * machine's addresses its first request to the harness page came to. That is the path
- * that was used, not one that was only tried. Null when no browser asked for the page, and
- * for any other check.
+ * machine's addresses the page that ran said hello at. That is the path that was used, not
+ * one that was only asked for. Null when no page ran, and for any other check.
  */
 serve_path?: ServePath | null, 
 /**

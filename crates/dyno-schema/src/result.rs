@@ -139,9 +139,8 @@ pub struct RunInfo {
     #[ts(optional = nullable)]
     pub environment: Option<Environment>,
     /// The path the browser took to the page of a served run (`--driver serve`): which of this
-    /// machine's addresses its first request to the harness page came to. That is the path
-    /// that was used, not one that was only tried. Null when no browser asked for the page, and
-    /// for any other check.
+    /// machine's addresses the page that ran said hello at. That is the path that was used, not
+    /// one that was only asked for. Null when no page ran, and for any other check.
     #[serde(default)]
     #[ts(optional = nullable)]
     pub serve_path: Option<ServePath>,
@@ -230,7 +229,7 @@ pub enum BuildLink {
 }
 
 /// The path a browser took to the page that a served run serves: the address of this machine
-/// that its first request to the harness page came to.
+/// that the page which ran said hello at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum ServePath {

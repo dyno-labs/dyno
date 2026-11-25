@@ -8,8 +8,7 @@
 //! - `footprints=<bytes>,<bytes>,...`: the page process's footprint in each recording, in turn.
 //!   Default: 200 MiB.
 //! - `kill-after-ms=<ms>`: jetsam kills the page process this long after the recording starts.
-//! - `launched=<file>`: where a launch writes the URL that Safari opens. A later launch writes
-//!   over an earlier one's.
+//! - `launched=<file>`: where a launch writes the URL that Safari opens.
 //! - `tunnel=<address>`: this machine's address in the phone's tunnel, where the phone's Safari
 //!   reaches a server on this machine. A real phone has one only on a Mac, which this setting
 //!   stands in for on any machine. Default: none, as on Linux.
@@ -25,7 +24,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 use std::time::Duration;
 
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 use tokio::time::{Instant, Interval, interval, sleep_until};
 
 use crate::WEB_CONTENT;
@@ -103,7 +102,7 @@ pub(crate) fn tunnel_host(spec: &str) -> Option<IpAddr> {
 pub(crate) async fn session(
     spec: &str,
     address: &Address,
-    open: mpsc::UnboundedReceiver<String>,
+    open: oneshot::Receiver<String>,
     events: &Sender<Event>,
     stop: oneshot::Receiver<()>,
 ) -> Option<Recording> {
@@ -156,7 +155,6 @@ pub(crate) async fn session(
         killed_at,
         ended: settings.fails("log"),
     };
-    let settings = &settings;
     let launch = |url: String| async move {
         if settings.fails("launch-hangs") {
             std::future::pending::<()>().await;

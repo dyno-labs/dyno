@@ -4,8 +4,8 @@
 //!
 //! The recording starts first, and Safari opens the page after, in a step of its own. Between the
 //! two the caller knows the phone, and can ask for this machine's address in the device link's
-//! tunnel ([`Recorder::tunnel_host`]) to serve the page there. A recording opens each page it is
-//! asked to, so a caller whose first address got no request can ask for another.
+//! tunnel ([`Recorder::tunnel_host`]) to serve the page there. A recording opens one page: a
+//! second launch would restart Safari under a run that may have begun.
 //!
 //! [`phone`]: crate::phone
 //! [`fake`]: crate::fake
@@ -18,7 +18,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use tokio::sync::{mpsc as async_mpsc, oneshot};
+use tokio::sync::oneshot;
 
 use crate::devicectl;
 use crate::fake::{self, FAKE_PHONE_VARIABLE};
@@ -97,8 +97,9 @@ pub struct Recorder {
     thread: Option<JoinHandle<Option<Recording>>>,
     phone: Phone,
     opened: Option<Result<OpenedWith, DeviceError>>,
-    /// Where the session waits for each page to open in Safari.
-    open: async_mpsc::UnboundedSender<String>,
+    /// Where the session waits for the page to open in Safari. None once it was asked, and
+    /// once the recording has ended.
+    open: Option<oneshot::Sender<String>>,
     events: Receiver<Event>,
     open_wait: Duration,
     /// The program that runs `xcrun devicectl` for this phone: a Mac's `xcrun`, or the stub that
@@ -125,7 +126,7 @@ impl Recorder {
     ) -> Result<Recorder, DeviceError> {
         let (events_to, events) = mpsc::channel();
         let (stop, stopped) = oneshot::channel();
-        let (open, to_open) = async_mpsc::unbounded_channel();
+        let (open, to_open) = oneshot::channel();
         // A fake phone has no devicectl to fall back on, but the stub that `DYNO_XCRUN` names.
         let xcrun = devicectl::program(fake.is_some());
         let fake_tunnel = fake.as_deref().and_then(fake::tunnel_host);
@@ -171,7 +172,7 @@ impl Recorder {
             thread: Some(thread),
             phone,
             opened: None,
-            open,
+            open: Some(open),
             events,
             open_wait,
             xcrun,
@@ -180,17 +181,22 @@ impl Recorder {
     }
 
     /// Opens `url` in the phone's Safari, which restarts Safari, and returns once Safari has
-    /// answered. A locked phone is the only error: the caller stops the recording. Any other
-    /// answer is in [`Recorder::opened`], and the recording stays on, because a person can still
-    /// open the page.
+    /// answered. A locked phone is an error: the caller stops the recording. Any other answer of
+    /// Safari's is in [`Recorder::opened`], and the recording stays on, because a person can
+    /// still open the page.
     ///
-    /// A recording that has ended opens nothing, by the phone's own service or by devicectl.
+    /// A recording opens one page. A second ask is an error, and so is an ask of a recording
+    /// that has ended: neither opens anything, by the phone's own service or by devicectl, and
+    /// neither changes what [`Recorder::opened`] says of the first.
     pub fn open(&mut self, url: &str) -> Result<(), DeviceError> {
-        // An answer that came after its own wait had ended is not this page's.
-        while self.events.try_recv().is_ok() {}
-        if self.open.send(url.to_owned()).is_err() {
-            self.opened = Some(Err(DeviceError::Open("the recording has ended".to_owned())));
-            return Ok(());
+        let asked = self
+            .open
+            .take()
+            .is_some_and(|open| open.send(url.to_owned()).is_ok());
+        if !asked {
+            return Err(DeviceError::Open(
+                "the recording has opened its one page, or has ended".to_owned(),
+            ));
         }
         let answer = match self.events.recv_timeout(self.open_wait) {
             Ok(Event::Opened(opened)) => opened,
@@ -261,6 +267,8 @@ impl Recorder {
 
     /// Tells the session to stop, and waits for its recording.
     fn end(&mut self) -> Option<Recording> {
+        // A recording that has ended opens no page.
+        self.open = None;
         if let Some(stop) = self.stop.take() {
             let _ = stop.send(());
         }
@@ -274,21 +282,21 @@ impl Drop for Recorder {
     }
 }
 
-/// Says that the recording has started, and records until `stop`. Alongside, it waits for each
-/// URL that `open` gives, has `launch` open it in Safari, and says what Safari answered.
+/// Says that the recording has started, and records until `stop`. Alongside, it waits for the URL
+/// that `open` gives, has `launch` open it in Safari, once, and says what Safari answered.
 pub(crate) async fn started<Launch: Future<Output = Result<(), DeviceError>>>(
     phone: Phone,
     samples: impl SampleFeed,
     lines: impl LineFeed,
-    mut open: async_mpsc::UnboundedReceiver<String>,
-    mut launch: impl FnMut(String) -> Launch,
+    open: oneshot::Receiver<String>,
+    launch: impl FnOnce(String) -> Launch,
     events: &Sender<Event>,
     stop: oneshot::Receiver<()>,
 ) -> Recording {
     let _ = events.send(Event::Started(phone.clone()));
     let opening = async {
         // A recorder that opens no page drops its end when it stops, and nothing opens.
-        while let Some(url) = open.recv().await {
+        if let Ok(url) = open.await {
             let _ = events.send(Event::Opened(launch(url).await));
         }
     };
@@ -343,24 +351,6 @@ mod tests {
         assert_eq!(recorder.stop().unwrap().phone.identifier, "iPhone15,3");
     }
 
-    #[test]
-    fn a_recording_opens_each_page_it_is_asked_to() {
-        let folder = tempfile::tempdir().unwrap();
-        let launched = folder.path().join("launched");
-        let mut recorder =
-            start(&format!("launched={}", launched.display()), [LONG, LONG]).unwrap();
-        recorder.open(PAGE).unwrap();
-        assert_eq!(std::fs::read_to_string(&launched).unwrap(), PAGE);
-        // A caller whose first address got no request asks for another.
-        let other = "http://198.51.100.1:7380/";
-        recorder.open(other).unwrap();
-        assert!(matches!(
-            recorder.opened(),
-            Some(Ok(OpenedWith::CoreDevice))
-        ));
-        assert_eq!(std::fs::read_to_string(&launched).unwrap(), other);
-    }
-
     /// A stub xcrun of this crate's tests (`tests/data`). Its launch makes a file at the path
     /// that the URL gives.
     #[cfg(unix)]
@@ -384,6 +374,31 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn a_recording_opens_one_page_and_a_second_ask_opens_nothing() {
+        let folder = tempfile::tempdir().unwrap();
+        let launched = folder.path().join("launched");
+        let by_devicectl = folder.path().join("launched-by-devicectl");
+        let mut recorder =
+            start(&format!("launched={}", launched.display()), [LONG, LONG]).unwrap();
+        recorder.xcrun = Some(stub_xcrun());
+        recorder.open(PAGE).unwrap();
+        // The second ask is refused before the phone or devicectl is asked for anything.
+        let error = recorder.open(by_devicectl.to_str().unwrap()).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Safari did not open the page: the recording has opened its one page, or has ended"
+        );
+        assert_eq!(std::fs::read_to_string(&launched).unwrap(), PAGE);
+        assert!(!by_devicectl.exists());
+        // What Safari answered for the first page stands.
+        assert!(matches!(
+            recorder.opened(),
+            Some(Ok(OpenedWith::CoreDevice))
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn a_recording_that_has_ended_opens_nothing_with_devicectl_either() {
         let folder = tempfile::tempdir().unwrap();
         let launched = folder.path().join("launched-by-devicectl");
@@ -391,31 +406,11 @@ mod tests {
         recorder.xcrun = Some(stub_xcrun());
         // The session ends, as when its thread has gone. The recorder is still held.
         assert!(recorder.end().is_some());
-        recorder.open(launched.to_str().unwrap()).unwrap();
-        let Some(Err(DeviceError::Open(why))) = recorder.opened() else {
-            panic!("a page opened: {:?}", recorder.opened());
-        };
-        assert_eq!(why, "the recording has ended");
+        let error = recorder.open(launched.to_str().unwrap()).unwrap_err();
+        assert!(matches!(error, DeviceError::Open(_)), "{error}");
+        assert!(recorder.opened().is_none());
         // devicectl was not run: its stub would have made the file.
         assert!(!launched.exists());
-    }
-
-    #[test]
-    fn an_answer_that_came_too_late_is_not_the_next_page_s() {
-        let folder = tempfile::tempdir().unwrap();
-        let launched = folder.path().join("launched");
-        let fake = format!("launched={}", launched.display());
-        let mut recorder = start(&fake, [LONG, LONG]).unwrap();
-        // An answer with no one waiting for it, as one that came after its wait had ended.
-        recorder.open.send(PAGE.to_owned()).unwrap();
-        while !launched.exists() {
-            thread::sleep(Duration::from_millis(5));
-        }
-        thread::sleep(Duration::from_millis(50));
-        let other = "http://198.51.100.1:7380/";
-        recorder.open(other).unwrap();
-        // The second page's own answer was waited for, so Safari has opened it by now.
-        assert_eq!(std::fs::read_to_string(&launched).unwrap(), other);
     }
 
     #[test]

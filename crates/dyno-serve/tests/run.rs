@@ -4,6 +4,7 @@
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -15,7 +16,7 @@ use dyno_schema::probe::{MessageDirection, ProbeEvent};
 use dyno_schema::profile::{HostProfile, Scenario};
 use dyno_schema::result::ServePath;
 use dyno_schema::runner::{DriverMessage, RUNNER_PROTOCOL_VERSION, RunMark, RunRequest};
-use dyno_serve::{Opened, ServeDriver, ServeOptions};
+use dyno_serve::{ServeDriver, ServeOptions};
 
 const IPHONE_SAFARI: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) \
     AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.2 Mobile/15E148 Safari/604.1";
@@ -82,7 +83,6 @@ fn a_browser_that_opens_the_harness_page_gives_a_full_run() {
     let options = ServeOptions {
         host: Some("127.0.0.1".to_owned()),
         tunnel_host: None,
-        wait_for_tunnel: Duration::from_secs(15),
         port: 0,
         wait_for_browser: Duration::from_secs(30),
         open_with: None,
@@ -300,7 +300,6 @@ fn a_run_that_no_browser_opens_fails_with_a_reason() {
     let options = ServeOptions {
         host: Some("127.0.0.1".to_owned()),
         tunnel_host: None,
-        wait_for_tunnel: Duration::from_secs(15),
         port: 0,
         wait_for_browser: Duration::from_millis(200),
         open_with: None,
@@ -330,7 +329,6 @@ fn a_run_that_never_goes_idle_ends_with_an_error_and_bad_requests_are_refused() 
     let options = ServeOptions {
         host: Some("127.0.0.1".to_owned()),
         tunnel_host: None,
-        wait_for_tunnel: Duration::from_secs(15),
         port: 0,
         wait_for_browser: Duration::from_secs(30),
         open_with: None,
@@ -390,7 +388,6 @@ fn a_page_that_does_not_send_what_it_held_ends_the_run_with_an_error() {
     let options = ServeOptions {
         host: Some("127.0.0.1".to_owned()),
         tunnel_host: None,
-        wait_for_tunnel: Duration::from_secs(15),
         port: 0,
         wait_for_browser: Duration::from_secs(30),
         open_with: None,
@@ -457,15 +454,21 @@ fn page_run(options: &ServeOptions) -> (tempfile::TempDir, ServeDriver, RunReque
 /// Plays the browser that opens the harness page at this URL, through to the end of the run. It
 /// gives the URL of the game that the page names.
 fn play_browser(harness: &str) -> String {
-    let (status, page) = get(harness, "/");
-    assert_eq!(status, "HTTP/1.1 200 OK");
+    assert_eq!(get(harness, "/").0, "HTTP/1.1 200 OK");
+    post(harness, "/__dyno/hello", r#"{"user_agent":"curl/8.0"}"#);
+    finish_browser(harness)
+}
+
+/// Plays the browser whose page at this URL has said hello, through to the end of the run. It
+/// gives the URL of the game that the page names.
+fn finish_browser(harness: &str) -> String {
+    let (_, page) = get(harness, "/");
     let game = page
         .split("const GAME_URL = \"")
         .nth(1)
         .and_then(|rest| rest.split('"').next())
         .unwrap()
         .to_owned();
-    post(harness, "/__dyno/hello", r#"{"user_agent":"curl/8.0"}"#);
     get(&game, "/");
     post(
         harness,
@@ -490,31 +493,70 @@ fn play_browser(harness: &str) -> String {
 
 /// The options of a run on a phone whose device link has the loopback address as this machine's
 /// tunnel address: this machine has it, and it is not the local network address.
-fn options_with_a_tunnel(wait_for_tunnel: Duration, wait_for_browser: Duration) -> ServeOptions {
+fn options_with_a_tunnel(wait_for_browser: Duration) -> ServeOptions {
     ServeOptions {
         host: None,
         tunnel_host: Some("127.0.0.1".parse().unwrap()),
-        wait_for_tunnel,
         port: 0,
         wait_for_browser,
         open_with: None,
     }
 }
 
-/// The URLs that a run asked to be opened, in order.
-type Asked = Arc<Mutex<Vec<String>>>;
+/// What a run told its caller: the URLs it asked to be opened, and how many times it said that
+/// no request had come to its first address.
+#[derive(Default)]
+struct Told {
+    asked: Mutex<Vec<String>>,
+    said_no_request: AtomicUsize,
+}
 
-/// Waits until the run has asked for this many URLs, and gives the last.
-fn wait_for_ask(asked: &Asked, count: usize) -> String {
-    let until = Instant::now() + Duration::from_secs(20);
-    loop {
-        let urls = asked.lock().unwrap().clone();
-        if urls.len() >= count {
-            return urls[count - 1].clone();
-        }
-        assert!(Instant::now() < until, "the run asked for {urls:?} only");
-        thread::sleep(Duration::from_millis(20));
+impl Told {
+    fn asked(&self) -> Vec<String> {
+        self.asked.lock().unwrap().clone()
     }
+
+    fn said_no_request(&self) -> usize {
+        self.said_no_request.load(Ordering::SeqCst)
+    }
+
+    /// Waits until `done` is true of what the run told.
+    fn wait_until(&self, what: &str, done: impl Fn(&Told) -> bool) {
+        let until = Instant::now() + Duration::from_secs(20);
+        while !done(self) {
+            assert!(Instant::now() < until, "the run never {what}");
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+}
+
+/// What a watched run gave: its messages or its error, and the path the page that ran took.
+type Watched = (
+    Result<Vec<DriverMessage>, dyno_run::DriverError>,
+    Option<ServePath>,
+);
+
+/// Runs the request on a thread of its own, with an opener that is asked for the page and says
+/// the browser was told, and a caller that is told after `say_after` that no request came.
+fn run_watched(
+    mut driver: ServeDriver,
+    request: RunRequest,
+    say_after: Duration,
+) -> (Arc<Told>, thread::JoinHandle<Watched>) {
+    let told = Arc::new(Told::default());
+    let tell = Arc::clone(&told);
+    let run = thread::spawn(move || {
+        let mut open = |url: &str| {
+            tell.asked.lock().unwrap().push(url.to_owned());
+            Ok(())
+        };
+        let mut say = || {
+            tell.said_no_request.fetch_add(1, Ordering::SeqCst);
+        };
+        let messages = driver.run_watched(&request, Some(&mut open), Some((say_after, &mut say)));
+        (messages, driver.serve_path())
+    });
+    (told, run)
 }
 
 #[test]
@@ -522,7 +564,6 @@ fn the_servers_answer_while_the_browser_is_being_asked_to_open_the_page() {
     let options = ServeOptions {
         host: Some("127.0.0.1".to_owned()),
         tunnel_host: None,
-        wait_for_tunnel: Duration::from_secs(15),
         port: 0,
         wait_for_browser: Duration::from_millis(500),
         open_with: None,
@@ -534,36 +575,29 @@ fn the_servers_answer_while_the_browser_is_being_asked_to_open_the_page() {
     // it gets the page, so the servers were serving before it was asked.
     let mut open = |url: &str| {
         answered = Some((url.to_owned(), get(url, "/").0));
-        Opened::No
+        Ok(())
     };
-    let error = driver.run_opening(&request, &mut open).unwrap_err();
+    let error = driver
+        .run_watched(&request, Some(&mut open), None)
+        .unwrap_err();
     assert!(
         error
             .detail()
             .contains("no browser opened the harness page")
     );
     assert_eq!(answered, Some((harness, "HTTP/1.1 200 OK".to_owned())));
-    // The request came to the one address there is.
-    assert_eq!(driver.serve_path(), Some(ServePath::Given));
+    // The page was asked for, but no page said hello, so no run took any path.
+    assert_eq!(driver.serve_path(), None);
 }
 
 #[test]
-fn a_browser_that_comes_to_the_tunnel_address_in_time_is_asked_for_no_other() {
-    let options = options_with_a_tunnel(Duration::from_millis(300), Duration::from_secs(30));
-    let (_build, mut driver, request) = page_run(&options);
+fn a_browser_that_comes_to_the_tunnel_address_is_asked_once_and_nothing_is_said() {
+    let options = options_with_a_tunnel(Duration::from_secs(30));
+    let (_build, driver, request) = page_run(&options);
     let harness = driver.harness_url().to_owned();
     assert!(harness.starts_with("http://127.0.0.1:"), "{harness}");
-    let asked = Asked::default();
-    let asks = Arc::clone(&asked);
-    let run = thread::spawn(move || {
-        let mut open = |url: &str| {
-            asks.lock().unwrap().push(url.to_owned());
-            Opened::Yes
-        };
-        let messages = driver.run_opening(&request, &mut open);
-        (messages, driver.serve_path())
-    });
-    assert_eq!(wait_for_ask(&asked, 1), harness);
+    let (told, run) = run_watched(driver, request, Duration::from_millis(300));
+    told.wait_until("asked for the page", |told| !told.asked().is_empty());
     let game = play_browser(&harness);
     assert!(game.starts_with("http://127.0.0.1:"), "{game}");
 
@@ -572,34 +606,32 @@ fn a_browser_that_comes_to_the_tunnel_address_in_time_is_asked_for_no_other() {
         messages.unwrap().last(),
         Some(DriverMessage::Done { .. })
     ));
-    // The run lasted far longer than the wait, and still asked once.
-    assert_eq!(*asked.lock().unwrap(), [harness]);
+    // The run lasted far longer than the wait. A request had come, so nothing was said.
+    assert_eq!(told.asked(), [harness]);
+    assert_eq!(told.said_no_request(), 0);
     assert_eq!(path, Some(ServePath::Tunnel));
 }
 
 #[test]
-fn with_no_request_at_the_tunnel_address_the_browser_is_asked_for_the_local_network_address() {
-    let options = options_with_a_tunnel(Duration::from_millis(300), Duration::from_secs(30));
-    let (_build, mut driver, request) = page_run(&options);
+fn with_no_request_at_the_tunnel_address_the_run_says_so_once_and_asks_for_nothing_more() {
+    let options = options_with_a_tunnel(Duration::from_secs(30));
+    let (_build, driver, request) = page_run(&options);
     let Some(local) = driver.fallback_harness_url().map(str::to_owned) else {
         // A machine with no network has no second address for a phone.
         return;
     };
     let tunnel = driver.harness_url().to_owned();
-    let asked = Asked::default();
-    let asks = Arc::clone(&asked);
     let started = Instant::now();
-    let run = thread::spawn(move || {
-        let mut open = |url: &str| {
-            asks.lock().unwrap().push(url.to_owned());
-            Opened::Yes
-        };
-        let messages = driver.run_opening(&request, &mut open);
-        (messages, driver.serve_path())
-    });
+    let (told, run) = run_watched(driver, request, Duration::from_millis(300));
     // The browser never comes to the tunnel address, as when the tunnel has gone.
-    assert_eq!(wait_for_ask(&asked, 2), local);
+    told.wait_until("said that no request came", |told| {
+        told.said_no_request() > 0
+    });
     assert!(started.elapsed() >= Duration::from_millis(300));
+    // The run waits on, and asks the browser for nothing: a person opens the other address.
+    thread::sleep(Duration::from_millis(700));
+    assert_eq!(told.asked(), std::slice::from_ref(&tunnel));
+    assert_eq!(told.said_no_request(), 1);
     // The page at the local network address loads the game from that address too.
     let game = play_browser(&local);
     let local_host = local
@@ -612,8 +644,9 @@ fn with_no_request_at_the_tunnel_address_the_browser_is_asked_for_the_local_netw
     let (messages, path) = run.join().unwrap();
     let messages = messages.unwrap();
     assert!(matches!(messages.last(), Some(DriverMessage::Done { .. })));
-    assert_eq!(*asked.lock().unwrap(), [tunnel, local]);
-    // The path is where the browser came, not where it was first sent.
+    assert_eq!(told.asked(), [tunnel]);
+    assert_eq!(told.said_no_request(), 1);
+    // The path is where the page that ran said hello, not where the browser was sent.
     assert_eq!(path, Some(ServePath::LocalNetwork));
     // The game's request is named by the server it came to.
     let request_url = messages.iter().find_map(|message| match message {
@@ -624,41 +657,80 @@ fn with_no_request_at_the_tunnel_address_the_browser_is_asked_for_the_local_netw
 }
 
 #[test]
-fn a_browser_that_was_not_told_is_not_asked_again_and_no_request_is_no_path() {
-    let options = options_with_a_tunnel(Duration::from_millis(100), Duration::from_millis(700));
+fn the_path_is_the_one_of_the_page_that_ran_whatever_else_was_asked_for() {
+    let options = options_with_a_tunnel(Duration::from_secs(30));
     let (_build, mut driver, request) = page_run(&options);
-    let mut asked = Vec::new();
-    // A person opens the page by hand, so a second ask would not help them.
-    let mut open = |url: &str| {
-        asked.push(url.to_owned());
-        Opened::No
+    let Some(local) = driver.fallback_harness_url().map(str::to_owned) else {
+        return;
     };
-    let error = driver.run_opening(&request, &mut open).unwrap_err();
+    let tunnel = driver.harness_url().to_owned();
+    let run = thread::spawn(move || {
+        let messages = driver.run(&request);
+        (messages, driver.serve_path())
+    });
+    // The first requests come to the tunnel address, and no run comes of them: a page that is
+    // fetched and never says hello, a hello that is not one, and a path that is not there.
+    assert_eq!(get(&tunnel, "/").0, "HTTP/1.1 200 OK");
+    assert_eq!(
+        post(&tunnel, "/__dyno/hello", "not a hello").0,
+        "HTTP/1.1 400 Bad Request"
+    );
+    assert_eq!(get(&tunnel, "/other").0, "HTTP/1.1 404 Not Found");
+    // The page that runs says hello at the local network address.
+    let (status, _) = get(&local, "/");
+    assert_eq!(status, "HTTP/1.1 200 OK");
+    let hello = r#"{"user_agent":"curl/8.0"}"#;
+    assert_eq!(post(&local, "/__dyno/hello", hello).0, "HTTP/1.1 200 OK");
+    // A second page, at the tunnel address, is turned away, and sets nothing.
+    assert_eq!(
+        post(&tunnel, "/__dyno/hello", hello).0,
+        "HTTP/1.1 409 Conflict"
+    );
+    finish_browser(&local);
+    let (messages, path) = run.join().unwrap();
+    assert!(matches!(
+        messages.unwrap().last(),
+        Some(DriverMessage::Done { .. })
+    ));
+    assert_eq!(path, Some(ServePath::LocalNetwork));
+}
+
+#[test]
+fn a_run_that_no_page_came_of_took_no_path_and_was_told_once() {
+    let options = options_with_a_tunnel(Duration::from_millis(700));
+    let (_build, driver, request) = page_run(&options);
+    let harness = driver.harness_url().to_owned();
+    let (told, run) = run_watched(driver, request, Duration::from_millis(100));
+    let (messages, path) = run.join().unwrap();
     assert!(
-        error
+        messages
+            .unwrap_err()
             .detail()
             .contains("no browser opened the harness page")
     );
-    assert_eq!(asked, [driver.harness_url().to_owned()]);
-    // The tunnel address was tried, and no request came anywhere: no path is recorded.
-    assert_eq!(driver.asked_path(), ServePath::Tunnel);
+    assert_eq!(told.asked(), [harness]);
+    assert_eq!(told.said_no_request(), 1);
+    // The tunnel address was asked for, and no page ran: no path is recorded.
+    assert_eq!(path, None);
+}
+
+#[test]
+fn an_opener_that_fails_ends_the_run_at_once_with_its_reason() {
+    let options = options_with_a_tunnel(Duration::from_secs(60));
+    let (_build, mut driver, request) = page_run(&options);
+    let started = Instant::now();
+    let mut open = |_: &str| Err("the phone is locked".to_owned());
+    let error = driver
+        .run_watched(&request, Some(&mut open), None)
+        .unwrap_err();
+    assert_eq!(error.detail(), "the phone is locked");
+    assert!(started.elapsed() < Duration::from_secs(10));
     assert_eq!(driver.serve_path(), None);
 }
 
 #[test]
-fn an_opener_that_says_stop_ends_the_run_at_once_with_its_reason() {
-    let options = options_with_a_tunnel(Duration::from_secs(15), Duration::from_secs(60));
-    let (_build, mut driver, request) = page_run(&options);
-    let started = Instant::now();
-    let mut open = |_: &str| Opened::Stop("the phone is locked".to_owned());
-    let error = driver.run_opening(&request, &mut open).unwrap_err();
-    assert_eq!(error.detail(), "the phone is locked");
-    assert!(started.elapsed() < Duration::from_secs(10));
-}
-
-#[test]
-fn a_run_with_no_opener_asks_no_one_and_records_where_the_browser_came() {
-    let options = options_with_a_tunnel(Duration::from_millis(100), Duration::from_secs(30));
+fn a_run_with_no_opener_asks_no_one_and_records_where_the_page_ran() {
+    let options = options_with_a_tunnel(Duration::from_secs(30));
     let (_build, mut driver, request) = page_run(&options);
     // A person opens whichever address reaches this machine: here the second.
     let harness = driver
@@ -710,7 +782,6 @@ fn a_browser_that_tries_https_first_is_refused_at_once_and_its_http_run_complete
     let options = ServeOptions {
         host: Some("127.0.0.1".to_owned()),
         tunnel_host: None,
-        wait_for_tunnel: Duration::from_secs(15),
         port: 0,
         wait_for_browser: Duration::from_secs(30),
         open_with: None,
@@ -794,7 +865,6 @@ fn a_browser_that_dyno_starts_gives_its_memory_before_the_last_message_and_is_st
     let options = ServeOptions {
         host: Some("127.0.0.1".to_owned()),
         tunnel_host: None,
-        wait_for_tunnel: Duration::from_secs(15),
         port: 0,
         wait_for_browser: Duration::from_secs(30),
         open_with: Some(program),

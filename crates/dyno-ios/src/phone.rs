@@ -28,7 +28,7 @@ use idevice::tcp::handle::AdapterHandle;
 use idevice::usbmuxd::{Connection, UsbmuxdAddr, UsbmuxdDevice};
 use idevice::{IdeviceError, IdeviceService, ReadWrite, RsdService};
 use plist::{Dictionary, Value};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 
 use crate::recorder::{Address, DeviceError, Event, started};
 use crate::recording::{LineFeed, Link, Phone, Recording, SampleFeed};
@@ -63,12 +63,12 @@ struct Opened {
     log: SyslogRelayClient,
 }
 
-/// Records the phone at `address` until `stop`, and opens each URL that `open` gives in its Safari
+/// Records the phone at `address` until `stop`, and opens the URL that `open` gives in its Safari
 /// once the recording is on. It says on `events` when the recording starts, or why it did not.
 /// usbmuxd is where `USBMUXD_SOCKET_ADDRESS` says, or in its usual place.
 pub(crate) async fn session(
     address: &Address,
-    open: mpsc::UnboundedReceiver<String>,
+    open: oneshot::Receiver<String>,
     events: &Sender<Event>,
     stop: oneshot::Receiver<()>,
 ) -> Option<Recording> {
@@ -80,7 +80,7 @@ pub(crate) async fn session(
 async fn session_through(
     usbmuxd: &UsbmuxdAddr,
     address: &Address,
-    open: mpsc::UnboundedReceiver<String>,
+    open: oneshot::Receiver<String>,
     events: &Sender<Event>,
     stop: oneshot::Receiver<()>,
 ) -> Option<Recording> {
@@ -104,13 +104,9 @@ async fn session_through(
     };
     let phone = tunnel.phone.clone();
     let app_service = tunnel.handshake.services.get(APP_SERVICE).map(|s| s.port);
-    // Each launch has a handle of its own to the tunnel, which is cheap to copy, so the closure
-    // can launch more than once.
-    let adapter = tunnel.adapter.clone();
-    let launch = move |url| {
-        let mut adapter = adapter.clone();
-        async move { launch_safari(&mut adapter, app_service, url).await }
-    };
+    // The launch has a handle of its own to the tunnel, which is cheap to copy.
+    let mut adapter = tunnel.adapter.clone();
+    let launch = move |url| async move { launch_safari(&mut adapter, app_service, url).await };
     let samples = Tap { channel, columns };
     Some(started(phone, samples, Log(log), open, launch, events, stop).await)
 }
@@ -475,7 +471,7 @@ mod tests {
         let usbmuxd = fake_usbmuxd(folder.path(), &[(PHONE, "USB")]);
         let (events_to, events) = mpsc::channel();
         let (_stop, stop) = oneshot::channel();
-        let (_open, open) = tokio::sync::mpsc::unbounded_channel();
+        let (_open, open) = oneshot::channel();
         let address = Address::Usbmuxd { udid: None };
         let recording = block_on(session_through(&usbmuxd, &address, open, &events_to, stop));
         assert!(recording.is_none());

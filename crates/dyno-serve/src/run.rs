@@ -31,7 +31,7 @@ use tokio::time::Instant;
 use crate::files::{Build, PROBE_PATH, Pages, build_response};
 use crate::harness::{EVENTS_PATH, HELLO_PATH, NEXT_PATH, page};
 use crate::http::{Response, accept, read_request, write_response};
-use crate::{DRIVER_NAME, Opened, Place, RunTimes, ServeDriver, ServeError, browser_name};
+use crate::{DRIVER_NAME, Place, RunTimes, ServeDriver, ServeError, browser_name};
 
 /// How often the run checks whether the frame is idle.
 const TICK: Duration = Duration::from_millis(100);
@@ -55,8 +55,10 @@ const DONE_WAIT: Duration = Duration::from_secs(3);
 /// What the servers saw, in the order they saw it.
 #[derive(Debug)]
 enum Seen {
-    /// A request to the harness server, of any kind: a browser reached it.
-    HarnessRequest,
+    /// A request to the harness server at this place, of any kind: a browser reached it there.
+    HarnessRequest {
+        place: usize,
+    },
     Hello {
         user_agent: String,
         at: Instant,
@@ -126,9 +128,9 @@ struct Shared {
     /// Whether a page has said hello in this run.
     greeted: AtomicBool,
     build: Build,
-    /// The place the first request to a harness server came to: its index in the driver's
-    /// places.
-    first_request: Mutex<Option<usize>>,
+    /// The place whose harness server took the page's `hello`: its index in the driver's
+    /// places. The page that said it is the page that runs.
+    hello_at: Mutex<Option<usize>>,
 }
 
 /// What the two servers at one place share: the run, and what differs between places.
@@ -144,10 +146,17 @@ struct At {
 
 /// How a run asks for the harness page to be opened in the browser, and hears what became of it.
 pub(crate) struct Asks {
-    /// A URL to open.
+    /// The URL to open. The run asks once.
     pub ask: mpsc::UnboundedSender<String>,
-    /// What became of each ask, in order.
-    pub answers: mpsc::UnboundedReceiver<Opened>,
+    /// What became of the ask. An error is why the run must stop.
+    pub answers: mpsc::UnboundedReceiver<Result<(), String>>,
+}
+
+/// What a run says once when no request has come to the harness page at its first address
+/// `after` it began to wait: `say` is called.
+pub(crate) struct NoRequest<'s> {
+    pub after: Duration,
+    pub say: &'s mut dyn FnMut(),
 }
 
 impl Shared {
@@ -210,17 +219,22 @@ pub(crate) struct Served {
     pub user_agent: String,
 }
 
-/// What a run gave, and the place the browser's first request to a harness server came to: its
-/// index in the driver's places. None when no request came.
+/// What a run gave, and the place whose harness server took the page's `hello`: its index in
+/// the driver's places. None when no page said hello.
 pub(crate) struct Outcome {
     pub served: Result<Served, ServeError>,
-    pub first_request: Option<usize>,
+    pub hello_at: Option<usize>,
 }
 
 /// Runs the request and returns every message. An error before `hello` is returned as an error;
 /// after it, the run ends with an `error` message. With `asks`, the run asks for the harness
 /// page to be opened once its servers serve.
-pub(crate) async fn run(driver: &ServeDriver, request: &RunRequest, asks: Option<Asks>) -> Outcome {
+pub(crate) async fn run(
+    driver: &ServeDriver,
+    request: &RunRequest,
+    asks: Option<Asks>,
+    no_request: Option<NoRequest<'_>>,
+) -> Outcome {
     let (seen_sender, seen) = mpsc::unbounded_channel();
     let shared = Arc::new(Shared {
         seen: seen_sender,
@@ -228,17 +242,14 @@ pub(crate) async fn run(driver: &ServeDriver, request: &RunRequest, asks: Option
         command_ready: Notify::new(),
         greeted: AtomicBool::new(false),
         build: driver.build.clone(),
-        first_request: Mutex::new(None),
+        hello_at: Mutex::new(None),
     });
-    let served = run_at(driver, request, asks, &shared, seen).await;
-    let first_request = *shared
-        .first_request
+    let served = run_at(driver, request, asks, no_request, &shared, seen).await;
+    let hello_at = *shared
+        .hello_at
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
-    Outcome {
-        served,
-        first_request,
-    }
+    Outcome { served, hello_at }
 }
 
 /// The launch URL at a place: the request's, which names the first place's game server, with
@@ -254,6 +265,7 @@ async fn run_at(
     driver: &ServeDriver,
     request: &RunRequest,
     asks: Option<Asks>,
+    no_request: Option<NoRequest<'_>>,
     shared: &Arc<Shared>,
     mut seen: mpsc::UnboundedReceiver<Seen>,
 ) -> Result<Served, ServeError> {
@@ -277,7 +289,7 @@ async fn run_at(
         servers.0.push(tokio::spawn(accept(game, at, serve_game)));
     }
 
-    let (user_agent, started) = wait_for_hello(&mut seen, driver, asks).await?;
+    let (user_agent, started) = wait_for_hello(&mut seen, driver, asks, no_request).await?;
     let since_hello = Instant::now().saturating_duration_since(started);
     let started_epoch_ms = epoch_ms_now() - since_hello.as_secs_f64() * 1_000.0;
     let mut run = Run {
@@ -381,27 +393,26 @@ async fn end_page(shared: &Shared) {
 
 /// Waits for the first `hello`. Anything the servers saw before it is not part of the run.
 ///
-/// With `asks`, it asks for the harness page to be opened at the first place. When the browser
-/// was told, and no request has come to a harness server `wait_for_tunnel` later, it asks for the
-/// next place, if there is one: the tunnel that the first address is in can go away while the
-/// browser starts. A request to any harness server ends that, because the browser has a path.
+/// With `asks`, it asks once for the harness page to be opened at the first place. Nothing is
+/// asked for again: a second ask would restart the browser under a page that may be loading.
+/// With `no_request`, it says so once when no request has come to the first place's harness
+/// server in time, and waits on.
 async fn wait_for_hello(
     seen: &mut mpsc::UnboundedReceiver<Seen>,
     driver: &ServeDriver,
     mut asks: Option<Asks>,
+    mut no_request: Option<NoRequest<'_>>,
 ) -> Result<(String, Instant), ServeError> {
     let no_browser = || ServeError::NoBrowser(driver.wait_for_browser.as_secs());
     let give_up_at = Instant::now() + driver.wait_for_browser;
-    let mut harness_urls = driver.places.iter().map(|place| place.harness_url.clone());
-    let ask_next = |asks: &Option<Asks>, url: Option<String>| {
-        if let (Some(asks), Some(url)) = (asks, url) {
-            let _ = asks.ask.send(url);
-        }
-    };
-    ask_next(&asks, harness_urls.next());
-    let mut requested = false;
-    // When to ask for the next place. None while no ask is due.
-    let mut ask_at: Option<Instant> = None;
+    if let Some(asks) = &asks {
+        let _ = asks.ask.send(driver.harness_url().to_owned());
+    }
+    // When to say that no request has come to the first place. None once it is said, or once a
+    // request has come there.
+    let mut say_at = no_request
+        .as_ref()
+        .map(|no_request| Instant::now() + no_request.after);
     loop {
         let answer = async {
             match &mut asks {
@@ -409,8 +420,8 @@ async fn wait_for_hello(
                 None => std::future::pending().await,
             }
         };
-        let next_ask = async {
-            match ask_at {
+        let time_to_say = async {
+            match say_at {
                 Some(at) => tokio::time::sleep_until(at).await,
                 None => std::future::pending().await,
             }
@@ -418,26 +429,22 @@ async fn wait_for_hello(
         tokio::select! {
             item = seen.recv() => match item {
                 Some(Seen::Hello { user_agent, at }) => return Ok((user_agent, at)),
-                Some(Seen::HarnessRequest) => {
-                    requested = true;
-                    ask_at = None;
-                }
+                Some(Seen::HarnessRequest { place: 0 }) => say_at = None,
                 Some(_) => {}
                 // The servers hold a sender for as long as the run, so this does not happen.
                 None => return Err(no_browser()),
             },
             answer = answer => match answer {
-                Some(Opened::Yes) if !requested && harness_urls.len() > 0 => {
-                    ask_at = Some(Instant::now() + driver.wait_for_tunnel);
-                }
-                Some(Opened::Yes | Opened::No) => {}
-                Some(Opened::Stop(reason)) => return Err(ServeError::Stopped(reason)),
-                // Whoever opens the page has gone, so there is no one to ask again.
+                Some(Ok(())) => {}
+                Some(Err(reason)) => return Err(ServeError::Stopped(reason)),
+                // Whoever opens the page has gone.
                 None => asks = None,
             },
-            () = next_ask => {
-                ask_at = None;
-                ask_next(&asks, harness_urls.next());
+            () = time_to_say => {
+                say_at = None;
+                if let Some(no_request) = &mut no_request {
+                    (no_request.say)();
+                }
             }
             () = tokio::time::sleep_until(give_up_at) => return Err(no_browser()),
         }
@@ -498,7 +505,7 @@ impl Run {
     fn take(&mut self, item: Seen) {
         match item {
             // A page that says hello again is turned away by the server.
-            Seen::Hello { .. } | Seen::HarnessRequest => {}
+            Seen::Hello { .. } | Seen::HarnessRequest { .. } => {}
             Seen::RequestStarted { at } => {
                 self.in_flight += 1;
                 self.last_started = at;
@@ -612,19 +619,10 @@ async fn serve_harness(at: Arc<At>, mut socket: TcpStream) {
         return;
     };
     let shared = &at.shared;
-    shared
-        .first_request
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .get_or_insert(at.place);
-    let _ = shared.seen.send(Seen::HarnessRequest);
+    let _ = shared.seen.send(Seen::HarnessRequest { place: at.place });
     let response = match (request.method.as_str(), request.path.as_str()) {
-        ("GET", "/") => Response::new(
-            "200 OK",
-            "text/html; charset=utf-8",
-            at.page.clone().into_bytes(),
-        ),
-        ("POST", HELLO_PATH) => hello(shared, &request.body),
+        ("GET", "/") => Response::shared("200 OK", "text/html; charset=utf-8", at.page.as_bytes()),
+        ("POST", HELLO_PATH) => hello(&at, &request.body),
         ("POST", EVENTS_PATH) => events(shared, &request.body),
         ("GET", NEXT_PATH) => next_command(shared).await,
         _ => Response::error("404 Not Found"),
@@ -632,14 +630,20 @@ async fn serve_harness(at: Arc<At>, mut socket: TcpStream) {
     write_response(&mut socket, &response, false).await;
 }
 
-/// The first `hello` starts the run. A later one is turned away.
-fn hello(shared: &Shared, body: &[u8]) -> Response {
+/// The first `hello` starts the run, and its place is the path the run took. A later one is
+/// turned away, and so is one that is not a hello: neither sets the path.
+fn hello(at: &At, body: &[u8]) -> Response<'static> {
+    let shared = &at.shared;
     let Ok(hello) = serde_json::from_slice::<Hello>(body) else {
         return Response::error("400 Bad Request");
     };
     if shared.greeted.swap(true, Ordering::SeqCst) {
         return Response::error("409 Conflict");
     }
+    *shared
+        .hello_at
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner) = Some(at.place);
     let _ = shared.seen.send(Seen::Hello {
         user_agent: hello.user_agent,
         at: Instant::now(),
@@ -648,7 +652,7 @@ fn hello(shared: &Shared, body: &[u8]) -> Response {
 }
 
 /// A batch of events. An event this version does not know is dropped.
-fn events(shared: &Shared, body: &[u8]) -> Response {
+fn events(shared: &Shared, body: &[u8]) -> Response<'static> {
     let Ok(batch) = serde_json::from_slice::<Vec<Value>>(body) else {
         return Response::error("400 Bad Request");
     };
@@ -664,7 +668,7 @@ fn events(shared: &Shared, body: &[u8]) -> Response {
 }
 
 /// The next command, as soon as there is one, or `wait` after a while.
-async fn next_command(shared: &Shared) -> Response {
+async fn next_command(shared: &Shared) -> Response<'static> {
     let until = Instant::now() + POLL_WAIT;
     loop {
         if let Some(command) = shared.queue().pop_front() {
@@ -679,7 +683,7 @@ async fn next_command(shared: &Shared) -> Response {
     }
 }
 
-fn json_response(value: &impl Serialize) -> Response {
+fn json_response(value: &impl Serialize) -> Response<'static> {
     let body = serde_json::to_vec(value).unwrap_or_default();
     Response::new("200 OK", "application/json", body)
 }
@@ -696,10 +700,10 @@ async fn serve_game(at: Arc<At>, mut socket: TcpStream) {
         // dyno's own file is not a game request.
         let readable = head_only || request.method == "GET";
         let response = if readable {
-            Response::new(
+            Response::shared(
                 "200 OK",
                 "text/javascript; charset=utf-8",
-                dyno_cdp::PROBE.as_bytes().to_vec(),
+                dyno_cdp::PROBE.as_bytes(),
             )
         } else {
             Response::error("404 Not Found")

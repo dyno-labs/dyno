@@ -5,6 +5,7 @@ mod common;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -43,6 +44,8 @@ struct Served {
     /// What dyno printed before the URL, and the reader of the rest.
     stderr_before: String,
     stderr_rest: JoinHandle<String>,
+    /// What dyno has printed after the URL so far.
+    stderr_so_far: Arc<Mutex<String>>,
 }
 
 /// Starts `dyno check` with `args` in the test data folder, served on the loopback address, and
@@ -79,20 +82,42 @@ fn start_where_dyno_chooses(extra_env: &[(&str, &str)], args: &[&str]) -> Served
             break rest.split('/').next().unwrap().to_owned();
         }
     };
+    let stderr_so_far = Arc::new(Mutex::new(String::new()));
+    let so_far = Arc::clone(&stderr_so_far);
     let stderr_rest = thread::spawn(move || {
-        let mut rest = String::new();
-        let _ = stderr.read_to_string(&mut rest);
-        rest
+        let mut line = String::new();
+        while stderr.read_line(&mut line).is_ok_and(|read| read > 0) {
+            so_far.lock().unwrap().push_str(&line);
+            line.clear();
+        }
+        so_far.lock().unwrap().clone()
     });
     Served {
         child,
         harness,
         stderr_before,
         stderr_rest,
+        stderr_so_far,
     }
 }
 
 impl Served {
+    /// Waits until dyno has printed a line with `words` after the URL, and gives that line.
+    fn wait_for_stderr(&self, words: &str, within: Duration) -> String {
+        let until = Instant::now() + within;
+        loop {
+            let so_far = self.stderr_so_far.lock().unwrap().clone();
+            if let Some(line) = so_far.lines().find(|line| line.contains(words)) {
+                return line.to_owned();
+            }
+            assert!(
+                Instant::now() < until,
+                "dyno did not say {words:?}: {so_far}"
+            );
+            thread::sleep(Duration::from_millis(100));
+        }
+    }
+
     /// Waits for dyno to exit.
     fn finish(self) -> Outcome {
         let output = self.child.wait_with_output().unwrap();
@@ -753,7 +778,7 @@ fn a_device_check_serves_over_the_device_link_when_this_machine_has_a_tunnel_to_
     let phone = format!("{TUNNEL_AT_LOOPBACK};launched={}", launched.display());
     let (outcome, result, harness) = device_check_of_phone_where_dyno_chooses(&phone, &[], &[]);
     // The servers are at the tunnel address, and that is the page the phone's Safari was told
-    // to open, once and no more.
+    // to open.
     assert!(harness.starts_with("127.0.0.1:"), "{harness}");
     assert_eq!(
         std::fs::read_to_string(&launched).unwrap(),
@@ -767,15 +792,15 @@ fn a_device_check_serves_over_the_device_link_when_this_machine_has_a_tunnel_to_
         "{}",
         outcome.stderr
     );
-    for not_said in [NOT_OVER_THE_DEVICE_LINK, "Asking Safari for"] {
+    // A request came over the device link, so dyno says nothing of one that did not.
+    for not_said in [NOT_OVER_THE_DEVICE_LINK, NO_REQUEST] {
         assert!(!outcome.stderr.contains(not_said), "{}", outcome.stderr);
     }
-    // The browser's first request came to the tunnel address.
+    // The page that ran said hello at the tunnel address.
     assert_eq!(result["run"]["serve_path"], "tunnel");
     let footprint = run_measure(&result, "device.phys_footprint");
     assert_eq!(footprint["status"], "measured", "{footprint}");
-    // The page is at the local network address too, unless this machine has no network, and
-    // dyno says when it asks Safari for that address.
+    // The page is at the local network address too, unless this machine has no network.
     let (address, path) = own_address_path();
     let also_at = format!("dyno check: the page is also at http://{address}:");
     assert_eq!(
@@ -784,18 +809,13 @@ fn a_device_check_serves_over_the_device_link_when_this_machine_has_a_tunnel_to_
         "{}",
         outcome.stderr
     );
-    assert_eq!(
-        outcome
-            .stderr
-            .contains("With no request over the device link in 15 s, dyno asks Safari for it."),
-        path == "local_network",
-        "{}",
-        outcome.stderr
-    );
 }
 
+/// What dyno says when no request has come over the device link.
+const NO_REQUEST: &str = "dyno check: no request has come over the device link in 30 s.";
+
 #[test]
-fn with_no_request_over_the_device_link_safari_is_asked_for_the_local_network_address() {
+fn with_no_request_over_the_device_link_dyno_says_so_and_a_person_opens_the_other_address() {
     let (address, path) = own_address_path();
     if path != "local_network" {
         // A machine with no network has no second address for a phone.
@@ -810,38 +830,37 @@ fn with_no_request_over_the_device_link_safari_is_asked_for_the_local_network_ad
     );
     let at_tunnel = format!("http://{}/", served.harness);
     // The phone's Safari never comes to the tunnel address, as when the tunnel has gone. After
-    // 15 s dyno asks Safari for the local network address.
-    let until = Instant::now() + Duration::from_secs(60);
-    let at_local = loop {
-        let asked = std::fs::read_to_string(&launched).unwrap_or_default();
-        if !asked.is_empty() && asked != at_tunnel {
-            break asked;
-        }
-        assert!(
-            Instant::now() < until,
-            "Safari was asked for {asked:?} only"
-        );
-        thread::sleep(Duration::from_millis(100));
-    };
+    // 30 s dyno says so, with the local network address to open and the flag to run again with.
+    let said = served.wait_for_stderr(NO_REQUEST, Duration::from_secs(90));
+    let at_local = said
+        .split("can open ")
+        .nth(1)
+        .and_then(|rest| rest.split(" by hand").next())
+        .unwrap()
+        .to_owned();
     assert!(
         at_local.starts_with(&format!("http://{address}:")),
         "{at_local}"
     );
+    assert!(
+        said.contains(&format!(
+            "or run again with --serve-host {address} to use the local network from the start."
+        )),
+        "{said}"
+    );
+    // A person opens that address by hand.
     let harness = at_local
         .trim_start_matches("http://")
         .trim_end_matches('/')
         .to_owned();
     open_as_browser(&harness, "");
     let outcome = served.finish();
-    assert!(
-        outcome.stderr.contains(&format!(
-            "dyno check: no request came over the device link in 15 s. Asking Safari for \
-             {at_local}, which needs the phone on this machine's network."
-        )),
-        "{}",
-        outcome.stderr
-    );
-    // The path is the one the browser came by, not the one that was tried first.
+    // dyno said it once, and asked Safari for one page: the tunnel address. Nothing was
+    // launched again.
+    assert_eq!(outcome.stderr.matches(NO_REQUEST).count(), 1);
+    assert_eq!(std::fs::read_to_string(&launched).unwrap(), at_tunnel);
+    assert_eq!(outcome.stderr.matches("in Safari on").count(), 1);
+    // The path is the one of the page that ran, not the one that was asked for.
     let result: serde_json::Value = serde_json::from_str(&outcome.stdout).unwrap();
     assert_eq!(result["run"]["serve_path"], "local_network");
     let footprint = run_measure(&result, "device.phys_footprint");
@@ -862,14 +881,12 @@ fn with_no_open_dyno_names_both_addresses_and_asks_safari_for_neither() {
         "{}",
         outcome.stderr
     );
-    // A person opens the page, so dyno says nothing of asking Safari, and asks it for nothing.
-    for not_said in [
-        "dyno asks Safari for it",
-        "Asking Safari for",
-        "in Safari on",
-    ] {
-        assert!(!outcome.stderr.contains(not_said), "{}", outcome.stderr);
-    }
+    // A person opens the page, so dyno asks Safari for nothing.
+    assert!(
+        !outcome.stderr.contains("in Safari on"),
+        "{}",
+        outcome.stderr
+    );
     // The person opened the first address, so that is the path.
     assert_eq!(result["run"]["serve_path"], "tunnel");
 }

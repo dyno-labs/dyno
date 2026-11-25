@@ -221,7 +221,7 @@ fn a_build_server_gives_every_file_the_scan_lists_and_none_that_it_skips() {
 fn a_build_server_of_a_scan_gives_the_bytes_of_the_scan_and_no_more() {
     let folder = build_with_skipped_files();
     let (files, bytes) = scan(folder.path());
-    let build = Build::of_scan(folder.path(), bytes);
+    let build = Build::of_scan(bytes);
     let server = BuildServer::start_build(build).unwrap();
     assert_serves_the_inventory_and_no_more(&server, folder.path(), &files);
     // After the scan: a file is added, one is edited, and one is swapped for a link out of the
@@ -243,4 +243,24 @@ fn a_build_server_of_a_scan_gives_the_bytes_of_the_scan_and_no_more() {
     );
     assert!(head.starts_with("HTTP/1.1 206 Partial Content"), "{head}");
     assert_eq!(body, b"console");
+    // A HEAD request gets the file's length, and none of its bytes.
+    let (head, body) = exchange(server.url(), "HEAD /js/main.js HTTP/1.1\r\n\r\n");
+    assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
+    assert!(head.contains("Content-Length: 19"), "{head}");
+    assert_eq!(body, b"");
+}
+
+#[test]
+fn a_build_server_answers_exact_names_only() {
+    let folder = tempfile::tempdir().unwrap();
+    write_file(folder.path(), "Index.html", "page");
+    write_file(folder.path(), "JS/Main.js", "1");
+    let server = BuildServer::start(folder.path()).unwrap();
+    assert_eq!(get(server.url(), "/Index.html").1, b"page");
+    assert_eq!(get(server.url(), "/JS/Main.js").1, b"1");
+    // On any volume: `/` asks for `index.html`, which is not this build's `Index.html`.
+    for path in ["/", "/index.html", "/js/main.js"] {
+        let (head, _) = get(server.url(), path);
+        assert!(head.starts_with("HTTP/1.1 404 Not Found"), "{path}: {head}");
+    }
 }

@@ -1627,7 +1627,7 @@
           "default": null
         },
         "serve_path": {
-          "description": "The path the browser took to the page of a served run (`--driver serve`): which of this\nmachine's addresses its first request to the harness page came to. That is the path\nthat was used, not one that was only tried. Null when no browser asked for the page, and\nfor any other check.",
+          "description": "The path the browser took to the page of a served run (`--driver serve`): which of this\nmachine's addresses the page that ran said hello at. That is the path that was used, not\none that was only asked for. Null when no page ran, and for any other check.",
           "anyOf": [
             {
               "$ref": "#/$defs/ServePath"
@@ -1762,7 +1762,7 @@
       ]
     },
     "ServePath": {
-      "description": "The path a browser took to the page that a served run serves: the address of this machine\nthat its first request to the harness page came to.",
+      "description": "The path a browser took to the page that a served run serves: the address of this machine\nthat the page which ran said hello at.",
       "oneOf": [
         {
           "description": "This machine's address inside the device link's tunnel to the phone. The phone needs no\nnetwork path to this machine.",

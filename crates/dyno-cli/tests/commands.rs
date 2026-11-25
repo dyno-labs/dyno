@@ -550,3 +550,106 @@ fn an_unknown_budget_key_is_named() {
         outcome.stderr
     );
 }
+
+/// The CRC-32 of zip, for the zip that the next test builds.
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = u32::MAX;
+    for byte in bytes {
+        crc ^= u32::from(*byte);
+        for _ in 0..8 {
+            crc = (crc >> 1) ^ (0xEDB8_8320 & 0_u32.wrapping_sub(crc & 1));
+        }
+    }
+    !crc
+}
+
+/// A zip of stored entries, each with a name as raw bytes and an extra field, written the same
+/// in its local header and in the central directory.
+fn stored_zip(entries: &[(&[u8], Vec<u8>, &[u8])]) -> Vec<u8> {
+    let short = |value: usize| u16::try_from(value).unwrap().to_le_bytes();
+    let long = |value: usize| u32::try_from(value).unwrap().to_le_bytes();
+    let mut zip = Vec::new();
+    let mut central = Vec::new();
+    for (name, extra, contents) in entries {
+        let offset = zip.len();
+        // Version needed 2.0, no flags, stored, the first day of 1980, then the entry's own
+        // values. The central record has the same fields after its own first two.
+        let mut fields = vec![20, 0, 0, 0, 0, 0, 0, 0, 0x21, 0];
+        fields.extend(crc32(contents).to_le_bytes());
+        fields.extend(long(contents.len()));
+        fields.extend(long(contents.len()));
+        fields.extend(short(name.len()));
+        fields.extend(short(extra.len()));
+        zip.extend(b"PK\x03\x04");
+        zip.extend(&fields);
+        zip.extend(*name);
+        zip.extend(extra);
+        zip.extend(*contents);
+        central.extend(b"PK\x01\x02");
+        // Made by version 2.0.
+        central.extend([20, 0]);
+        central.extend(&fields);
+        // No comment, disk 0, no attributes.
+        central.extend([0; 10]);
+        central.extend(long(offset));
+        central.extend(*name);
+        central.extend(extra);
+    }
+    let central_offset = zip.len();
+    zip.extend(&central);
+    zip.extend(b"PK\x05\x06\0\0\0\0");
+    zip.extend(short(entries.len()));
+    zip.extend(short(entries.len()));
+    zip.extend(long(central.len()));
+    zip.extend(long(central_offset));
+    zip.extend([0, 0]);
+    zip
+}
+
+/// The Info-ZIP Unicode Path extra field (0x7075) for a name: its version, the CRC-32 of the
+/// name as the header spells it, and the name in UTF-8.
+fn unicode_path_field(header_name: &[u8], utf8_name: &str) -> Vec<u8> {
+    let mut field = vec![0x75, 0x70];
+    field.extend(u16::try_from(5 + utf8_name.len()).unwrap().to_le_bytes());
+    field.push(1);
+    field.extend(crc32(header_name).to_le_bytes());
+    field.extend(utf8_name.as_bytes());
+    field
+}
+
+#[test]
+fn a_zip_with_a_name_in_an_older_encoding_and_a_unicode_path_field_is_read() {
+    // What a Java build tool writes for assets/表紙.js on a machine set to Shift_JIS: the header
+    // has the name in Shift_JIS, and a Unicode Path field has it in UTF-8. The second byte of 表
+    // in Shift_JIS is 0x5C, a backslash in ASCII, and it is not a path separator here.
+    let header_name: &[u8] = b"assets/\x95\x5C\x8E\x86.js";
+    let unicode_name = "assets/表紙.js";
+    let zip = stored_zip(&[
+        (
+            b"index.html",
+            Vec::new(),
+            b"<script src=assets/game.js></script>",
+        ),
+        (
+            header_name,
+            unicode_path_field(header_name, unicode_name),
+            b"console.log('cover')",
+        ),
+    ]);
+    let folder = tempfile::tempdir().unwrap();
+    let path = folder.path().join("build.zip");
+    fs::write(&path, zip).unwrap();
+
+    let outcome = dyno(&["check", &path.display().to_string()]);
+    assert_exit(&outcome, PASS);
+    let result = json(&outcome);
+    let files = result["deterministic"]["build"]["files"]
+        .as_array()
+        .unwrap();
+    let paths: Vec<&str> = files
+        .iter()
+        .map(|file| file["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths, [unicode_name, "index.html"]);
+    assert_eq!(files[0]["bytes"], 20);
+}

@@ -840,7 +840,10 @@ fn a_zip_with_two_entries_of_one_name_is_refused_by_verify_and_by_check() {
     for outcome in [verified, checked] {
         assert_exit(&outcome, USAGE);
         assert!(outcome.stdout.is_empty());
-        assert_stderr_has(&outcome, "has two entries with the same name");
+        assert_stderr_has(
+            &outcome,
+            "names a file or a folder twice in its central directory",
+        );
     }
 }
 

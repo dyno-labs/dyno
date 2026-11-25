@@ -61,11 +61,12 @@ pub enum ScanError {
     BadPath(#[from] RelPathError),
     #[error("the zip has two entries for {0}")]
     DuplicateZipEntry(RelPath),
-    /// Two entries with one name: each program that unpacks the zip keeps one, and not all
-    /// keep the same one.
+    /// One name twice in the central directory: each program that unpacks the zip keeps one of
+    /// the two entries, and not all keep the same one. The zip reader does not say which name.
     #[error(
-        "the zip {0:?} has two entries with the same name, so what it holds depends on the \
-         program that unpacks it"
+        "the zip {0:?} names a file or a folder twice in its central directory, so what it holds \
+         depends on the program that unpacks it. List the zip to find the name, and zip the \
+         build again"
     )]
     SameNameTwiceInZip(PathBuf),
     #[error("the zip has an entry name with a NUL byte: {0:?}")]

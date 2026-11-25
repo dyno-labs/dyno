@@ -289,17 +289,11 @@ Owner: A. Files: `inventory.rs`, `sniff.rs`. Entry: `inventory::scan`.
 top-level folder and there is no `index.html` at the root, strip that folder.
 Skip directory entries and symbolic links. A zip entry name with a NUL byte
 is an error, because the build id puts a NUL after each path. Two entries for one
-path are an error. A zip names each entry twice, in the central directory at its
-end and in a local header before the entry's bytes, and what a zip holds is what
-its central directory names. So the scan walks every record of the central
-directory before it reads an entry, and refuses a zip that two programs can
-unpack as two builds: one with two file entries of one name, where programs
-differ in which they keep, and one with an entry whose local header does not say
-what its central record says, such as another name, a size or a checksum. A
-folder that is named twice is one folder, so it is not an error. The header
-check is the zip crate's own (`enforce_header_consistency`), and the reader that
-keeps entries of one name apart is in its `unstable` module, so `Cargo.toml`
-pins the crate's exact version. A zip with more than 100,000 entries, or whose central
+path are an error. A zip's content is what its central directory names, so a
+program that unpacks a build must follow the central directory, as dyno does.
+dyno does not compare the central directory with the local headers before each
+entry's bytes. A zip whose central directory names a file or a folder twice is
+an error, because programs differ in which of the two entries they keep. A zip with more than 100,000 entries, or whose central
 directory states more than 1 GiB unpacked, is an error before any entry is
 read, so a zip bomb cannot fill memory. The zip crate refuses an entry that
 unpacks past the size it states, so the stated sizes hold. Each of these

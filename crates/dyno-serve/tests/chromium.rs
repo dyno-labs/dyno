@@ -18,16 +18,18 @@ use dyno_serve::{ServeDriver, ServeOptions};
 
 /// A game that tells its host what it knows of the page around it, and then tries to drive the
 /// run itself: it posts a frame document with a pixel ratio of 99 and the end of a flush to the
-/// harness server, on the port before its own, with no key, as the game of another check could.
+/// harness server, with no key, as the game of another check could. Its launch query names the
+/// harness server's origin, which a game of another check could learn. A no-cors fetch fails only
+/// when no server answered, so the game says which of its tries got an answer.
 const GAME: &str = r#"
 parent.postMessage("referrer:" + document.referrer, "*");
 parent.postMessage("ancestors:" + Array.from(location.ancestorOrigins || []).join(" "), "*");
-const harness = location.protocol + "//" + location.hostname + ":" + (Number(location.port) - 1);
+const harness = new URLSearchParams(location.search).get("harness");
 const forged = JSON.stringify([{ kind: "document", time_origin: 1, device_pixel_ratio: 99 }, { kind: "flushed" }]);
 for (const path of ["/__dyno/events", "/__dyno/hello", "/__dyno/next"]) {
   fetch(harness + path, { method: "POST", mode: "no-cors", body: forged }).then(
-    () => parent.postMessage("tried:" + path, "*"),
-    () => parent.postMessage("tried:" + path, "*"),
+    () => parent.postMessage("answered:" + path, "*"),
+    () => parent.postMessage("unreached:" + path, "*"),
   );
 }
 "#;
@@ -76,7 +78,8 @@ fn in_chromium_the_page_drives_the_run_with_its_key_and_the_frame_learns_none_of
     let harness_origin = harness.split("/?").next().unwrap().to_owned();
     let request = RunRequest {
         protocol_version: RUNNER_PROTOCOL_VERSION,
-        launch_url: driver.launch_url(None),
+        // The query also holds a placeholder's text, which the page must keep as it is.
+        launch_url: driver.launch_url(Some(&format!("harness={harness_origin}&x={{{{KEY}}}}"))),
         host_profile: HostProfile::reels(),
         scenario: Scenario::Alone,
         spins: None,
@@ -116,10 +119,14 @@ fn in_chromium_the_page_drives_the_run_with_its_key_and_the_frame_learns_none_of
         "{told:?}"
     );
     assert!(told.iter().all(|name| !name.contains("key")), "{told:?}");
-    // The game's tries reached the harness server and were refused: the self-check has the
-    // frame's own pixel ratio, from its one document.
+    // The game's tries reached the harness server, and it answered each. It took none of them:
+    // the self-check has the frame's own pixel ratio, from its one document, so the forged
+    // events, which are well formed, were refused.
     for path in ["/__dyno/events", "/__dyno/hello", "/__dyno/next"] {
-        assert!(told.contains(&format!("tried:{path}").as_str()), "{told:?}");
+        assert!(
+            told.contains(&format!("answered:{path}").as_str()),
+            "{told:?}"
+        );
     }
     let self_check = messages.iter().find_map(|message| match message {
         DriverMessage::SelfCheck {

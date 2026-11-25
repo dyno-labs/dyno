@@ -33,11 +33,11 @@ const TLS_HANDSHAKE_RECORD: u8 = 0x16;
 /// a fatal (2) `handshake_failure` (40). A TLS client reads it as "no TLS here", and stops.
 const TLS_REFUSAL: [u8; 7] = [0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28];
 
-/// How long the server reads what a refused TLS client still sends, before it closes.
-const TLS_REFUSAL_DRAIN: Duration = Duration::from_secs(1);
+/// How long the server reads what a refused client still sends, before it closes: a TLS client,
+/// or one whose request was refused on its head.
+const REFUSAL_DRAIN: Duration = Duration::from_secs(1);
 
-/// One request, as the server needs it.
-#[derive(Debug)]
+/// One request, as the server needs it. Its debug form leaves out the key and the body.
 pub struct Request {
     pub method: String,
     /// The path, without the query string or fragment, still percent-encoded.
@@ -51,8 +51,8 @@ pub struct Request {
     pub body: Vec<u8>,
 }
 
-/// One response. Every response has `Cache-Control: no-store`, so each run loads afresh.
-#[derive(Debug)]
+/// One response. Every response has `Cache-Control: no-store`, so each run loads afresh. Its
+/// debug form gives the body's length and not its bytes, which can be a page with a key.
 pub struct Response<'b> {
     pub status: &'static str,
     pub content_type: &'static str,
@@ -63,7 +63,6 @@ pub struct Response<'b> {
 /// A response's body. A build is held in memory once, and a response for one of its files is
 /// written from there: the response holds no copy of the file, and a HEAD request reads only
 /// its length.
-#[derive(Debug)]
 pub enum Body<'b> {
     /// Bytes that the response made, such as an error's words or a command.
     Owned(Vec<u8>),
@@ -127,9 +126,50 @@ where
     }
 }
 
+impl std::fmt::Debug for Request {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Request")
+            .field("method", &self.method)
+            .field("path", &self.path)
+            .field("range", &self.range)
+            .field("key", &self.key.as_ref().map(|_| ".."))
+            .field("body_len", &self.body.len())
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for Response<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Response")
+            .field("status", &self.status)
+            .field("content_type", &self.content_type)
+            .field("headers", &self.headers)
+            .field("body_len", &self.body.len())
+            .finish()
+    }
+}
+
+/// A request whose head has been read, and whose body has not. The caller decides from the head
+/// whether to read the body at all.
+pub struct Head {
+    /// The request, with no body yet.
+    pub request: Request,
+    /// The `Content-Length` header, as sent.
+    length: Option<String>,
+    /// What came after the head in the bytes read so far: the start of the body.
+    after: Vec<u8>,
+}
+
 /// Reads one request. None when the client hung up, or sent too much or something that is not
 /// HTTP. A TLS client hello is refused as soon as its first byte comes.
 pub async fn read_request(socket: &mut TcpStream) -> Option<Request> {
+    let head = read_head(socket).await?;
+    read_body(socket, head).await
+}
+
+/// Reads one request's head: its method, path and headers. None as for [`read_request`]. The body
+/// is neither read nor measured against its limit, so a request can be refused on its head alone.
+pub async fn read_head(socket: &mut TcpStream) -> Option<Head> {
     let mut buffer = Vec::with_capacity(4096);
     let mut chunk = [0_u8; 4096];
     let head_length = loop {
@@ -167,13 +207,7 @@ pub async fn read_request(socket: &mut TcpStream) -> Option<Request> {
             .and_then(|header| std::str::from_utf8(header.value).ok())
             .map(|value| value.trim().to_owned())
     };
-    let length = match header("content-length") {
-        Some(value) => value.parse::<usize>().ok()?,
-        None => 0,
-    };
-    if length > MAX_BODY_BYTES {
-        return None;
-    }
+    let length = header("content-length");
     let range = header("range");
     let key = header(KEY_HEADER).or_else(|| {
         query
@@ -181,7 +215,31 @@ pub async fn read_request(socket: &mut TcpStream) -> Option<Request> {
             .find_map(|pair| pair.strip_prefix(KEY_PARAMETER)?.strip_prefix('='))
             .map(str::to_owned)
     });
-    let mut body = buffer[head_length..].to_vec();
+    Some(Head {
+        request: Request {
+            method,
+            path,
+            range,
+            key,
+            body: Vec::new(),
+        },
+        length,
+        after: buffer[head_length..].to_vec(),
+    })
+}
+
+/// Reads the body of a request whose head was read. None when the client hung up, or sent a
+/// length that is not one or is over the limit.
+pub async fn read_body(socket: &mut TcpStream, head: Head) -> Option<Request> {
+    let length = match head.length {
+        Some(value) => value.parse::<usize>().ok()?,
+        None => 0,
+    };
+    if length > MAX_BODY_BYTES {
+        return None;
+    }
+    let mut chunk = [0_u8; 4096];
+    let mut body = head.after;
     while body.len() < length {
         let count = socket.read(&mut chunk).await.ok()?;
         if count == 0 {
@@ -191,12 +249,24 @@ pub async fn read_request(socket: &mut TcpStream) -> Option<Request> {
     }
     body.truncate(length);
     Some(Request {
-        method,
-        path,
-        range,
-        key,
         body,
+        ..head.request
     })
+}
+
+/// Writes a response to a request whose body was not read, and closes. The server reads on for a
+/// moment after it, as after a TLS refusal: a socket closed with bytes still unread resets the
+/// connection, and a reset can reach the client before the response does.
+pub async fn refuse(socket: &mut TcpStream, response: &Response<'_>, head_only: bool) {
+    write_response(socket, response, head_only).await;
+    drain(socket).await;
+}
+
+/// Reads and drops what the client still sends, for a moment at most.
+async fn drain(socket: &mut TcpStream) {
+    let mut rest = [0_u8; 4096];
+    let drained = async { while matches!(socket.read(&mut rest).await, Ok(count) if count > 0) {} };
+    let _ = tokio::time::timeout(REFUSAL_DRAIN, drained).await;
 }
 
 /// Tells a TLS client that this port has no TLS, and closes. A client hello has no end of a
@@ -210,9 +280,7 @@ async fn refuse_tls(socket: &mut TcpStream) {
         return;
     }
     let _ = socket.shutdown().await;
-    let mut rest = [0_u8; 4096];
-    let drained = async { while matches!(socket.read(&mut rest).await, Ok(count) if count > 0) {} };
-    let _ = tokio::time::timeout(TLS_REFUSAL_DRAIN, drained).await;
+    drain(socket).await;
 }
 
 /// Writes the response, without its body for a HEAD request, and closes the connection. Returns
@@ -455,12 +523,54 @@ mod tests {
         let (mut socket, _) = listener.accept().await.unwrap();
         // The client never closes, so the server stops reading by itself.
         let refused = tokio::time::timeout(
-            TLS_REFUSAL_DRAIN + Duration::from_secs(1),
+            REFUSAL_DRAIN + Duration::from_secs(1),
             read_request(&mut socket),
         )
         .await;
         assert!(matches!(refused, Ok(None)), "{refused:?}");
         drop(client);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_head_is_read_without_its_body_whatever_length_it_names() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let client = tokio::spawn(async move {
+            let mut socket = TcpStream::connect(address).await.unwrap();
+            // A length far over the limit, and a body that never comes in full.
+            socket
+                .write_all(b"POST /a HTTP/1.1\r\nContent-Length: 99999999\r\n\r\nabc")
+                .await
+                .unwrap();
+            let mut answer = String::new();
+            socket.read_to_string(&mut answer).await.unwrap();
+            answer
+        });
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let head = read_head(&mut socket).await.unwrap();
+        assert_eq!(head.request.path, "/a");
+        assert!(head.request.body.is_empty());
+        refuse(&mut socket, &Response::error("403 Forbidden"), false).await;
+        drop(socket);
+        let answer = client.await.unwrap();
+        assert!(answer.starts_with("HTTP/1.1 403 Forbidden\r\n"), "{answer}");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn no_debug_form_shows_a_key_or_a_body() {
+        let request = read_from(b"POST /a?key=abc123 HTTP/1.1\r\nContent-Length: 6\r\n\r\nsecret")
+            .await
+            .unwrap();
+        let shown = format!("{request:?}");
+        assert!(
+            !shown.contains("abc123") && !shown.contains("secret"),
+            "{shown}"
+        );
+        assert!(shown.contains(r#"key: Some("..")"#), "{shown}");
+        let response = Response::shared("200 OK", "text/html", b"const KEY = \"abc123\";");
+        let shown = format!("{response:?}");
+        assert!(!shown.contains("abc123"), "{shown}");
+        assert!(shown.contains("body_len: 21"), "{shown}");
     }
 
     #[tokio::test(flavor = "current_thread")]

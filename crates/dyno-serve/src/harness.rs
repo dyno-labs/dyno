@@ -33,6 +33,12 @@ pub const NEXT_PATH: &str = "/__dyno/next";
 /// One batch is in flight at a time, so dyno gets the events in order and an answer such as
 /// `flushed` never overtakes the events before it. A batch that did not arrive goes back first
 /// in the queue, for the next send.
+///
+/// The page takes a message only from its frame's window while that window holds the game's
+/// origin, and posts to the frame only at that origin: a frame that went to another site keeps
+/// its window, and must neither add to the run nor hear the active message. A 403 means the
+/// page's key opens no run, because its run is over or it was never asked for. The page then
+/// stops, and removes its frame, so a tab that missed `done` cannot go on and reach a later run.
 const PAGE: &str = r#"<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -44,29 +50,42 @@ const PAGE: &str = r#"<!doctype html>
 "use strict";
 const GAME_URL = {{GAME_URL}};
 const KEY = {{KEY}};
+const GAME_ORIGIN = new URL(GAME_URL).origin;
 const note = document.getElementById("note");
 const queue = [];
 let frame = null;
+let stopped = false;
+const stop = (text) => {
+  stopped = true;
+  queue.length = 0;
+  if (frame) frame.remove();
+  frame = null;
+  document.body.append(note);
+  note.textContent = text;
+};
+const refused = () => stop("dyno: this page's URL opens no run. Close this tab, and open the URL that dyno printed for the run.");
 const post = (path, body) =>
   fetch(path, { method: "POST", headers: { "Content-Type": "text/plain", "X-Dyno-Key": KEY }, body: JSON.stringify(body) });
 let sending = false;
 const flush = async () => {
-  if (sending) return;
+  if (sending || stopped) return;
   sending = true;
-  while (queue.length) {
+  while (queue.length && !stopped) {
     const batch = queue.splice(0);
+    let answer;
     try {
-      await post("/__dyno/events", batch);
+      answer = await post("/__dyno/events", batch);
     } catch {
       queue.unshift(...batch);
       break;
     }
+    if (answer.status === 403) refused();
   }
   sending = false;
 };
 setInterval(flush, 250);
 addEventListener("message", (event) => {
-  if (!frame || event.source !== frame.contentWindow) return;
+  if (!frame || event.source !== frame.contentWindow || event.origin !== GAME_ORIGIN) return;
   const data = event.data;
   if (data && data.dyno === "probe") {
     queue.push({ kind: "probe", payload: String(data.payload) });
@@ -87,28 +106,30 @@ const webglRenderer = () => {
   return renderer;
 };
 const obey = async () => {
-  for (;;) {
+  while (!stopped) {
+    let answer;
     let command;
     try {
-      command = await (await fetch("/__dyno/next", { headers: { "X-Dyno-Key": KEY } })).json();
+      answer = await fetch("/__dyno/next", { headers: { "X-Dyno-Key": KEY } });
+      if (answer.status !== 403) command = await answer.json();
     } catch {
       await new Promise((resolve) => setTimeout(resolve, 1000));
       continue;
     }
+    if (answer.status === 403) return refused();
+    if (stopped) return;
     if (command.command === "self_check") {
       queue.push({ kind: "self_check", webgl_renderer: webglRenderer() });
       flush();
     } else if (command.command === "send") {
-      frame.contentWindow.postMessage({ type: command.name, value: true }, "*");
+      frame.contentWindow.postMessage({ type: command.name, value: true }, GAME_ORIGIN);
     } else if (command.command === "flush") {
       queue.push({ kind: "flushed" });
       flush();
     } else if (command.command === "done") {
+      // The last batch leaves now, before stop clears the queue.
       flush();
-      frame.remove();
-      document.body.append(note);
-      note.textContent = "dyno: the run is done. Close this tab before the next run.";
-      return;
+      return stop("dyno: the run is done. Close this tab before the next run.");
     }
   }
 };
@@ -120,6 +141,7 @@ const obey = async () => {
     note.textContent = "dyno: cannot reach dyno. Is the run still waiting?";
     return;
   }
+  if (answer.status === 403) return refused();
   if (!answer.ok) {
     note.textContent = "dyno: a run is already under way here. Close this tab.";
     return;
@@ -142,8 +164,32 @@ pub const REFERRER_POLICY: (&str, &str) = ("Referrer-Policy", "no-referrer");
 
 /// The harness page for a game at this URL, in a run with this key.
 pub fn page(game_url: &str, key: &RunKey) -> String {
-    PAGE.replace("{{GAME_URL}}", &script_string(game_url))
-        .replace("{{KEY}}", &script_string(key.as_str()))
+    fill(
+        PAGE,
+        &[
+            ("{{GAME_URL}}", script_string(game_url)),
+            ("{{KEY}}", script_string(key.as_str())),
+        ],
+    )
+}
+
+/// The template with each placeholder replaced by its value, in one pass from the start: a value
+/// that was put in is never read again, so a game URL whose query holds a placeholder's text,
+/// which `--serve-query` allows, stays as it is.
+fn fill(template: &str, values: &[(&str, String)]) -> String {
+    let mut filled = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some((at, name, value)) = values
+        .iter()
+        .filter_map(|(name, value)| rest.find(name).map(|at| (at, *name, value)))
+        .min_by_key(|(at, ..)| *at)
+    {
+        filled.push_str(&rest[..at]);
+        filled.push_str(value);
+        rest = &rest[at + name.len()..];
+    }
+    filled.push_str(rest);
+    filled
 }
 
 /// A JS string literal that holds `text`. A JSON string is a JS string. `</` is escaped so the
@@ -167,6 +213,47 @@ mod tests {
     fn the_page_loads_the_game_url_as_a_script_string() {
         let page = page("http://192.168.1.20:7371/");
         assert!(page.contains(r#"const GAME_URL = "http://192.168.1.20:7371/";"#));
+    }
+
+    #[test]
+    fn a_game_url_that_holds_a_placeholder_s_text_is_put_in_as_it_is() {
+        let key = RunKey::new().unwrap();
+        let game_url = "http://h/?a={{KEY}}&b={{GAME_URL}}";
+        let page = super::page(game_url, &key);
+        assert!(page.contains(r#"const GAME_URL = "http://h/?a={{KEY}}&b={{GAME_URL}}";"#));
+        assert!(page.contains(&format!(r#"const KEY = "{}";"#, key.as_str())));
+        // The key is in its constant only, not in the game's URL.
+        assert_eq!(page.matches(key.as_str()).count(), 1);
+    }
+
+    #[test]
+    fn a_template_is_filled_in_one_pass_in_any_order() {
+        let values = [("{{A}}", "{{B}}".to_owned()), ("{{B}}", "{{A}}".to_owned())];
+        assert_eq!(fill("{{B}} {{A}} {{A}}", &values), "{{A}} {{B}} {{B}}");
+        assert_eq!(fill("no placeholder", &values), "no placeholder");
+    }
+
+    #[test]
+    fn the_page_hears_and_tells_only_the_game_s_origin_in_its_frame() {
+        let page = page("http://h:7371/");
+        assert!(page.contains("const GAME_ORIGIN = new URL(GAME_URL).origin;"));
+        assert!(page.contains(
+            "if (!frame || event.source !== frame.contentWindow || event.origin !== GAME_ORIGIN) return;"
+        ));
+        assert!(!page.contains(r#", "*")"#), "{page}");
+    }
+
+    #[test]
+    fn a_refused_request_stops_the_page_and_removes_its_frame() {
+        let page = page("http://h/");
+        // Each of the page's three requests stops the page on a 403: the hello, the posts of
+        // events and the poll.
+        assert_eq!(page.matches("answer.status === 403").count(), 3, "{page}");
+        assert_eq!(page.matches("refused()").count(), 3, "{page}");
+        // A stopped page sends nothing more, polls no more and has no frame.
+        assert!(page.contains("if (sending || stopped) return;"));
+        assert!(page.contains("while (!stopped) {"));
+        assert!(page.contains("  if (frame) frame.remove();\n  frame = null;"));
     }
 
     #[test]
@@ -215,7 +302,7 @@ mod tests {
         assert_eq!(page.matches("KEY").count(), 3, "{page}");
         // What the page gives the frame: its URL, and messages of the host profile's shape.
         assert!(page.contains("frame.src = GAME_URL;"));
-        assert!(page.contains(r#"postMessage({ type: command.name, value: true }, "*")"#));
+        assert!(page.contains(r#"postMessage({ type: command.name, value: true }, GAME_ORIGIN)"#));
         assert_eq!(page.matches("postMessage(").count(), 1, "{page}");
         // The page never lowers its origin to the host's, which would let a frame from the
         // game's port that does the same read it, key and all.

@@ -27,6 +27,10 @@
 //! shared network another device, or the game of another check, can neither start or end a run
 //! nor add to it.
 //!
+//! A driver serves one run. The game server is on a free port, new for each driver and never one
+//! that an earlier driver of this process had, so a game frame left from an earlier run, in a
+//! tab that missed its end, reaches no later run's game server.
+//!
 //! What a served run cannot see: requests to other hosts, such as a CDN or the game's server,
 //! and the JS heap, which Safari does not expose. The phone's memory comes from the device tools
 //! instead (`dyno-ios`).
@@ -36,6 +40,7 @@
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, UdpSocket};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use dyno_run::{Driver, DriverError, DriverErrorCode};
@@ -66,8 +71,8 @@ mod run;
 /// The driver's name in `hello` and in errors.
 pub const DRIVER_NAME: &str = "serve";
 
-/// The harness page's port when none is given. The game's is the next one. A fixed port gives
-/// the same address on every run, though each run's URL has a key of its own.
+/// The harness page's port when none is given. A fixed port gives the same address on every run,
+/// though each run's URL has a key of its own. The game's port is a free one, new for each run.
 pub const DEFAULT_PORT: u16 = 7370;
 
 /// How long a run waits for a browser to open the harness page when no time is given.
@@ -94,7 +99,8 @@ pub struct ServeOptions {
     /// address too. When they cannot be bound there, they are at the local network address
     /// alone, as with no tunnel address.
     pub tunnel_host: Option<IpAddr>,
-    /// The harness page's port. The game's is the next one. 0 takes two free ports.
+    /// The harness page's port. 0 takes a free port. The game's port is always a free one, new
+    /// for each driver.
     pub port: u16,
     /// How long the run waits for a browser to open the harness page.
     pub wait_for_browser: Duration,
@@ -130,12 +136,12 @@ pub struct ServeDriver {
     /// Where the two servers are, in the order the browser is asked: one place, or the tunnel
     /// address and then the local network address.
     places: Vec<Place>,
-    /// The next run's key ([`key`]), and the harness page's URL at each place with it.
+    /// The run's key ([`key`]), and the harness page's URL at each place with it.
     key: RunKey,
     harness_urls: Vec<KeyedUrl>,
-    /// Why there is no key for another run: the last run's was spent, and no new one could be
-    /// made. A run must not take a key that another has used.
-    no_key: Option<String>,
+    /// Whether the driver has served its run. It serves one, so a run's key and its game port
+    /// are its own.
+    ran: bool,
     /// Why the servers are not at the tunnel address the options gave.
     tunnel_refused: Option<String>,
     wait_for_browser: Duration,
@@ -204,7 +210,7 @@ impl ServeDriver {
             build,
             harness_urls: harness_urls(&places, &key),
             key,
-            no_key: None,
+            ran: false,
             places,
             tunnel_refused,
             wait_for_browser: options.wait_for_browser,
@@ -230,8 +236,8 @@ impl ServeDriver {
 
     /// The harness page's URL at the local network address, when the servers are there as well
     /// as at the tunnel address. No run asks the browser for it: a person opens it when the
-    /// tunnel address gets no request. It holds the next run's key, as
-    /// [`ServeDriver::harness_url`] does.
+    /// tunnel address gets no request. It holds the run's key, as [`ServeDriver::harness_url`]
+    /// does.
     pub fn fallback_harness_url(&self) -> Option<&str> {
         self.harness_urls.get(1).map(KeyedUrl::as_str)
     }
@@ -253,9 +259,8 @@ impl ServeDriver {
     }
 
     /// The URL to open in the browser: the harness page, at the address asked for first, with
-    /// the next run's key. Each run has a key of its own, so after a run this is a new URL. Give
-    /// it to the browser, or to the person who opens the page, and keep it out of anything that
-    /// is stored: anyone with the URL can drive the run while it waits.
+    /// the run's key. Give it to the browser, or to the person who opens the page, and keep it
+    /// out of anything that is stored: anyone with the URL can drive the run while it waits.
     pub fn harness_url(&self) -> &str {
         self.harness_urls[0].as_str()
     }
@@ -292,28 +297,14 @@ impl ServeDriver {
         open: Option<Opener<'_>>,
         say_no_request: Option<(Duration, &mut dyn FnMut())>,
     ) -> Result<Vec<DriverMessage>, DriverError> {
-        if let Some(why) = &self.no_key {
-            return Err(DriverError::new(DriverErrorCode::Run, why));
+        // A second run would share the first's key and game port, so a tab left from the first
+        // could reach it. The next run binds a driver of its own.
+        if std::mem::replace(&mut self.ran, true) {
+            return Err(DriverError::new(
+                DriverErrorCode::Run,
+                "a served run's servers serve one run: bind them again for the next",
+            ));
         }
-        let outcome = self.run_keyed(request, open, say_no_request);
-        // A run's key opens no other run: the next one has its own, and its own URLs.
-        match RunKey::new() {
-            Ok(key) => {
-                self.harness_urls = harness_urls(&self.places, &key);
-                self.key = key;
-            }
-            Err(error) => self.no_key = Some(error.to_string()),
-        }
-        outcome
-    }
-
-    /// [`ServeDriver::run_watched`], with the key the driver holds.
-    fn run_keyed(
-        &mut self,
-        request: &RunRequest,
-        open: Option<Opener<'_>>,
-        say_no_request: Option<(Duration, &mut dyn FnMut())>,
-    ) -> Result<Vec<DriverMessage>, DriverError> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -419,22 +410,15 @@ struct Place {
 }
 
 impl Place {
-    /// Binds the harness page's server on `port` of `host`, and the game's on the next port.
-    /// Port 0 takes two free ports.
+    /// Binds the harness page's server on `port` of `host`, and the game's on a free port that no
+    /// earlier place of this process had. Port 0 takes a free port for the harness page too.
     fn bind(host: &str, port: u16, path: ServePath) -> Result<Place, ServeError> {
         // An address is bound as it is. A name could be any of this machine's addresses.
         let bind_to = host
             .parse::<IpAddr>()
             .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
-        let game_port = match port {
-            0 => 0,
-            port => port.checked_add(1).ok_or_else(|| ServeError::Bind {
-                address: format!("{host}:{port}"),
-                detail: "the game needs the next port too".to_owned(),
-            })?,
-        };
         let harness = listen(bind_to, port)?;
-        let game = listen(bind_to, game_port)?;
+        let game = listen_on_a_new_port(bind_to)?;
         Ok(Place {
             harness_base: url(host, &harness)?,
             game_url: url(host, &game)?,
@@ -443,6 +427,39 @@ impl Place {
             path,
         })
     }
+}
+
+/// The game ports that this process has served on. The system can give a port again once it is
+/// free, and a game frame left from an earlier run would reach the next run's game server there.
+static GAME_PORTS: Mutex<Vec<u16>> = Mutex::new(Vec::new());
+
+/// How many ports the system may give that this process has served on, before it gives up.
+const PORT_TRIES: usize = 64;
+
+/// A listener on a free port of this address that no earlier game server of this process had.
+fn listen_on_a_new_port(address: IpAddr) -> Result<TcpListener, ServeError> {
+    let mut used = GAME_PORTS.lock().unwrap_or_else(PoisonError::into_inner);
+    // A port that was used before is held, not closed, so the system gives another.
+    let mut held = Vec::new();
+    while held.len() < PORT_TRIES {
+        let listener = listen(address, 0)?;
+        let port = listener
+            .local_addr()
+            .map_err(|error| ServeError::Bind {
+                address: address.to_string(),
+                detail: error.to_string(),
+            })?
+            .port();
+        if !used.contains(&port) {
+            used.push(port);
+            return Ok(listener);
+        }
+        held.push(listener);
+    }
+    Err(ServeError::Bind {
+        address: SocketAddr::new(address, 0).to_string(),
+        detail: "no free port that an earlier run did not have".to_owned(),
+    })
 }
 
 /// A listener on this address and port, ready for tokio.
@@ -956,18 +973,30 @@ mod tests {
     }
 
     #[test]
-    fn the_last_port_leaves_no_port_for_the_game() {
+    fn each_driver_s_game_is_on_a_port_that_no_earlier_driver_had() {
         let folder = tempfile::tempdir().unwrap();
         let options = ServeOptions {
             host: Some("127.0.0.1".to_owned()),
             tunnel_host: None,
-            port: u16::MAX,
+            port: 0,
             wait_for_browser: Duration::from_secs(1),
             open_with: None,
         };
-        assert!(matches!(
-            ServeDriver::bind(folder.path(), &options),
-            Err(ServeError::Bind { .. })
-        ));
+        let port = |url: &str| {
+            url.rsplit(':')
+                .next()
+                .unwrap()
+                .trim_end_matches('/')
+                .to_owned()
+        };
+        let mut seen = Vec::new();
+        // Each driver is dropped before the next binds, so the system could give its port again.
+        for _ in 0..20 {
+            let driver = ServeDriver::bind(folder.path(), &options).unwrap();
+            let game = port(driver.game_url());
+            assert!(!seen.contains(&game), "{game} again");
+            seen.push(game);
+        }
+        assert!(GAME_PORTS.lock().unwrap().len() >= 20);
     }
 }

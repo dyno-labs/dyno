@@ -10,4 +10,6 @@ The game cannot learn the key: it is on another origin, the page and its frame s
 
 The game server now answers no one before the page says hello, and after it only the address that the hello came from. So no other device can add game requests to the run, or load the build while it runs.
 
+The game is no longer on the port after `--serve-port`: it is on a free port that the system gives, a new one for each run. A page whose key is refused stops and removes its game frame. So a tab that missed the end of its run reaches neither the next run's harness page nor its game, even on the same phone.
+
 Each run's URL is new, so a bookmark of the harness page no longer opens a run: open the URL that dyno prints. The key is in no result and no saved recording. It is no secret from a party that reads the plain HTTP on the network. [`docs/cli.md`](docs/cli.md#who-can-drive-a-served-run) says what the key guards against, and what it does not. The CDP driver and `--driver exec:` are as before.

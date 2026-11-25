@@ -38,7 +38,7 @@ use tokio::time::Instant;
 
 use crate::files::{Build, PROBE_PATH, Pages, build_response};
 use crate::harness::{EVENTS_PATH, HELLO_PATH, NEXT_PATH, REFERRER_POLICY, page};
-use crate::http::{Response, accept, read_request, write_response};
+use crate::http::{Response, accept, read_body, read_head, refuse, write_response};
 use crate::key::RunKey;
 use crate::{DRIVER_NAME, Place, RunTimes, ServeDriver, ServeError, browser_name};
 
@@ -651,11 +651,15 @@ fn tokio_listener(listener: &std::net::TcpListener) -> Result<TcpListener, Serve
 const NO_KEY: &str = "dyno: this run needs the URL that dyno printed for it.\n";
 
 async fn serve_harness(at: Arc<At>, mut socket: TcpStream) {
-    let Some(request) = read_request(&mut socket).await else {
+    let Some(head) = read_head(&mut socket).await else {
         return;
     };
     let shared = &at.shared;
-    let keyed = request
+    let head_only = head.request.method == "HEAD";
+    // The key is checked on the head, so a request without it gets its 403 whatever body it
+    // sends, and dyno reads none of it.
+    let keyed = head
+        .request
         .key
         .as_deref()
         .is_some_and(|key| shared.key.matches(key));
@@ -665,12 +669,15 @@ async fn serve_harness(at: Arc<At>, mut socket: TcpStream) {
             "text/plain; charset=utf-8",
             NO_KEY.as_bytes(),
         );
-        write_response(&mut socket, &refused, false).await;
+        refuse(&mut socket, &refused, head_only).await;
         return;
     }
+    let Some(request) = read_body(&mut socket, head).await else {
+        return;
+    };
     let _ = shared.seen.send(Seen::HarnessRequest { place: at.place });
     let response = match (request.method.as_str(), request.path.as_str()) {
-        ("GET", "/") => {
+        ("GET" | "HEAD", "/") => {
             let mut page =
                 Response::shared("200 OK", "text/html; charset=utf-8", at.page.as_bytes());
             page.headers
@@ -682,7 +689,7 @@ async fn serve_harness(at: Arc<At>, mut socket: TcpStream) {
         ("GET", NEXT_PATH) => next_command(shared).await,
         _ => Response::error("404 Not Found"),
     };
-    write_response(&mut socket, &response, false).await;
+    write_response(&mut socket, &response, head_only).await;
 }
 
 /// The first `hello` starts the run, and its place is the path the run took. A later one is
@@ -762,10 +769,11 @@ fn peer_address(socket: &TcpStream) -> Option<IpAddr> {
 }
 
 async fn serve_game(at: Arc<At>, mut socket: TcpStream) {
-    let Some(request) = read_request(&mut socket).await else {
+    let Some(head) = read_head(&mut socket).await else {
         return;
     };
     let shared = &at.shared;
+    let head_only = head.request.method == "HEAD";
     let page_address = *shared
         .page_address
         .lock()
@@ -773,10 +781,12 @@ async fn serve_game(at: Arc<At>, mut socket: TcpStream) {
     // The game's requests come from the browser whose page said hello. One from anywhere else,
     // or from before the hello, is no request of this run: it is refused, and not counted.
     if page_address.is_none() || peer_address(&socket) != page_address {
-        write_response(&mut socket, &Response::error("403 Forbidden"), false).await;
+        refuse(&mut socket, &Response::error("403 Forbidden"), head_only).await;
         return;
     }
-    let head_only = request.method == "HEAD";
+    let Some(request) = read_body(&mut socket, head).await else {
+        return;
+    };
     // The probe's path is the one path here that is dyno's. Every other path is the build's, and
     // a build with a file of its own at the probe's path does not get this far.
     if request.path == PROBE_PATH {

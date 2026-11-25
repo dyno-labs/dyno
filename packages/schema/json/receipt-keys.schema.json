@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PublicKeys",
+  "description": "A lab's public keys, as the JSON document the lab publishes.",
+  "type": "object",
+  "properties": {
+    "keys": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/PublicKey"
+      }
+    }
+  },
+  "required": [
+    "keys"
+  ],
+  "$defs": {
+    "PublicKey": {
+      "description": "One of a lab's public keys.",
+      "type": "object",
+      "properties": {
+        "algorithm": {
+          "description": "The key's algorithm: `ed25519`. A verifier leaves out a key of an algorithm that it does\nnot know.",
+          "type": "string"
+        },
+        "created_at": {
+          "description": "When the lab made the key: RFC 3339.",
+          "type": "string"
+        },
+        "key_id": {
+          "description": "The first 16 hex characters of the SHA-256 of the raw 32-byte public key.",
+          "type": "string"
+        },
+        "public_key": {
+          "description": "The raw 32 bytes of the public key, in base64url with no padding.",
+          "type": "string"
+        },
+        "retired_at": {
+          "description": "When the lab stopped signing with the key: RFC 3339. Null while the lab still signs with\nit. A retired key still verifies a receipt that was issued before this time.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "key_id",
+        "algorithm",
+        "public_key",
+        "created_at"
+      ]
+    }
+  }
+}

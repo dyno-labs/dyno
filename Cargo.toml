@@ -141,6 +141,10 @@ base64 = "0.23.1"
 ring = "0.17.14"
 time = { version = "0.3.55", features = ["formatting", "parsing"] }
 
+# `dyno receipt sign` refuses an output file that is its private key, by whatever path or link.
+# Already in the tree through walkdir.
+same-file = "1.0.6"
+
 # `dyno link` edits dyno.toml and keeps its comments. From the same project as toml, whose parts
 # are already in the tree.
 toml_edit = "0.25.19"

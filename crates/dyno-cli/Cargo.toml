@@ -28,6 +28,7 @@ dyno-score.workspace = true
 dyno-serve.workspace = true
 dyno-static.workspace = true
 rmcp.workspace = true
+same-file.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

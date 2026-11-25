@@ -73,9 +73,14 @@ pub enum Body<'b> {
 }
 
 impl Body<'_> {
-    /// How many bytes the body has.
+    /// How many bytes the body has. A tagged page has its own and the tag's, wherever the tag
+    /// goes, so a HEAD request reads no more than the two lengths.
     pub fn len(&self) -> usize {
-        self.parts().iter().map(|part| part.len()).sum()
+        match self {
+            Body::Owned(bytes) => bytes.len(),
+            Body::Shared(bytes) => bytes.len(),
+            Body::Tagged { page, tag, .. } => page.len() + tag.len(),
+        }
     }
 
     /// The body's bytes, in the order they are written. A part can be empty.

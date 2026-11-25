@@ -260,7 +260,8 @@ impl ServeDriver {
     ///
     /// `say_no_request` is called once when no request has come to the harness page at the
     /// first address, the one of [`ServeDriver::harness_url`], that long after the run began to
-    /// wait. The run waits on.
+    /// wait, and `open` has returned: it can still restart the browser until then, as by a
+    /// launch of its own after the phone did not open the page. The run waits on.
     pub fn run_watched(
         &mut self,
         request: &RunRequest,

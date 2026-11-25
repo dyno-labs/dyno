@@ -396,7 +396,9 @@ async fn end_page(shared: &Shared) {
 /// With `asks`, it asks once for the harness page to be opened at the first place. Nothing is
 /// asked for again: a second ask would restart the browser under a page that may be loading.
 /// With `no_request`, it says so once when no request has come to the first place's harness
-/// server in time, and waits on.
+/// server in time, and waits on. It says so only once the opener has answered, because until
+/// then the opener can still be trying: a launch that a person's own opening of the page came
+/// before would restart the browser under it.
 async fn wait_for_hello(
     seen: &mut mpsc::UnboundedReceiver<Seen>,
     driver: &ServeDriver,
@@ -408,12 +410,24 @@ async fn wait_for_hello(
     if let Some(asks) = &asks {
         let _ = asks.ask.send(driver.harness_url().to_owned());
     }
-    // When to say that no request has come to the first place. None once it is said, or once a
-    // request has come there.
+    // When it is time to say that no request has come to the first place. None once that time
+    // has passed, and when there is nothing to say.
     let mut say_at = no_request
         .as_ref()
         .map(|no_request| Instant::now() + no_request.after);
+    // Whether it is time to say so and nothing has said otherwise: the time has passed, and no
+    // request has come to the first place.
+    let mut due = false;
+    // Whether a request has come to the first place, after which there is nothing to say.
+    let mut requested = false;
     loop {
+        // The opener has answered, or there is none.
+        if due && asks.is_none() {
+            due = false;
+            if let Some(no_request) = no_request.take() {
+                (no_request.say)();
+            }
+        }
         let answer = async {
             match &mut asks {
                 Some(asks) => asks.answers.recv().await,
@@ -429,22 +443,23 @@ async fn wait_for_hello(
         tokio::select! {
             item = seen.recv() => match item {
                 Some(Seen::Hello { user_agent, at }) => return Ok((user_agent, at)),
-                Some(Seen::HarnessRequest { place: 0 }) => say_at = None,
+                Some(Seen::HarnessRequest { place: 0 }) => {
+                    requested = true;
+                    due = false;
+                    say_at = None;
+                }
                 Some(_) => {}
                 // The servers hold a sender for as long as the run, so this does not happen.
                 None => return Err(no_browser()),
             },
             answer = answer => match answer {
-                Some(Ok(())) => {}
+                // The opener asks once, so this is its last answer.
+                Some(Ok(())) | None => asks = None,
                 Some(Err(reason)) => return Err(ServeError::Stopped(reason)),
-                // Whoever opens the page has gone.
-                None => asks = None,
             },
             () = time_to_say => {
                 say_at = None;
-                if let Some(no_request) = &mut no_request {
-                    (no_request.say)();
-                }
+                due = !requested;
             }
             () = tokio::time::sleep_until(give_up_at) => return Err(no_browser()),
         }

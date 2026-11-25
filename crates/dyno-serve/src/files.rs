@@ -200,27 +200,30 @@ pub fn file_response<'b>(
 }
 
 /// Where the probe's tag goes in a page: first in its `<head>`, or after `<html>` or the doctype
-/// when it has no head. A page with none of them gets the tag first.
+/// when it has no head. A page with none of them gets the tag first. It reads the page where it
+/// is, and copies none of it.
 fn probe_at(html: &[u8]) -> usize {
-    let lower = html.to_ascii_lowercase();
-    end_of_tag(&lower, b"<head")
-        .or_else(|| end_of_tag(&lower, b"<html"))
-        .or_else(|| end_of_tag(&lower, b"<!doctype"))
+    end_of_tag(html, b"<head")
+        .or_else(|| end_of_tag(html, b"<html"))
+        .or_else(|| end_of_tag(html, b"<!doctype"))
         .unwrap_or(0)
 }
 
-/// Where the first tag with this exact name ends: `<head>` and `<head lang="en">`, not
-/// `<header>`.
-fn end_of_tag(lower: &[u8], open: &[u8]) -> Option<usize> {
-    memchr::memmem::find_iter(lower, open).find_map(|start| {
+/// Where the first tag with this exact name ends, in any case: `<head>`, `<HEAD>` and
+/// `<head lang="en">`, not `<header>`. `open` is the tag's start in lower case.
+fn end_of_tag(html: &[u8], open: &[u8]) -> Option<usize> {
+    memchr::memchr_iter(b'<', html).find_map(|start| {
         let after = start + open.len();
-        let name_ends = lower
+        let named = html
+            .get(start..after)
+            .is_some_and(|name| name.eq_ignore_ascii_case(open));
+        let name_ends = html
             .get(after)
             .is_some_and(|&byte| byte == b'>' || byte.is_ascii_whitespace());
-        if !name_ends {
+        if !(named && name_ends) {
             return None;
         }
-        memchr::memchr(b'>', &lower[after..]).map(|close| after + close + 1)
+        memchr::memchr(b'>', &html[after..]).map(|close| after + close + 1)
     })
 }
 
@@ -312,6 +315,31 @@ mod tests {
             text(&page),
             r#"<!doctype html><html><HEAD lang=en><script src="/__dyno/probe.js" data-dyno-relay></script><script src=a.js></script>"#
         );
+    }
+
+    #[test]
+    fn the_tag_goes_after_the_head_in_any_case_and_after_its_attributes() {
+        let pages: [(&[u8], usize); 8] = [
+            (b"<head>", 6),
+            (b"<HEAD>", 6),
+            (b"<HeAd lang=en>", 14),
+            (b"<html>\n<head\tdata-x>", 20),
+            (b"<header></header><Head></Head>", 23),
+            (b"<!DocType html><p>", 15),
+            (b"<head", 0),
+            (b"no tags here", 0),
+        ];
+        for (page, at) in pages {
+            assert_eq!(probe_at(page), at, "{}", text(page));
+        }
+    }
+
+    #[test]
+    fn a_page_s_tagged_length_is_its_own_and_the_tag_s() {
+        let page = b"<!doctype html><HTML><HEAD><title>a</title>";
+        let response = file_response(Path::new("index.html"), page, None, Pages::WithProbe);
+        assert_eq!(response.body.len(), page.len() + PROBE_TAG.len());
+        assert_eq!(response.body.to_vec().len(), response.body.len());
     }
 
     #[test]

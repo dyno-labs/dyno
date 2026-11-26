@@ -6,6 +6,7 @@ import type { Finding } from "./Finding";
 import type { Machine } from "./Machine";
 import type { Measure } from "./Measure";
 import type { Release } from "./Release";
+import type { RunRecord } from "./RunRecord";
 import type { ServePath } from "./ServePath";
 import type { Target } from "./Target";
 import type { TierReport } from "./TierReport";
@@ -65,4 +66,10 @@ findings: Array<Finding>, tier: TierReport,
  * The memory of each browser process through the browser run, with the run's steps. Null
  * when the driver read none, such as on a machine without a sampler.
  */
-timeline?: Timeline | null, };
+timeline?: Timeline | null, 
+/**
+ * What dyno itself saw of each run of the check, in the order they ran: one record for a
+ * browser run, or one per run of the empty build and of the game with `--runs`. Left out of
+ * the JSON when the check had no browser run. A reader takes null as left out.
+ */
+runs?: Array<RunRecord> | null, };

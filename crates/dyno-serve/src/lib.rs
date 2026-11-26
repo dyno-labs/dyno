@@ -45,7 +45,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use dyno_run::{Driver, DriverError, DriverErrorCode};
+use dyno_run::{Driver, DriverError, DriverErrorCode, PageSeen};
 use dyno_schema::devices::APPLE;
 use dyno_schema::environment::{
     BrowserEngine, DeviceKind, Environment, EnvironmentBrowser, EnvironmentDevice, EnvironmentOs,
@@ -162,6 +162,9 @@ pub struct ServeDriver {
     last_user_agent: Option<String>,
     /// Where the page of the last run said hello.
     last_path: Option<ServePath>,
+    /// What the last run heard of the page: nothing, before a run and after one that no page said
+    /// hello in.
+    last_page: PageSeen,
 }
 
 /// When a served run's steps happened, in ms since the Unix epoch on this machine's clock. A
@@ -235,6 +238,7 @@ impl ServeDriver {
             last_run: None,
             last_user_agent: None,
             last_path: None,
+            last_page: PageSeen::nothing_heard(),
         })
     }
 
@@ -314,6 +318,11 @@ impl ServeDriver {
         open: Option<Opener<'_>>,
         say_no_request: Option<(Duration, &mut dyn FnMut())>,
     ) -> Result<Vec<DriverMessage>, DriverError> {
+        // Nothing of an earlier run may outlive a step below that fails.
+        self.last_page = PageSeen::nothing_heard();
+        self.last_path = None;
+        self.last_run = None;
+        self.last_user_agent = None;
         // A second run would share the first's key and game port, so a tab left from the first
         // could reach it. The next run binds a driver of its own.
         if std::mem::replace(&mut self.ran, true) {
@@ -367,6 +376,7 @@ impl ServeDriver {
         }
         self.last_run = Some(served.times);
         self.last_user_agent = Some(served.user_agent);
+        self.last_page = served.seen;
         Ok(messages)
     }
 }
@@ -390,6 +400,13 @@ impl Driver for ServeDriver {
     /// What the user agent of the browser that opened the page says.
     fn environment(&self, _hello: &DriverInfo) -> Environment {
         user_agent_environment(self.last_user_agent.as_deref().unwrap_or_default())
+    }
+
+    /// Whether the build's probe was heard from, and from which origin, and how a run that failed
+    /// after `hello` ended: the deadline, a page that stopped reaching dyno, or a page that took a
+    /// command and did not answer it. The served run cannot see the game frame's document.
+    fn page_seen(&self) -> PageSeen {
+        self.last_page
     }
 }
 

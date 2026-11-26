@@ -6,7 +6,8 @@
 //! required measure, and so does the status it feeds. `run` holds the rest: what differs between
 //! machines and runs, and the labels that must not change the hash. That is timestamps,
 //! durations, the machine, the tool build, target paths and URLs, release labels, the lab's name,
-//! the path a served page took, and the browser, device and model values. The hash excludes it.
+//! the path a served page took, what dyno saw of each run, and the browser, device and model
+//! values. The hash excludes it.
 
 use std::collections::HashSet;
 use std::hash::Hash;
@@ -26,6 +27,7 @@ use crate::measure::{Measure, MeasureStatus};
 use crate::path::RelPath;
 use crate::profile::{ProfileRef, Scenario};
 use crate::rule::Finding;
+use crate::run_record::RunRecord;
 use crate::status::{RunCoverage, Status};
 use crate::timeline::Timeline;
 
@@ -169,6 +171,12 @@ pub struct RunInfo {
     #[serde(default)]
     #[ts(optional = nullable)]
     pub timeline: Option<Timeline>,
+    /// What dyno itself saw of each run of the check, in the order they ran: one record for a
+    /// browser run, or one per run of the empty build and of the game with `--runs`. Left out of
+    /// the JSON when the check had no browser run. A reader takes null as left out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional = nullable)]
+    pub runs: Option<Vec<RunRecord>>,
 }
 
 /// The machine dyno ran on. No host name or user name.

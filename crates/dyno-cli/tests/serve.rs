@@ -194,6 +194,36 @@ fn finish_as_browser(harness: &str, game: &str, query: &str) {
     assert_eq!(next_command(harness), r#"{"command":"done"}"#);
 }
 
+/// Plays a browser that opens the harness page, says hello and loads the game, whose document
+/// posts, and then loses its link to dyno: it takes no command.
+fn open_and_lose_the_link(harness: &str) {
+    let (_, page) = exchange(harness, "GET", "/", "");
+    let game_url = page
+        .split("const GAME_URL = \"http://")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .unwrap();
+    let (game, _) = game_url.split_once('/').unwrap();
+    exchange(
+        harness,
+        "POST",
+        "/__dyno/hello",
+        &format!(r#"{{"user_agent":"{IPHONE_SAFARI}"}}"#),
+    );
+    exchange(game, "GET", "/", "");
+    exchange(
+        harness,
+        "POST",
+        "/__dyno/events",
+        r#"[{"kind":"navigated_at","epoch_ms":1000},{"kind":"document","time_origin":1050,"device_pixel_ratio":3}]"#,
+    );
+}
+
+/// The record of each run in a result, in order.
+fn run_records(result: &serde_json::Value) -> &Vec<serde_json::Value> {
+    result["run"]["runs"].as_array().unwrap()
+}
+
 /// The measure with this id in a result's run part.
 fn run_measure<'r>(result: &'r serde_json::Value, id: &str) -> &'r serde_json::Value {
     result["run"]["measures"]
@@ -719,6 +749,59 @@ fn a_kill_in_the_phone_s_log_is_a_kill() {
         marks.iter().any(|mark| mark["mark"] == "killed"),
         "{marks:?}"
     );
+    // The run's record has the kernel's line, and the page pid that the samples had.
+    let recording = &run_records(&result)[0]["recording"];
+    assert_eq!(recording["kill"]["pid"], 412, "{recording}");
+    assert!(recording["kill"]["received_ms"].is_i64(), "{recording}");
+    assert_eq!(recording["pages"][0]["pid"], 412, "{recording}");
+}
+
+#[test]
+fn a_page_killed_before_its_first_sample_is_in_the_record_and_not_known_to_be_the_games() {
+    // The page is never in the samples, and the kernel kills it 3 s after the recording starts.
+    let (_, result, _) = device_check(&["kill-after-ms=3000", "sampled-after-ms=600000"], &[], &[]);
+    // The measures are as they were: no page process in the samples leaves every one missing.
+    let kills = run_measure(&result, "device.kills");
+    assert_eq!(kills["status"], "missing", "{kills}");
+    assert_eq!(
+        kills["reason"],
+        "the phone's samples have no Safari WebContent process during the run"
+    );
+    for id in ["device.phys_footprint", "device.phys_footprint_peak"] {
+        let measure = run_measure(&result, id);
+        assert_eq!(measure["status"], "missing", "{measure}");
+        assert_eq!(
+            measure["reason"],
+            "the phone's samples have no Safari WebContent process during the run",
+            "{measure}"
+        );
+    }
+    let records = run_records(&result);
+    assert_eq!(records.len(), 1, "{records:?}");
+    let record = &records[0];
+    assert_eq!(record["of"], "game");
+    assert_eq!(record["index"], 1);
+    assert_eq!(record["page"]["end"], "ended", "{record}");
+    // A served run hears the probe, and does not see the frame's document.
+    assert_eq!(record["page"]["document"], "not_observed", "{record}");
+    assert_eq!(record["page"]["probe"], "heard", "{record}");
+    assert!(record["page"].get("events_capped").is_none(), "{record}");
+    let recording = &record["recording"];
+    assert_eq!(recording["samples"]["read"], 0, "{recording}");
+    assert!(recording["samples"]["last_ms"].is_i64(), "{recording}");
+    // No page process was sampled; the kill is in the record, with nothing said of whose it was.
+    assert_eq!(recording["pages"], serde_json::json!([]), "{recording}");
+    assert_eq!(recording["kill"]["pid"], 412, "{recording}");
+    assert!(recording["kill"].get("attributed").is_none(), "{recording}");
+    assert_eq!(
+        recording["log"]["read"].as_u64().map(|read| read > 0),
+        Some(true)
+    );
+    assert_eq!(
+        recording["kill"]["line"],
+        "memorystatus: killing process 412 [com.apple.WebKit.WebContent] in high band FOREGROUND \
+         (100)"
+    );
 }
 
 #[test]
@@ -738,6 +821,12 @@ fn samples_that_stop_leave_the_device_measures_missing_and_say_why() {
     assert_eq!(
         result["run"]["environment"]["device"]["key"],
         "iphone-14-pro-max"
+    );
+    let samples = &run_records(&result)[0]["recording"]["samples"];
+    assert_eq!(samples["read"], 0, "{samples}");
+    assert_eq!(
+        samples["stopped"], "the fake phone stopped sending samples",
+        "{samples}"
     );
 }
 
@@ -1098,11 +1187,31 @@ fn a_lab_name_labels_a_device_check() {
 /// test as the phone's browser in every run. dyno takes free ports for each run, so each run
 /// prints its own URL. It gives the outcome.
 fn device_runs_check(phone: &[&str], args: &[&str]) -> Outcome {
+    device_runs_check_with(phone, args, |_, harness| open_as_browser(harness, ""))
+}
+
+/// [`device_runs_check`], with `browser` as the phone's browser: it gets each run's number, from
+/// 1 in the order the runs go, and the harness page's host and port.
+fn device_runs_check_with(phone: &[&str], args: &[&str], browser: impl Fn(usize, &str)) -> Outcome {
+    let mut all_args = vec!["check", "tiny-build", "--driver", "serve", "--device"];
+    all_args.extend_from_slice(args);
+    device_check_in(&data_dir(), phone, &all_args, browser)
+}
+
+/// `dyno` with these arguments in `dir`, served on the loopback address, with this test as the
+/// phone's browser, which `browser` plays: it gets each run's number from 1, and the harness
+/// page's host and port. It gives the outcome.
+fn device_check_in(
+    dir: &std::path::Path,
+    phone: &[&str],
+    args: &[&str],
+    browser: impl Fn(usize, &str),
+) -> Outcome {
+    let mut runs = 0;
     let mut child = Command::new(env!("CARGO_BIN_EXE_dyno"))
-        .args(["check", "tiny-build", "--driver", "serve", "--device"])
         .args(args)
         .args(["--serve-host", "127.0.0.1", "--serve-port", "0"])
-        .current_dir(data_dir())
+        .current_dir(dir)
         .env("DYNO_CHROMIUM", NO_CHROMIUM)
         .env("DYNO_FAKE_PHONE", phone.join(";"))
         .stdout(Stdio::piped())
@@ -1118,7 +1227,8 @@ fn device_runs_check(phone: &[&str], args: &[&str]) -> Outcome {
         }
         said.push_str(&line);
         if let Some(rest) = line.split("open http://").nth(1) {
-            open_as_browser(rest.split(' ').next().unwrap(), "");
+            runs += 1;
+            browser(runs, rest.split(' ').next().unwrap());
         }
     }
     let output = child.wait_with_output().unwrap();
@@ -1182,6 +1292,207 @@ fn runs_give_the_medians_the_kills_and_the_game_over_the_empty_build() {
             "{recording}"
         );
     }
+    // A record of each run, in the order they ran, each a whole page and a whole recording.
+    let records: Vec<(String, u64)> = run_records(&result)
+        .iter()
+        .map(|record| {
+            assert_eq!(record["page"]["end"], "ended", "{record}");
+            assert_eq!(record["page"]["hello"], true, "{record}");
+            assert!(record["recording"]["samples"]["read"].as_u64().unwrap() > 0);
+            assert_eq!(
+                record["recording"]["log"]["stopped"],
+                serde_json::Value::Null
+            );
+            assert_eq!(
+                record["recording"]["kill"],
+                serde_json::Value::Null,
+                "{record}"
+            );
+            let of = record["of"].as_str().unwrap().to_owned();
+            (of, record["index"].as_u64().unwrap())
+        })
+        .collect();
+    let in_order = [
+        ("empty_build", 1),
+        ("game", 1),
+        ("empty_build", 2),
+        ("game", 2),
+    ];
+    assert_eq!(
+        records,
+        in_order.map(|(of, index)| (of.to_owned(), index)),
+        "{records:?}"
+    );
+}
+
+#[test]
+fn a_game_run_whose_page_lost_its_link_says_so_though_its_recording_gave_every_measure() {
+    // The page of the first game run says hello and loads, then takes no command: the second
+    // run of the game completes.
+    let outcome = device_runs_check_with(
+        &["footprints=62914560,209715200"],
+        &["--runs", "2"],
+        |run, harness| match run {
+            2 => open_and_lose_the_link(harness),
+            _ => open_as_browser(harness, ""),
+        },
+    );
+    let result: serde_json::Value = serde_json::from_str(&outcome.stdout).unwrap();
+    // Every device measure rests on both game runs, and the lab measures come from the second.
+    for id in [
+        "device.phys_footprint",
+        "device.phys_footprint_peak",
+        "device.kills",
+        "device.footprint_over_baseline",
+        "lab.self_check.frame_dpr",
+    ] {
+        let measure = run_measure(&result, id);
+        assert_eq!(measure["status"], "measured", "{measure}");
+    }
+    let peak = run_measure(&result, "device.phys_footprint_peak");
+    assert_eq!(peak["items"].as_array().unwrap().len(), 2, "{peak}");
+    // Only the run's record says that the first game run's page did not complete.
+    let records = run_records(&result);
+    let game_1 = &records[1];
+    assert_eq!(
+        (game_1["of"].as_str(), game_1["index"].as_u64()),
+        (Some("game"), Some(1))
+    );
+    assert_eq!(game_1["page"]["hello"], true, "{game_1}");
+    assert_eq!(game_1["page"]["document"], "not_observed", "{game_1}");
+    assert_eq!(game_1["page"]["probe"], "heard", "{game_1}");
+    assert_eq!(game_1["page"]["end"], "command_not_taken", "{game_1}");
+    // The recording went on: its samples came, and neither feed reported a stop.
+    assert!(game_1["recording"]["samples"]["read"].as_u64().unwrap() > 0);
+    for feed in ["samples", "log"] {
+        assert_eq!(
+            game_1["recording"][feed]["stopped"],
+            serde_json::Value::Null
+        );
+    }
+    for other in [&records[0], &records[2], &records[3]] {
+        assert_eq!(other["page"]["end"], "ended", "{other}");
+    }
+}
+
+#[test]
+fn a_check_of_runs_that_stops_after_some_runs_keeps_their_records_beside_the_result() {
+    let folder = tempfile::tempdir().unwrap();
+    let out = folder.path().join("result.json");
+    // The phone is gone when the second run of the empty build begins: recording 3.
+    let outcome = device_runs_check(
+        &["connect-fails-in=3"],
+        &["--runs", "2", "--out", &out.display().to_string()],
+    );
+    // The check stops with the same error as before, and writes no result.
+    assert_eq!(outcome.code, 64, "{}", outcome.stderr);
+    assert!(!out.exists());
+    let kept = folder.path().join("result.runs.json");
+    assert!(
+        outcome.stderr.contains(&format!(
+            "the record of each run made before the error is in {}",
+            kept.display()
+        )),
+        "{}",
+        outcome.stderr
+    );
+    let kept: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&kept).unwrap()).unwrap();
+    assert_eq!(kept.as_array().unwrap().len(), 1, "{kept}");
+    assert_eq!(kept[0]["game"], serde_json::Value::Null);
+    let runs: Vec<(&str, u64, &str)> = kept[0]["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|record| {
+            (
+                record["of"].as_str().unwrap(),
+                record["index"].as_u64().unwrap(),
+                record["page"]["end"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(runs, [("empty_build", 1, "ended"), ("game", 1, "ended")]);
+}
+
+#[test]
+fn a_games_file_of_runs_that_stops_keeps_each_games_records_by_its_id() {
+    let folder = tempfile::tempdir().unwrap();
+    for game in ["first", "second"] {
+        copy_dir(&data_dir().join("tiny-build"), &folder.path().join(game));
+    }
+    std::fs::write(
+        folder.path().join("games.toml"),
+        "schema_version = 0\n\n[[game]]\nid = \"first\"\nbuild = \"first\"\n\n\
+         [[game]]\nid = \"second\"\nbuild = \"second\"\n",
+    )
+    .unwrap();
+    let out = folder.path().join("catalogue.json");
+    // Recordings 1 and 2 are the first game's runs; the phone is gone for the second game's
+    // run of the game, recording 4.
+    let outcome = device_check_in(
+        folder.path(),
+        &["connect-fails-in=4"],
+        &[
+            "check",
+            "--games",
+            "games.toml",
+            "--driver",
+            "serve",
+            "--device",
+            "--runs",
+            "1",
+            "--out",
+            &out.display().to_string(),
+        ],
+        |_, harness| open_as_browser(harness, ""),
+    );
+    assert_eq!(outcome.code, 64, "{}", outcome.stderr);
+    assert!(!out.exists());
+    let kept: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(folder.path().join("catalogue.runs.json")).unwrap(),
+    )
+    .unwrap();
+    let games: Vec<(&str, Vec<&str>)> = kept
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|game| {
+            let runs = game["runs"].as_array().unwrap();
+            let of = runs.iter().map(|run| run["of"].as_str().unwrap()).collect();
+            (game["game"].as_str().unwrap(), of)
+        })
+        .collect();
+    assert_eq!(
+        games,
+        [
+            ("first", vec!["empty_build", "game"]),
+            ("second", vec!["empty_build"])
+        ]
+    );
+}
+
+#[test]
+fn an_empty_build_run_whose_log_stopped_says_so_in_its_record() {
+    // Recording 1 is the empty build's run: its log closes at once. The game's is whole.
+    let outcome = device_runs_check(&["log-fails-in=1"], &["--runs", "1"]);
+    let result: serde_json::Value = serde_json::from_str(&outcome.stdout).unwrap();
+    let records = run_records(&result);
+    assert_eq!(records[0]["of"], "empty_build");
+    let log = &records[0]["recording"]["log"];
+    assert_eq!(log["read"], 0, "{log}");
+    assert_eq!(log["stopped"], "the fake phone's log closed", "{log}");
+    assert_eq!(records[1]["of"], "game");
+    assert_eq!(
+        records[1]["recording"]["log"]["stopped"],
+        serde_json::Value::Null
+    );
+    // The kills count the game runs only, and the footprint over the empty build reads the empty
+    // build's samples, which ran: both measure. The record is what says the empty build's run
+    // could not tell whether its page was killed.
+    assert_eq!(run_measure(&result, "device.kills")["status"], "measured");
+    let over = run_measure(&result, "device.footprint_over_baseline");
+    assert_eq!(over["status"], "measured", "{over}");
 }
 
 #[test]

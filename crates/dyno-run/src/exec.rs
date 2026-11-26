@@ -14,10 +14,11 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use dyno_schema::run_record::PageEnd;
 use dyno_schema::runner::{DriverMessage, RUNNER_PROTOCOL_VERSION, RunRequest};
 
 use crate::protocol::{decode_line, encode_line};
-use crate::{Driver, DriverError, DriverErrorCode};
+use crate::{Driver, DriverError, DriverErrorCode, PageSeen};
 
 /// The driver's name in errors.
 pub const DRIVER_NAME: &str = "exec";
@@ -42,12 +43,15 @@ const READ_CHUNK_BYTES: usize = 4096;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExecDriver {
     program: PathBuf,
+    /// What dyno saw of the last run that its messages, if it has them, do not say.
+    last_page: PageSeen,
 }
 
 impl ExecDriver {
     pub fn new(program: impl Into<PathBuf>) -> ExecDriver {
         ExecDriver {
             program: program.into(),
+            last_page: PageSeen::default(),
         }
     }
 
@@ -72,19 +76,35 @@ impl Driver for ExecDriver {
     /// Runs the program until its last message, or until `timeout_ms` has passed since the start.
     /// The program is killed on any error, and after `EXIT_GRACE` if it does not exit by itself.
     fn run(&mut self, request: &RunRequest) -> Result<Vec<DriverMessage>, DriverError> {
+        self.last_page = PageSeen::default();
         let deadline = Instant::now() + Duration::from_millis(request.timeout_ms.into());
         let mut child = self.start()?;
         let stdin = child.stdin.take().expect("stdin is piped");
         let lines = read_lines_on_a_thread(child.stdout.take().expect("stdout is piped"));
         let stderr_tail = read_tail_on_a_thread(child.stderr.take().expect("stderr is piped"));
-        let outcome = send_request(stdin, request)
-            .and_then(|()| read_messages(&lines, deadline, request.timeout_ms, &stderr_tail));
+        let last_page = &mut self.last_page;
+        let outcome = send_request(stdin, request).and_then(|()| {
+            read_messages(
+                &lines,
+                deadline,
+                request.timeout_ms,
+                &stderr_tail,
+                last_page,
+            )
+        });
         if outcome.is_ok() {
             wait_then_stop(&mut child, deadline.min(Instant::now() + EXIT_GRACE));
         } else {
             stop(&mut child);
         }
         outcome
+    }
+
+    /// The program's own messages say nothing that dyno saw of the game frame. dyno sees only
+    /// whether the program said hello before an error that dyno itself ended the run with, and
+    /// whether that error was the run's deadline.
+    fn page_seen(&self) -> PageSeen {
+        self.last_page
     }
 }
 
@@ -104,12 +124,14 @@ fn send_request(mut stdin: ChildStdin, request: &RunRequest) -> Result<(), Drive
     }
 }
 
-/// Reads messages until `done` or `error`, which is the last one.
+/// Reads messages until `done` or `error`, which is the last one. `seen` says whether a `hello`
+/// came before an error, and whether the error was the deadline after it.
 fn read_messages(
     lines: &Receiver<io::Result<String>>,
     deadline: Instant,
     timeout_ms: u32,
     stderr_tail: &Receiver<String>,
+    seen: &mut PageSeen,
 ) -> Result<Vec<DriverMessage>, DriverError> {
     let mut messages = Vec::new();
     loop {
@@ -123,6 +145,9 @@ fn read_messages(
             Ok(Ok(line)) => line,
             Ok(Err(error)) => return Err(protocol_error(&format!("cannot read stdout: {error}"))),
             Err(RecvTimeoutError::Timeout) => {
+                if seen.hello_before_error {
+                    seen.end = Some(PageEnd::TimedOut);
+                }
                 let detail = format!("the run did not end within {timeout_ms} ms");
                 return Err(DriverError::new(DriverErrorCode::Run, &detail));
             }
@@ -136,6 +161,7 @@ fn read_messages(
         })?;
         if messages.is_empty() {
             check_hello(&message)?;
+            seen.hello_before_error = true;
         }
         let is_last = matches!(
             message,
@@ -293,6 +319,7 @@ mod tests {
         use dyno_schema::probe::ProbeEvent;
         use dyno_schema::profile::{HostProfile, Scenario};
         use dyno_schema::result::DriverInfo;
+        use dyno_schema::run_record::{PageDocument, PageRecord};
         use dyno_schema::runner::RunMark;
 
         use super::*;
@@ -527,6 +554,48 @@ mod tests {
                 .unwrap()
                 .success();
             assert!(!still_runs, "process {pid} still runs");
+        }
+
+        #[test]
+        fn a_program_that_says_hello_then_hangs_timed_out_after_its_hello() {
+            let _turn = take_turn();
+            let dir = tempfile::tempdir().unwrap();
+            let body = format!(
+                "{}exec sleep {HANG_SECONDS}\n",
+                send(&[hello(RUNNER_PROTOCOL_VERSION)])
+            );
+            let mut driver = program(dir.path(), &body);
+            let run = run_lab(&mut driver, &request(SHORT_TIMEOUT_MS));
+            assert_eq!(
+                run.page,
+                PageRecord {
+                    hello: true,
+                    document: PageDocument::NotObserved,
+                    probe: None,
+                    end: PageEnd::TimedOut,
+                }
+            );
+        }
+
+        #[test]
+        fn a_program_that_hangs_before_its_hello_never_started() {
+            let _turn = take_turn();
+            let dir = tempfile::tempdir().unwrap();
+            let body = format!("exec sleep {HANG_SECONDS}\n");
+            let mut driver = program(dir.path(), &body);
+            let run = run_lab(&mut driver, &request(SHORT_TIMEOUT_MS));
+            assert!(!run.page.hello);
+            assert_eq!(run.page.end, PageEnd::NeverStarted);
+        }
+
+        #[test]
+        fn a_program_that_exits_after_its_hello_failed() {
+            let _turn = take_turn();
+            let dir = tempfile::tempdir().unwrap();
+            let mut driver = program(dir.path(), &send(&[hello(RUNNER_PROTOCOL_VERSION)]));
+            let run = run_lab(&mut driver, &request(TIMEOUT_MS));
+            assert!(run.page.hello);
+            assert_eq!(run.page.end, PageEnd::Failed);
         }
 
         #[test]

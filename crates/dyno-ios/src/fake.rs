@@ -8,6 +8,14 @@
 //! - `footprints=<bytes>,<bytes>,...`: the page process's footprint in each recording, in turn.
 //!   Default: 200 MiB.
 //! - `kill-after-ms=<ms>`: jetsam kills the page process this long after the recording starts.
+//! - `sampled-after-ms=<ms>`: the page process is in the samples only from this long after the
+//!   recording starts, as a page that sysmontap has not sampled yet. With a kill before it, the
+//!   samples never have it.
+//! - `log-fails-in=<n>,<n>,...`: the log ends as soon as it starts in these recordings, counted
+//!   from 1 in the order this process starts them: with `--runs`, recording 1 is the first run of
+//!   the empty build and 2 the first run of the game.
+//! - `connect-fails-in=<n>,<n>,...`: the phone does not connect for these recordings, counted
+//!   the same way, as a phone that left between runs.
 //! - `launched=<file>`: where a launch writes the URL that Safari opens.
 //! - `tunnel=<address>`: this machine's address in the phone's tunnel, where the phone's Safari
 //!   reaches a server on this machine. A real phone has one only on a Mac, which this setting
@@ -59,6 +67,9 @@ struct Settings {
     fail: Option<String>,
     footprints: Vec<u64>,
     kill_after: Option<Duration>,
+    sampled_after: Option<Duration>,
+    log_fails_in: Vec<usize>,
+    connect_fails_in: Vec<usize>,
     launched: Option<String>,
     tunnel: Option<IpAddr>,
 }
@@ -79,6 +90,17 @@ impl Settings {
                 }
                 "kill-after-ms" => {
                     settings.kill_after = value.parse().ok().map(Duration::from_millis);
+                }
+                "sampled-after-ms" => {
+                    settings.sampled_after = value.parse().ok().map(Duration::from_millis);
+                }
+                "log-fails-in" => {
+                    settings.log_fails_in =
+                        value.split(',').filter_map(|n| n.parse().ok()).collect();
+                }
+                "connect-fails-in" => {
+                    settings.connect_fails_in =
+                        value.split(',').filter_map(|n| n.parse().ok()).collect();
                 }
                 "launched" => settings.launched = Some(value.to_owned()),
                 "tunnel" => settings.tunnel = value.parse().ok(),
@@ -107,12 +129,16 @@ pub(crate) async fn session(
     stop: oneshot::Receiver<()>,
 ) -> Option<Recording> {
     let settings = Settings::parse(spec);
+    // Counted from the start of each, so a recording that fails takes its turn too.
+    let recording = RECORDINGS.fetch_add(1, Ordering::Relaxed);
+    let connect_fails =
+        settings.fails("connect") || settings.connect_fails_in.contains(&(recording + 1));
     let failed = match address {
         Address::Usbmuxd { .. } if settings.no_phone => Some(DeviceError::NoDevice),
         Address::Usbmuxd { udid: Some(udid) } if udid != FAKE_UDID => Some(
             DeviceError::UnknownDevice(udid.clone(), format!("{FAKE_UDID} on USB")),
         ),
-        _ if settings.fails("connect") => Some(DeviceError::Connect(
+        _ if connect_fails => Some(DeviceError::Connect(
             "the fake phone did not connect".to_owned(),
         )),
         _ if settings.fails("record") => Some(DeviceError::Record(
@@ -137,7 +163,6 @@ pub(crate) async fn session(
         },
         udid: Some(FAKE_UDID.to_owned()),
     };
-    let recording = RECORDINGS.fetch_add(1, Ordering::Relaxed);
     let footprint = match settings.footprints.as_slice() {
         [] => FOOTPRINT,
         footprints => footprints[recording % footprints.len()],
@@ -148,12 +173,14 @@ pub(crate) async fn session(
         every: interval(EVERY),
         footprint,
         killed_at,
+        sampled_from: begun + settings.sampled_after.unwrap_or_default(),
         ended: settings.fails("samples"),
     };
     let lines = Lines {
         every: interval(EVERY),
         killed_at,
-        ended: settings.fails("log"),
+        // Recordings count from 1 in the settings.
+        ended: settings.fails("log") || settings.log_fails_in.contains(&(recording + 1)),
     };
     let launch = |url: String| async move {
         if settings.fails("launch-hangs") {
@@ -179,6 +206,8 @@ struct Samples {
     every: Interval,
     footprint: u64,
     killed_at: Option<Instant>,
+    /// When the page process enters the samples.
+    sampled_from: Instant,
     ended: bool,
 }
 
@@ -188,7 +217,8 @@ impl SampleFeed for Samples {
             return Err("the fake phone stopped sending samples".to_owned());
         }
         self.every.tick().await;
-        let alive = self.killed_at.is_none_or(|at| Instant::now() < at);
+        let now = Instant::now();
+        let alive = self.killed_at.is_none_or(|at| now < at) && now >= self.sampled_from;
         let page = ProcessRow {
             pid: PAGE_PID,
             name: WEB_CONTENT.to_owned(),
@@ -240,7 +270,7 @@ mod tests {
     fn every_setting_is_read_and_unknown_ones_are_left_out() {
         let settings = Settings::parse(
             "phones=0; fail=launch;footprints=1,2,x;kill-after-ms=1500;launched=/tmp/a;what=1;bare;\
-             tunnel=fd7b:e5b:6f53::2",
+             tunnel=fd7b:e5b:6f53::2;sampled-after-ms=9000;log-fails-in=1,3,y;connect-fails-in=4",
         );
         assert_eq!(
             settings,
@@ -249,6 +279,9 @@ mod tests {
                 fail: Some("launch".to_owned()),
                 footprints: vec![1, 2],
                 kill_after: Some(Duration::from_millis(1_500)),
+                sampled_after: Some(Duration::from_millis(9_000)),
+                log_fails_in: vec![1, 3],
+                connect_fails_in: vec![4],
                 launched: Some("/tmp/a".to_owned()),
                 tunnel: Some("fd7b:e5b:6f53::2".parse().unwrap()),
             }

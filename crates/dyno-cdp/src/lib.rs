@@ -7,7 +7,7 @@
 //! [`CdpDriver`] is the [`Driver`] that `dyno check <launch-url>` uses; [`run_cdp`] is the same
 //! run as a function.
 
-use dyno_run::{Driver, DriverError, DriverErrorCode};
+use dyno_run::{Driver, DriverError, DriverErrorCode, PageSeen};
 use dyno_schema::environment::{Environment, EnvironmentBrowser, EnvironmentOs, OsName};
 use dyno_schema::result::DriverInfo;
 use dyno_schema::runner::{DriverMessage, RunRequest};
@@ -64,6 +64,12 @@ impl CdpError {
 
 /// Runs one load-and-idle run with Chromium. An error is scrubbed, since it can quote a URL.
 pub fn run_cdp(request: &RunRequest) -> Result<Vec<DriverMessage>, DriverError> {
+    run_cdp_seen(request).map(|ran| ran.messages)
+}
+
+/// [`run_cdp`], with what the run saw of the page: the game frame's last document, and how a
+/// run that failed after its `hello` ended.
+pub fn run_cdp_seen(request: &RunRequest) -> Result<run::Ran, DriverError> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -78,8 +84,20 @@ fn driver_error(error: &CdpError) -> DriverError {
 }
 
 /// The CDP driver.
-#[derive(Debug, Default)]
-pub struct CdpDriver;
+#[derive(Debug)]
+pub struct CdpDriver {
+    /// What the last run saw of the page: no document, before a run and after one that failed
+    /// before its `hello`.
+    last_page: PageSeen,
+}
+
+impl Default for CdpDriver {
+    fn default() -> CdpDriver {
+        CdpDriver {
+            last_page: PageSeen::before_a_run(),
+        }
+    }
+}
 
 impl Driver for CdpDriver {
     fn name(&self) -> &str {
@@ -87,7 +105,17 @@ impl Driver for CdpDriver {
     }
 
     fn run(&mut self, request: &RunRequest) -> Result<Vec<DriverMessage>, DriverError> {
-        run_cdp(request)
+        // A run that fails before its `hello` saw no document.
+        self.last_page = PageSeen::before_a_run();
+        let ran = run_cdp_seen(request)?;
+        self.last_page = ran.seen;
+        Ok(ran.messages)
+    }
+
+    /// The game frame's last document, by the URL that it committed at, and how a run that failed
+    /// after its `hello` ended.
+    fn page_seen(&self) -> PageSeen {
+        self.last_page
     }
 
     /// The Chromium that `Browser.getVersion` named, which this driver always runs headless, on
@@ -141,7 +169,7 @@ mod tests {
             version: "0.1.0".to_owned(),
             browser: Some("Chromium 152.0.7977.82".to_owned()),
         };
-        let environment = CdpDriver.environment(&hello);
+        let environment = CdpDriver::default().environment(&hello);
         let browser = environment.browser.unwrap();
         assert_eq!(browser.name, "Chromium");
         assert_eq!(browser.version.as_deref(), Some("152.0.7977.82"));

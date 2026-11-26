@@ -20,6 +20,7 @@ use dyno_schema::result::{
     ResultError, RunInfo, ServePath, Target, TierReport, ToolBuild, Versions, raw_hash_matches,
 };
 use dyno_schema::rule::{Finding, Fix, FixAction};
+use dyno_schema::run_record::{PageDocument, PageEnd, PageRecord, RunOf, RunRecord};
 use dyno_schema::status::{RunCoverage, Status, Verdict};
 use serde_json::Value;
 
@@ -193,6 +194,7 @@ fn run_info(started_at: &str, os: &str) -> RunInfo {
             reason: None,
         },
         timeline: None,
+        runs: None,
     }
 }
 
@@ -473,6 +475,41 @@ fn a_result_from_before_the_serve_path_and_the_lab_still_reads_and_matches() {
     assert!(loaded.hash_matches);
     assert_eq!(loaded.result.run.serve_path, None);
     assert_eq!(loaded.result.run.lab, None);
+}
+
+#[test]
+fn the_hash_excludes_the_run_records() {
+    let mut run = run_info(REFERENCE_TIME, "macos");
+    run.runs = Some(vec![RunRecord {
+        of: RunOf::Game,
+        index: 1,
+        page: PageRecord {
+            hello: true,
+            document: PageDocument::Build,
+            probe: None,
+            end: PageEnd::TimedOut,
+        },
+        recording: None,
+    }]);
+    let result = CheckResult::new(deterministic(WALK, ITEMS, MEASURE_ORDER), run).unwrap();
+    assert_eq!(result.result_hash, reference_result().result_hash);
+    let json = serde_json::to_value(&result).unwrap();
+    assert_eq!(json["run"]["runs"][0]["page"]["end"], "timed_out");
+}
+
+#[test]
+fn a_check_with_no_browser_run_leaves_the_run_records_out_of_the_json() {
+    let reference = reference_json();
+    assert!(reference["run"].get("runs").is_none(), "{reference}");
+    let loaded = LoadedResult::from_json(reference.clone()).unwrap();
+    assert!(loaded.hash_matches);
+    assert_eq!(loaded.result.run.runs, None);
+    // Null reads as left out, as the JSON Schema and the TypeScript type both allow.
+    let mut with_null = reference;
+    with_null["run"]["runs"] = Value::Null;
+    let loaded = LoadedResult::from_json(with_null).unwrap();
+    assert!(loaded.hash_matches);
+    assert_eq!(loaded.result.run.runs, None);
 }
 
 #[test]

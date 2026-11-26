@@ -156,6 +156,7 @@ pub fn device_parts() -> (Deterministic, RunInfo) {
             reason: None,
         },
         timeline: None,
+        runs: None,
     };
     (deterministic, run)
 }

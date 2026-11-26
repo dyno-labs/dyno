@@ -8,7 +8,7 @@
 //! sees the `sessionId` of flat mode (CDP feasibility test).
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -55,6 +55,8 @@ pub struct Connection {
     pending: Mutex<HashMap<u64, Pending>>,
     next_id: AtomicU64,
     call_timeout: Duration,
+    /// Whether the browser's side of the WebSocket has closed, so no reply or event comes again.
+    closed: AtomicBool,
 }
 
 /// The event a target sends when the browser detaches its session.
@@ -78,6 +80,7 @@ impl Connection {
             pending: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
             call_timeout,
+            closed: AtomicBool::new(false),
         });
         tokio::spawn(async move {
             while let Some(message) = to_send.recv().await {
@@ -97,9 +100,17 @@ impl Connection {
                     reader.dispatch(envelope, &events);
                 }
             }
+            // Set before the calls fail, so a run that sees a call fail can tell why.
+            reader.closed.store(true, Ordering::SeqCst);
             reader.fail_all("the browser closed the connection");
         });
         Ok((connection, received))
+    }
+
+    /// Whether the browser's side of the connection has closed: a run that fails after it ended
+    /// because the browser went, whatever error its call or its wait gave.
+    pub fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::SeqCst)
     }
 
     /// Sends one call and waits for its reply, up to the call timeout.
@@ -462,11 +473,14 @@ mod tests {
     #[tokio::test]
     async fn a_closed_connection_fails_its_waiting_calls() {
         let (connection, _events) = connect(LONG, |_| Answer::Close).await;
+        assert!(!connection.is_closed());
         let error = Session::browser(&connection)
             .call("Page.navigate", json!({}))
             .await
             .unwrap_err();
         assert_eq!(detail(error).1, "the browser closed the connection");
+        // The run reads the closing itself, whatever error the call gave.
+        assert!(connection.is_closed());
     }
 
     #[tokio::test]

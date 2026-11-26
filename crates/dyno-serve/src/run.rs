@@ -8,6 +8,15 @@
 //! page to send what it still holds, and ends with `done`. A failure after `hello` ends the run
 //! with `error`.
 //!
+//! The run keeps what it saw of the page for the run's record ([`PageSeen`]), and nothing of that
+//! changes its messages. It cannot see the game frame's document, only whether a probe's document
+//! message reached the servers in the run. A run that the deadline cut short timed out. Of any
+//! other that fails after `hello`, it says what it saw: a command that the harness page did not
+//! take in the whole time dyno waited, or no request for [`LINK_SILENCE`], longer than the page's
+//! poll for its next command waits ([`POLL_WAIT`]). Only requests with the run's key, at the
+//! address that took the `hello`, count. A second tab opened at the run's URL has the key, so it
+//! can take a command and make requests too.
+//!
 //! Two clocks meet, as in the CDP driver. The driver's clock is this machine's, from the moment
 //! dyno answered `hello`. Probe events keep the game frame's own clock. The page and the frame
 //! share the browser's wall clock, so the frame's clock start is placed on the driver's clock by
@@ -26,8 +35,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use dyno_run::PageSeen;
 use dyno_schema::probe::{MessageDirection, ProbeEvent};
 use dyno_schema::result::DriverInfo;
+use dyno_schema::run_record::{PageEnd, ProbeHeard};
 use dyno_schema::runner::{DriverMessage, RUNNER_PROTOCOL_VERSION, RunMark, RunRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -61,12 +72,18 @@ const FLUSH_WAIT: Duration = Duration::from_secs(5);
 /// How long the run waits for the page to take the `done` command.
 const DONE_WAIT: Duration = Duration::from_secs(3);
 
+/// How long the harness page may make no request before a run that fails counts it as gone. A
+/// page that still runs asks for its next command again as soon as an ask is answered, and dyno
+/// answers each ask within [`POLL_WAIT`]; the rest is room for the network.
+const LINK_SILENCE: Duration = Duration::from_secs(25);
+
 /// What the servers saw, in the order they saw it.
 #[derive(Debug)]
 enum Seen {
     /// A request to the harness server at this place, of any kind: a browser reached it there.
     HarnessRequest {
         place: usize,
+        at: Instant,
     },
     Hello {
         user_agent: String,
@@ -211,6 +228,70 @@ struct Run {
     webgl_renderer: Option<Option<String>>,
     /// How many times the page said it sent everything it held.
     flushes: u32,
+    /// When the harness page that said hello last made a request to dyno, of any kind.
+    last_contact: Instant,
+    /// The place that took the `hello`. Only requests there are the harness page's.
+    hello_place: Option<usize>,
+    /// Whether a probe's document message reached dyno in the run.
+    probe_heard: bool,
+}
+
+/// Why a run that got its `hello` ended before `done`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Failure {
+    /// The deadline passed before the game frame was idle.
+    NeverIdle,
+    /// The page did not answer the self-check. `full_wait` says whether dyno waited the whole
+    /// [`SELF_CHECK_WAIT`], or the deadline cut it short.
+    NoSelfCheck { full_wait: bool },
+    /// The page did not send the events it held, in the whole [`FLUSH_WAIT`].
+    NoFlush,
+}
+
+impl Failure {
+    /// The run's `error` message.
+    fn message(self) -> &'static str {
+        match self {
+            Failure::NeverIdle => "the run timed out before the game frame was idle",
+            Failure::NoSelfCheck { .. } => "the harness page did not answer the self-check",
+            Failure::NoFlush => "the harness page did not send the events it held",
+        }
+    }
+
+    /// Whether the page had the whole of its step's wait to take the command.
+    fn waited_in_full(self) -> bool {
+        match self {
+            Failure::NeverIdle => false,
+            Failure::NoSelfCheck { full_wait } => full_wait,
+            Failure::NoFlush => true,
+        }
+    }
+}
+
+/// How a run that failed after `hello` ended, in this order:
+///
+/// 1. A step that the run's deadline cut short timed out, whatever the silence says: the page
+///    may simply not have asked yet.
+/// 2. A command that dyno gave the page stayed untaken for the whole of the step's wait.
+/// 3. No request came from the address that took the `hello` for `silent`, longer than
+///    [`LINK_SILENCE`].
+/// 4. A page that never went idle met the deadline: the wait for idle has no length of its own,
+///    so the deadline is its end, not a cut.
+/// 5. One that took a command and did not answer it failed.
+fn page_end(failure: Failure, command_untaken: bool, silent: Duration) -> PageEnd {
+    if failure == (Failure::NoSelfCheck { full_wait: false }) {
+        return PageEnd::TimedOut;
+    }
+    if command_untaken && failure.waited_in_full() {
+        return PageEnd::CommandNotTaken;
+    }
+    if silent > LINK_SILENCE {
+        return PageEnd::NoRequest;
+    }
+    match failure {
+        Failure::NeverIdle | Failure::NoSelfCheck { full_wait: false } => PageEnd::TimedOut,
+        Failure::NoSelfCheck { full_wait: true } | Failure::NoFlush => PageEnd::Failed,
+    }
 }
 
 /// Aborts the server tasks when the run ends.
@@ -230,6 +311,8 @@ pub(crate) struct Served {
     pub messages: Vec<DriverMessage>,
     pub times: RunTimes,
     pub user_agent: String,
+    /// What the run saw of the page.
+    pub seen: PageSeen,
 }
 
 /// What a run gave, and the place whose harness server took the page's `hello`: its index in
@@ -308,6 +391,11 @@ async fn run_at(
     }
 
     let (user_agent, started) = wait_for_hello(&mut seen, driver, asks, no_request).await?;
+    let hello_place = *shared
+        .hello_at
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+
     let since_hello = Instant::now().saturating_duration_since(started);
     let started_epoch_ms = epoch_ms_now() - since_hello.as_secs_f64() * 1_000.0;
     let mut run = Run {
@@ -331,13 +419,30 @@ async fn run_at(
         frame_time_origin: None,
         webgl_renderer: None,
         flushes: 0,
+        last_contact: started,
+        hello_place,
+        probe_heard: false,
     };
     run.mark(RunMark::Navigated, started);
-    if let Err(message) = run_in(&mut run, &mut seen, shared, request).await {
-        let t_ms = run.t_ms(Instant::now());
-        run.messages.push(DriverMessage::Error { message, t_ms });
+    let mut failed = None;
+    if let Err(failure) = run_in(&mut run, &mut seen, shared, request).await {
+        let at = Instant::now();
+        let t_ms = run.t_ms(at);
+        run.messages.push(DriverMessage::Error {
+            message: failure.message().to_owned(),
+            t_ms,
+        });
+        failed = Some(Failed { failure, at });
     }
-    let ended_epoch_ms = run.started_epoch_ms + run.t_ms(Instant::now());
+    let command_untaken = || !shared.queue().is_empty();
+    let closed = close(
+        &mut run,
+        &mut seen,
+        failed,
+        |_| Instant::now(),
+        command_untaken,
+    );
+    let ended_epoch_ms = run.started_epoch_ms + run.t_ms(closed.ended_at);
     end_page(shared).await;
     let times = RunTimes {
         navigated_epoch_ms: run.started_epoch_ms,
@@ -354,27 +459,90 @@ async fn run_at(
         messages: run.messages,
         times,
         user_agent,
+        seen: PageSeen {
+            // The run hears the probe; it cannot see which document the frame holds.
+            document: None,
+            end: closed.end,
+            probe: Some(closed.probe),
+            hello_before_error: false,
+        },
     })
 }
 
-/// Load, idle, self-check, activate and watch. An error is the run's error message.
+/// A run that failed after `hello`: the step it failed, and when it failed.
+#[derive(Clone, Copy, Debug)]
+struct Failed {
+    failure: Failure,
+    at: Instant,
+}
+
+/// The end of a run: when it ended, on `now`, and what it saw of the page.
+#[derive(Debug, PartialEq)]
+struct Closed {
+    ended_at: Instant,
+    end: Option<PageEnd>,
+    probe: ProbeHeard,
+}
+
+/// Ends the run. Its end time is taken first, at the point it always was, so that what the
+/// record reads next moves no cutoff of a measure. Then the record reads what the servers
+/// received in the run that the run did not take from the queue: a document message, and a
+/// request at the address that took the `hello` before the run failed. That goes nowhere else.
+/// `now` is the clock, which tests move while the record reads. `command_untaken` says whether a
+/// command that dyno gave the page is still untaken: the record asks it of a run that failed,
+/// after the end time is taken.
+fn close(
+    run: &mut Run,
+    seen: &mut mpsc::UnboundedReceiver<Seen>,
+    failed: Option<Failed>,
+    now: impl Fn(&Run) -> Instant,
+    command_untaken: impl FnOnce() -> bool,
+) -> Closed {
+    let ended_at = now(run);
+    let command_untaken = failed.is_some() && command_untaken();
+    let contact_by = failed.map_or(ended_at, |failed| failed.at);
+    while let Ok(item) = seen.try_recv() {
+        run.note_unread(&item, ended_at, contact_by);
+    }
+    let end = failed.map(|failed| {
+        page_end(
+            failed.failure,
+            command_untaken,
+            failed.at.saturating_duration_since(run.last_contact),
+        )
+    });
+    let probe = match run.probe_heard {
+        true => ProbeHeard::Heard,
+        false => ProbeHeard::NotHeard,
+    };
+    Closed {
+        ended_at,
+        end,
+        probe,
+    }
+}
+
+/// Load, idle, self-check, activate and watch. An error says which step the page did not meet.
 async fn run_in(
     run: &mut Run,
     seen: &mut mpsc::UnboundedReceiver<Seen>,
     shared: &Shared,
     request: &RunRequest,
-) -> Result<(), String> {
+) -> Result<(), Failure> {
     let deadline = run.started + Duration::from_millis(u64::from(request.timeout_ms));
     let idle_after = Duration::from_millis(u64::from(request.idle_after_ms));
     if !take_until(run, seen, deadline, |run| run.is_idle(idle_after)).await {
-        return Err("the run timed out before the game frame was idle".to_owned());
+        return Err(Failure::NeverIdle);
     }
     run.mark(RunMark::Idle, Instant::now());
 
     shared.command(Command::SelfCheck);
-    let answer_by = deadline.min(Instant::now() + SELF_CHECK_WAIT);
+    let full_wait_until = Instant::now() + SELF_CHECK_WAIT;
+    let answer_by = deadline.min(full_wait_until);
     if !take_until(run, seen, answer_by, |run| run.webgl_renderer.is_some()).await {
-        return Err("the harness page did not answer the self-check".to_owned());
+        return Err(Failure::NoSelfCheck {
+            full_wait: answer_by == full_wait_until,
+        });
     }
     run.self_check(Instant::now());
 
@@ -391,7 +559,7 @@ async fn run_in(
     })
     .await
     {
-        return Err("the harness page did not send the events it held".to_owned());
+        return Err(Failure::NoFlush);
     }
     let t_ms = run.t_ms(Instant::now());
     run.messages.push(DriverMessage::Done { t_ms });
@@ -461,7 +629,7 @@ async fn wait_for_hello(
         tokio::select! {
             item = seen.recv() => match item {
                 Some(Seen::Hello { user_agent, at }) => return Ok((user_agent, at)),
-                Some(Seen::HarnessRequest { place: 0 }) => {
+                Some(Seen::HarnessRequest { place: 0, .. }) => {
                     requested = true;
                     due = false;
                     say_at = None;
@@ -527,6 +695,32 @@ impl Run {
         self.messages.push(DriverMessage::Mark { mark, t_ms });
     }
 
+    /// Notes, for the record only, what the servers saw that the run did not take: a document
+    /// message that they received by `ended_at`, and a request at the address that took the
+    /// `hello` that they received by `contact_by`.
+    fn note_unread(&mut self, item: &Seen, ended_at: Instant, contact_by: Instant) {
+        match item {
+            Seen::Events { events, at }
+                if *at <= ended_at
+                    && events
+                        .iter()
+                        .any(|event| matches!(event, PageEvent::Document { .. })) =>
+            {
+                self.probe_heard = true;
+            }
+            Seen::HarnessRequest { place, at } if *at <= contact_by => self.contact(*place, *at),
+            _ => {}
+        }
+    }
+
+    /// A request at `place`, received at `at`. Only one at the address that took the `hello` is
+    /// the harness page's: a request at the other address of a run served at two is not.
+    fn contact(&mut self, place: usize, at: Instant) {
+        if Some(place) == self.hello_place {
+            self.last_contact = self.last_contact.max(at);
+        }
+    }
+
     /// The frame is idle once a document with the probe has loaded, no game request is in flight,
     /// and none started for `idle_after`.
     fn is_idle(&self, idle_after: Duration) -> bool {
@@ -538,7 +732,9 @@ impl Run {
     fn take(&mut self, item: Seen) {
         match item {
             // A page that says hello again is turned away by the server.
-            Seen::Hello { .. } | Seen::HarnessRequest { .. } => {}
+            Seen::Hello { .. } => {}
+            // When the server received it, not when the run took it from the queue.
+            Seen::HarnessRequest { place, at } => self.contact(place, at),
             Seen::RequestStarted { at } => {
                 self.in_flight += 1;
                 self.last_started = at;
@@ -560,6 +756,10 @@ impl Run {
             }
             Seen::Events { events, at } => {
                 for event in events {
+                    // For the record only: the event goes on as it always did.
+                    if matches!(event, PageEvent::Document { .. }) {
+                        self.probe_heard = true;
+                    }
                     self.take_event(event, at);
                 }
             }
@@ -678,7 +878,10 @@ async fn serve_harness(at: Arc<At>, mut socket: TcpStream) {
     let Some(request) = read_body(&mut socket, head).await else {
         return;
     };
-    let _ = shared.seen.send(Seen::HarnessRequest { place: at.place });
+    let _ = shared.seen.send(Seen::HarnessRequest {
+        place: at.place,
+        at: Instant::now(),
+    });
     let response = match (request.method.as_str(), request.path.as_str()) {
         ("GET" | "HEAD", "/") => {
             let mut page =
@@ -823,4 +1026,253 @@ async fn serve_game(at: Arc<At>, mut socket: TcpStream) {
         bytes,
         at: Instant::now(),
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const A_MOMENT: Duration = Duration::from_secs(1);
+    const FULL: Failure = Failure::NoSelfCheck { full_wait: true };
+    const CUT_SHORT: Failure = Failure::NoSelfCheck { full_wait: false };
+
+    #[test]
+    fn a_page_that_still_asks_and_never_went_idle_met_the_deadline() {
+        assert_eq!(
+            page_end(Failure::NeverIdle, false, A_MOMENT),
+            PageEnd::TimedOut
+        );
+    }
+
+    #[test]
+    fn a_command_untaken_for_the_whole_wait_is_said_as_that() {
+        for failure in [FULL, Failure::NoFlush] {
+            assert_eq!(page_end(failure, true, A_MOMENT), PageEnd::CommandNotTaken);
+        }
+    }
+
+    #[test]
+    fn a_step_that_the_deadline_cut_short_timed_out_whatever_the_silence_says() {
+        // The frame went idle just before the deadline: the page may simply not have asked yet.
+        let silent = LINK_SILENCE + A_MOMENT;
+        for (untaken, silence) in [
+            (true, A_MOMENT),
+            (false, A_MOMENT),
+            (true, silent),
+            (false, silent),
+        ] {
+            assert_eq!(page_end(CUT_SHORT, untaken, silence), PageEnd::TimedOut);
+        }
+    }
+
+    #[test]
+    fn no_request_for_longer_than_the_poll_is_said_as_that() {
+        let silent = LINK_SILENCE + A_MOMENT;
+        assert_eq!(
+            page_end(Failure::NeverIdle, false, silent),
+            PageEnd::NoRequest
+        );
+        // Silence of up to the limit is a page that may still be there.
+        assert_eq!(
+            page_end(Failure::NeverIdle, false, LINK_SILENCE),
+            PageEnd::TimedOut
+        );
+        assert!(LINK_SILENCE > POLL_WAIT);
+    }
+
+    #[test]
+    fn a_page_that_took_a_command_and_did_not_answer_failed() {
+        assert_eq!(page_end(FULL, false, A_MOMENT), PageEnd::Failed);
+        assert_eq!(page_end(Failure::NoFlush, false, A_MOMENT), PageEnd::Failed);
+    }
+
+    const HELLO_PLACE: usize = 0;
+
+    /// A run that a page said hello in, at place 0, a moment ago.
+    fn run() -> Run {
+        let started = Instant::now();
+        Run {
+            started,
+            started_epoch_ms: 0.0,
+            idle_at: None,
+            activated_at: None,
+            messages: Vec::new(),
+            in_flight: 0,
+            last_started: started,
+            navigated_at_epoch_ms: None,
+            document: None,
+            to_host: Vec::new(),
+            frame_time_origin: None,
+            webgl_renderer: None,
+            flushes: 0,
+            last_contact: started,
+            hello_place: Some(HELLO_PLACE),
+            probe_heard: false,
+        }
+    }
+
+    #[test]
+    fn a_probe_is_heard_once_a_document_message_reaches_the_run() {
+        let mut run = run();
+        run.take(Seen::Events {
+            events: vec![PageEvent::Flushed],
+            at: Instant::now(),
+        });
+        assert!(!run.probe_heard);
+        run.take(Seen::Events {
+            events: vec![PageEvent::Document {
+                time_origin: 1_050.0,
+                device_pixel_ratio: 3.0,
+            }],
+            at: Instant::now(),
+        });
+        assert!(run.probe_heard);
+        // The run takes the document as it always did.
+        assert!(run.document.is_some());
+    }
+
+    fn document() -> PageEvent {
+        PageEvent::Document {
+            time_origin: 1_050.0,
+            device_pixel_ratio: 3.0,
+        }
+    }
+
+    /// A queue that holds these, as the servers left it when the run ended.
+    fn queued(items: Vec<Seen>) -> mpsc::UnboundedReceiver<Seen> {
+        let (sender, queue) = mpsc::unbounded_channel();
+        for item in items {
+            sender.send(item).unwrap();
+        }
+        queue
+    }
+
+    #[test]
+    fn a_document_batch_that_the_servers_took_before_the_end_is_heard_and_goes_no_further() {
+        let mut run = run();
+        let end = run.started + Duration::from_secs(13);
+        let mut queue = queued(vec![Seen::Events {
+            events: vec![document()],
+            at: end,
+        }]);
+        let closed = close(&mut run, &mut queue, None, |_| end, || false);
+        assert_eq!(closed.probe, ProbeHeard::Heard);
+        assert!(run.document.is_none());
+        assert!(run.messages.is_empty());
+    }
+
+    #[test]
+    fn a_document_batch_that_the_servers_took_after_the_end_is_not_heard() {
+        let mut run = run();
+        let end = run.started + Duration::from_secs(13);
+        let mut queue = queued(vec![Seen::Events {
+            events: vec![document()],
+            at: end + A_MOMENT,
+        }]);
+        assert_eq!(
+            close(&mut run, &mut queue, None, |_| end, || false).probe,
+            ProbeHeard::NotHeard
+        );
+    }
+
+    /// The device measures cut off at the run's end, plus their slack, so a later end can take in
+    /// a kill line that the run's own end leaves out. The end is the same whether or not the
+    /// record has queued evidence to read, however long it reads.
+    #[test]
+    fn the_end_of_a_run_is_taken_before_the_record_reads_what_is_queued() {
+        let started = run().started;
+        let end = started + Duration::from_secs(13);
+        // A clock that has moved on by 2 s once the record has read the queued document message:
+        // more than the 1.5 s of slack of the device measures.
+        let clock = |run: &Run| match run.probe_heard {
+            true => end + Duration::from_secs(2),
+            false => end,
+        };
+        let failed = Failed {
+            failure: Failure::NoFlush,
+            at: end,
+        };
+        for failed in [None, Some(failed)] {
+            let mut with = run();
+            let mut evidence = queued(vec![Seen::Events {
+                events: vec![document()],
+                at: end - A_MOMENT,
+            }]);
+            // The record asks about the command queue only after the end is taken.
+            let end_taken = std::cell::Cell::new(false);
+            let clock = |run: &Run| {
+                end_taken.set(true);
+                clock(run)
+            };
+            let untaken = || {
+                assert!(end_taken.get());
+                false
+            };
+            let with = close(&mut with, &mut evidence, failed, clock, untaken);
+            let without = close(&mut run(), &mut queued(Vec::new()), failed, clock, untaken);
+            assert_eq!(with.probe, ProbeHeard::Heard);
+            assert_eq!(without.probe, ProbeHeard::NotHeard);
+            assert_eq!(with.ended_at, end);
+            assert_eq!(without.ended_at, end);
+        }
+    }
+
+    #[test]
+    fn a_request_still_queued_when_the_run_failed_counts_as_contact() {
+        let started = run().started;
+        let failed_at = started + LINK_SILENCE * 2;
+        let failed = Failed {
+            failure: Failure::NoFlush,
+            at: failed_at,
+        };
+        let end_with = |items: Vec<Seen>| {
+            close(
+                &mut run(),
+                &mut queued(items),
+                Some(failed),
+                |_| failed_at,
+                || false,
+            )
+            .end
+        };
+        // The page made no request since the hello: it stopped reaching dyno.
+        assert_eq!(end_with(Vec::new()), Some(PageEnd::NoRequest));
+        // A request at the hello's address just before the run failed, that the run had not yet
+        // taken from the queue: the page still reached dyno.
+        assert_eq!(
+            end_with(vec![Seen::HarnessRequest {
+                place: HELLO_PLACE,
+                at: failed_at - A_MOMENT,
+            }]),
+            Some(PageEnd::Failed)
+        );
+        // One at the other address, or one after the run failed, is no contact.
+        for (place, at) in [
+            (1, failed_at - A_MOMENT),
+            (HELLO_PLACE, failed_at + A_MOMENT),
+        ] {
+            assert_eq!(
+                end_with(vec![Seen::HarnessRequest { place, at }]),
+                Some(PageEnd::NoRequest)
+            );
+        }
+    }
+
+    #[test]
+    fn only_requests_at_the_place_that_took_the_hello_count_as_contact() {
+        let mut run = run();
+        let before = run.last_contact;
+        let later = before + A_MOMENT;
+        run.take(Seen::HarnessRequest {
+            place: 1,
+            at: later,
+        });
+        assert_eq!(run.last_contact, before);
+        // Contact is when the server received the request, not when the run took it.
+        run.take(Seen::HarnessRequest {
+            place: HELLO_PLACE,
+            at: later,
+        });
+        assert_eq!(run.last_contact, later);
+    }
 }

@@ -12,6 +12,7 @@ use dyno_ios::recording::Link;
 use dyno_ios::{Address, DeviceError, NoTunnelAddress, OpenedWith, Recorder, RunWindow};
 use dyno_schema::environment::{EnvironmentDevice, EnvironmentOs};
 use dyno_schema::measure::Measure;
+use dyno_schema::run_record::RecordingRecord;
 use dyno_schema::timeline::Timeline;
 use dyno_serve::RunTimes;
 
@@ -86,12 +87,19 @@ impl DeviceRun {
     }
 
     /// Stops the recording, saves it when asked, and gives the device measures of the run with the
-    /// OS and device of the phone. A run that never started, or a recording that did not end
-    /// well, gives every device measure as missing, with the reason, and no OS or device.
+    /// OS and device of the phone, and what the recording gave the run. A run that never started,
+    /// or a recording that did not end well, gives every device measure as missing, with the
+    /// reason, and no OS or device.
     pub fn finish(self, run: Option<RunTimes>) -> FinishedDeviceRun {
         let recording = match self.recorder.stop() {
             Ok(recording) => recording,
-            Err(error) => return FinishedDeviceRun::missing(&error.to_string()),
+            Err(error) => {
+                let reason = error.to_string();
+                return FinishedDeviceRun {
+                    recording: dyno_ios::failed_recording_record(&reason),
+                    ..FinishedDeviceRun::missing(&reason)
+                };
+            }
         };
         if let Some(path) = &self.save_to
             && let Err(error) = recording.save(path)
@@ -99,9 +107,12 @@ impl DeviceRun {
             output::print_summary(&[format!("dyno check: the recording was not saved: {error}.")]);
         }
         let Some(run) = run else {
-            return FinishedDeviceRun::missing(
-                "the run did not start, so the recording has no run to read",
-            );
+            return FinishedDeviceRun {
+                recording: dyno_ios::recording_record(&recording, None),
+                ..FinishedDeviceRun::missing(
+                    "the run did not start, so the recording has no run to read",
+                )
+            };
         };
         let (os, device) = dyno_ios::phone_environment(&recording);
         let window = RunWindow {
@@ -115,6 +126,7 @@ impl DeviceRun {
             os,
             device,
             timeline: dyno_ios::device_timeline(&recording, &window),
+            recording: dyno_ios::recording_record(&recording, Some(&window)),
         }
     }
 }
@@ -128,16 +140,20 @@ pub struct FinishedDeviceRun {
     pub device: Option<EnvironmentDevice>,
     /// Safari's processes through the run, from the recording.
     pub timeline: Option<Timeline>,
+    /// What the recording gave the run, for the run's record.
+    pub recording: RecordingRecord,
 }
 
 impl FinishedDeviceRun {
-    /// Every device measure missing for this reason, and no OS or device.
+    /// Every device measure missing for this reason, no OS or device, and a recording that read
+    /// nothing, for this reason.
     fn missing(reason: &str) -> FinishedDeviceRun {
         FinishedDeviceRun {
             measures: dyno_ios::missing_device_measures(reason),
             os: None,
             device: None,
             timeline: None,
+            recording: dyno_ios::failed_recording_record(reason),
         }
     }
 }

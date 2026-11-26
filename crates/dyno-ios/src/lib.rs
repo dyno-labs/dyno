@@ -13,7 +13,8 @@
 //! one set of device measures.
 //!
 //! [`device_timeline`] keeps every sample of Safari's processes through the run for `run.timeline`,
-//! with the kernel's kills and memory limits as marks.
+//! with the kernel's kills and memory limits as marks. [`record`] says what the recording gave the
+//! run, for the run's record, and changes no measure.
 //!
 //! [`trace`] reads an Activity Monitor trace that xctrace exported, and gives the same measures
 //! and timeline from it. `--device` does not use it: it is for traces that a device cloud's host
@@ -24,6 +25,7 @@
 pub mod devicectl;
 pub mod fake;
 mod phone;
+pub mod record;
 pub mod recorder;
 pub mod recording;
 pub mod runs;
@@ -46,6 +48,7 @@ use dyno_schema::timeline::{
     MemorySample, ProcessRole, Timeline, TimelineMark, TimelineMethod, TimelineProcess,
 };
 
+pub use crate::record::{failed_recording_record, recording_record};
 pub use crate::recorder::{Address, DeviceError, OpenedWith, Recorder};
 use crate::recording::Recording;
 pub use crate::tunnel::NoTunnelAddress;
@@ -521,6 +524,7 @@ mod tests {
         let to_end = Coverage {
             until_epoch_ms: at(14_000),
             ended: None,
+            ..Coverage::default()
         };
         Recording {
             phone: phone(),
@@ -791,6 +795,7 @@ mod tests {
         short.log_covers = Coverage {
             until_epoch_ms: START + 8_000.0,
             ended: Some("the relay closed".to_owned()),
+            ..Coverage::default()
         };
         let [footprint, _, kills] = device_measures(&short, &run()).try_into().unwrap();
         assert_eq!(value(&footprint), Some(950));
@@ -816,6 +821,7 @@ mod tests {
         short.samples_cover = Coverage {
             until_epoch_ms: START + 8_000.0,
             ended: None,
+            ..Coverage::default()
         };
         let window = RunWindow {
             idle_epoch_ms: Some(START + 5_000.0),
@@ -897,6 +903,7 @@ mod tests {
         short.samples_cover = Coverage {
             until_epoch_ms: START,
             ended: Some("the tap closed".to_owned()),
+            ..Coverage::default()
         };
         let measures = device_measures(&short, &run());
         assert_eq!(

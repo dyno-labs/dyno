@@ -558,6 +558,36 @@
         "detail"
       ]
     },
+    "FeedRecord": {
+      "description": "One feed of a recording, over the run's window: from dyno's answer to the page's `hello` to\nthe end of the run, with 1.5 s more at each end, as the device measures read it. A run that\nnever started has no window, so a feed is read over the whole recording.",
+      "type": "object",
+      "properties": {
+        "last_ms": {
+          "description": "When the last thing that the feed sent arrived, at any time in the recording. Null when\nit sent nothing. A feed that went quiet may have stopped, or had nothing to say.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int64"
+        },
+        "read": {
+          "description": "What dyno read from it in the window: the samples of page processes, or the kernel's\nmemory lines about any process.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "stopped": {
+          "description": "The stop that the feed reported, in its own words: its error, or the recording's note of a\nlong silence before the stop. Null when it reported none.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "read"
+      ]
+    },
     "FileKind": {
       "description": "The bucket a file counts in, for bytes by type.",
       "oneOf": [
@@ -775,6 +805,32 @@
         "host_profile",
         "scenario",
         "device"
+      ]
+    },
+    "KillRecord": {
+      "description": "A kill of a page process that the phone's log gave.",
+      "type": "object",
+      "properties": {
+        "line": {
+          "description": "The kernel's words, up to the page counts, such as \"memorystatus: killing process 412\n[com.apple.WebKit.WebContent] in high band FOREGROUND (100)\".",
+          "type": "string"
+        },
+        "pid": {
+          "description": "The pid that the kernel's line names.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "received_ms": {
+          "description": "When the line arrived, which is after the kill: the phone's own time on it has no year, no\ntime zone and no known offset from this machine's clock.",
+          "type": "integer",
+          "format": "int64"
+        }
+      },
+      "required": [
+        "pid",
+        "line",
+        "received_ms"
       ]
     },
     "Machine": {
@@ -1329,6 +1385,130 @@
         "android"
       ]
     },
+    "PageDocument": {
+      "description": "The document that the game frame held at the end of the run, as the driver saw it.",
+      "oneOf": [
+        {
+          "description": "The build's own (CDP driver): the frame committed a document at the launch URL's scheme,\nhost and port, from a response with an HTTP status below 400.",
+          "type": "string",
+          "const": "build"
+        },
+        {
+          "description": "A document at the launch URL's scheme, host and port from a response with an HTTP status\nof 400 or more, such as a 404 page (CDP driver).",
+          "type": "string",
+          "const": "http_error"
+        },
+        {
+          "description": "The browser's own error page, which a navigation that failed commits (CDP driver).",
+          "type": "string",
+          "const": "error_page"
+        },
+        {
+          "description": "A document at another scheme, host or port than the launch URL's, such as one that a\nredirect led to, or a `blob:` document (CDP driver).",
+          "type": "string",
+          "const": "other_url"
+        },
+        {
+          "description": "The driver saw the game frame commit no document.",
+          "type": "string",
+          "const": "no_document"
+        },
+        {
+          "description": "The driver cannot tell: an outside program's (`exec`), a served run's, which sees only what\nthe probe sends, or a CDP run whose frame left the sessions it follows, or whose document's\nresponse it did not see.",
+          "type": "string",
+          "const": "not_observed"
+        }
+      ]
+    },
+    "PageEnd": {
+      "description": "How the page's run ended.",
+      "oneOf": [
+        {
+          "description": "The run ended by itself, with `done`.",
+          "type": "string",
+          "const": "ended"
+        },
+        {
+          "description": "The run's deadline passed, or cut a step short. In a served run whose deadline cut no\nstep short, a request with the run's key came to the address that took the `hello` in\nthe last 25 s.",
+          "type": "string",
+          "const": "timed_out"
+        },
+        {
+          "description": "In a served run, a command that dyno gave the harness page was not taken in the whole of\nits step's wait: 15 s for the self-check, 5 s for the flush. That is all it says: the page\nmay still have sent events.",
+          "type": "string",
+          "const": "command_not_taken"
+        },
+        {
+          "description": "In a served run, no request with the run's key came to the address that took the `hello`\nfor more than 25 s, longer than the page's poll for its next command waits. A request\nwithout the key is refused and does not count. A second tab opened at the run's URL has\nthe key, and counts as the page.",
+          "type": "string",
+          "const": "no_request"
+        },
+        {
+          "description": "The driver's connection to the browser closed during the run: with the CDP driver, the\nDevTools connection, as when the browser exits or crashes.",
+          "type": "string",
+          "const": "connection_closed"
+        },
+        {
+          "description": "The run ended with any other error, such as a page that crashed or a harness page that\ntook a command and did not answer it.",
+          "type": "string",
+          "const": "failed"
+        },
+        {
+          "description": "The run failed before its `hello`, such as a browser that did not start, or no browser\nthat opened the harness page.",
+          "type": "string",
+          "const": "never_started"
+        }
+      ]
+    },
+    "PageRecord": {
+      "description": "What dyno saw of the page's run.",
+      "type": "object",
+      "properties": {
+        "document": {
+          "description": "The document that the game frame held at the end of the run, as far as the driver saw.",
+          "$ref": "#/$defs/PageDocument"
+        },
+        "end": {
+          "description": "How the page's run ended.",
+          "$ref": "#/$defs/PageEnd"
+        },
+        "hello": {
+          "description": "Whether the run got its `hello`: from the harness page of a served run, or from the\ndriver. A run with no `hello` never started.",
+          "type": "boolean"
+        },
+        "probe": {
+          "description": "Whether a probe's document message reached dyno (served run). Null for a driver that sees\nthe frame's documents itself, or none of them.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProbeHeard"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "hello",
+        "document",
+        "end"
+      ]
+    },
+    "ProbeHeard": {
+      "description": "Whether a probe was heard from in a served run: whether a document message from a probe\nreached dyno during the run. The probe tag is only in the build's own pages, and dyno takes\nthe message only with the run's key, so no page of another run can send it. But the message\ndoes not say which document sent it: `heard` says that one came, not that the build sent it.",
+      "oneOf": [
+        {
+          "description": "A document message from a probe reached dyno during the run.",
+          "type": "string",
+          "const": "heard"
+        },
+        {
+          "description": "None did.",
+          "type": "string",
+          "const": "not_heard"
+        }
+      ]
+    },
     "ProcessRole": {
       "description": "The part a process plays in the run, as far as the driver can tell.",
       "oneOf": [
@@ -1375,6 +1555,57 @@
       "required": [
         "name",
         "version"
+      ]
+    },
+    "RecordingRecord": {
+      "description": "What dyno saw of the phone's recording of one run (`--device`): what each feed gave, a summary\nof the samples of each distinct page process pid, and the kill of a page process that the log\ngave. It says what was seen, and draws no conclusion: no kill here is no proof that no process\nwas killed.\n\nA time is in ms since dyno answered the page's `hello`, on this machine's clock, and is below\n0 for a time before it; with no run, since the recording started. Every text is cut to\n[`MAX_TEXT_CHARS`] characters, and the page pids to [`MAX_PAGES`], so a record is at most\n[`MAX_RECORD_BYTES`] of JSON.",
+      "type": "object",
+      "properties": {
+        "error": {
+          "description": "Why the recorder gave back no recording, in its own words. Null when it gave one back.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kill": {
+          "description": "The first kill of a page process that the log gave in the run's window. Null when it gave\nnone, which is no proof that none was killed: the log may have stopped, or been late.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/KillRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "log": {
+          "description": "The phone's log: the kernel's memory lines.",
+          "$ref": "#/$defs/FeedRecord"
+        },
+        "pages": {
+          "description": "One summary for each distinct pid of a page process (`com.apple.WebKit.WebContent`) that\nthe samples had in the run's window, in the order of each pid's first sample, at most\n[`MAX_PAGES`]. A summary is not one process: iOS can give a pid to a new process, and the\nsamples of every process with that pid go into its one summary.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SampledPage"
+          }
+        },
+        "pages_not_listed": {
+          "description": "How many more distinct pids of page processes the samples had in the window, past those\nlisted.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "samples": {
+          "description": "The memory samples: sysmontap's footprint of each of Safari's processes.",
+          "$ref": "#/$defs/FeedRecord"
+        }
+      },
+      "required": [
+        "samples",
+        "log",
+        "pages",
+        "pages_not_listed"
       ]
     },
     "RelPath": {
@@ -1572,6 +1803,16 @@
           ],
           "default": null
         },
+        "runs": {
+          "description": "What dyno itself saw of each run of the check, in the order they ran: one record for a\nbrowser run, or one per run of the empty build and of the game with `--runs`. Left out of\nthe JSON when the check had no browser run. A reader takes null as left out.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/RunRecord"
+          }
+        },
         "serve_path": {
           "description": "The path the browser took to the page of a served run (`--driver serve`): which of this\nmachine's addresses the page that ran said hello at. That is the path that was used, not\none that was only asked for. Null when no page ran, and for any other check.",
           "anyOf": [
@@ -1665,6 +1906,89 @@
           "type": "string",
           "const": "over_memory_limit"
         }
+      ]
+    },
+    "RunOf": {
+      "description": "Which build a run loaded.",
+      "oneOf": [
+        {
+          "description": "The build under check.",
+          "type": "string",
+          "const": "game"
+        },
+        {
+          "description": "dyno's own empty build: a run of `--runs` that measures what Safari takes for an empty\npage, or the build of `--baseline`.",
+          "type": "string",
+          "const": "empty_build"
+        }
+      ]
+    },
+    "RunRecord": {
+      "description": "One run of the game or of the empty build, as dyno saw it.",
+      "type": "object",
+      "properties": {
+        "index": {
+          "description": "The run's number among the runs of the same build, from 1, as the items of the device\nmeasures name it: \"game run 2\" is `of` game, `index` 2.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "of": {
+          "description": "Which build ran.",
+          "$ref": "#/$defs/RunOf"
+        },
+        "page": {
+          "description": "The page's run in the browser.",
+          "$ref": "#/$defs/PageRecord"
+        },
+        "recording": {
+          "description": "The phone's recording of the run. Null when the check recorded no phone.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RecordingRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "of",
+        "index",
+        "page"
+      ]
+    },
+    "SampledPage": {
+      "description": "The samples of one distinct pid of a page process in the run's window, summed up. It is not\none process: the samples of every process that had the pid in the window are in it, so its\nfirst sample, its last and its peak can each be of a different process.",
+      "type": "object",
+      "properties": {
+        "first_ms": {
+          "description": "When the first and the last sample of the pid in the window arrived.",
+          "type": "integer",
+          "format": "int64"
+        },
+        "last_ms": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "peak_bytes": {
+          "description": "The largest footprint of a sample of the pid in the window, in bytes.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "pid": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "pid",
+        "first_ms",
+        "last_ms",
+        "peak_bytes"
       ]
     },
     "Scenario": {

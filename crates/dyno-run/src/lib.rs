@@ -7,6 +7,10 @@
 //!
 //! `lab` turns a run's messages into the load measures and the contract findings. The play
 //! measures of the spin loop are Phase 2, so they stay missing.
+//!
+//! Every run also gives a [`PageRecord`]: whether it got its `hello`, the game frame's last
+//! document and how it ended. It rests on the messages, and on what the driver itself saw that
+//! its messages do not say ([`Driver::page_seen`]).
 
 use std::fmt;
 
@@ -15,6 +19,7 @@ use dyno_schema::ids::{MeasureId, RuleId};
 use dyno_schema::measure::{Measure, MeasureStatus, NOT_BUILT_YET, missing_measures};
 use dyno_schema::result::DriverInfo;
 use dyno_schema::rule::{Finding, incomplete_findings};
+use dyno_schema::run_record::{PageDocument, PageEnd, PageRecord, ProbeHeard};
 use dyno_schema::runner::{DriverMessage, RunRequest};
 use dyno_schema::scrub::scrub;
 use dyno_schema::timeline::Timeline;
@@ -49,6 +54,49 @@ pub trait Driver {
                 .and_then(EnvironmentBrowser::from_label),
             os: None,
             device: None,
+        }
+    }
+
+    /// What the driver itself saw of the last run's page that its messages do not say. By
+    /// default nothing, as an outside program can say nothing that dyno saw: the game frame's
+    /// document is not observed, and a run that did not end with `done` ended by the rule of
+    /// [`page_record`].
+    fn page_seen(&self) -> PageSeen {
+        PageSeen::default()
+    }
+}
+
+/// What a driver itself saw of a run's page, for its [`PageRecord`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PageSeen {
+    /// The last document that the game frame committed. None when the driver cannot see it.
+    pub document: Option<PageDocument>,
+    /// How the run ended, when the driver knows better than its messages say. None leaves it to
+    /// the rule of [`page_record`].
+    pub end: Option<PageEnd>,
+    /// Whether the run got its `hello`, for a run that the driver ended with an error of its own
+    /// and so with no messages. A driver that never returns an error after `hello` leaves it
+    /// false.
+    pub hello_before_error: bool,
+    /// Whether the build's probe was heard from, for a driver that hears it rather than sees the
+    /// frame's documents. None for any other driver.
+    pub probe: Option<ProbeHeard>,
+}
+
+impl PageSeen {
+    /// What a driver that hears the build's probe heard before a run: nothing.
+    pub fn nothing_heard() -> PageSeen {
+        PageSeen {
+            probe: Some(ProbeHeard::NotHeard),
+            ..PageSeen::default()
+        }
+    }
+
+    /// What a driver that sees the game frame's documents saw before a run: no document yet.
+    pub fn before_a_run() -> PageSeen {
+        PageSeen {
+            document: Some(PageDocument::NoDocument),
+            ..PageSeen::default()
         }
     }
 }
@@ -87,6 +135,8 @@ pub struct LabRun {
     /// The memory of each browser process through the run. None when the driver read none. A run
     /// that failed after its driver's `hello` keeps it, since it shows how the run ended.
     pub timeline: Option<Timeline>,
+    /// What dyno saw of the page's run, whether it completed or not.
+    pub page: PageRecord,
 }
 
 /// The measures of a load-and-idle run (Phase 1). All are required.
@@ -176,20 +226,22 @@ impl fmt::Display for DriverErrorCode {
 /// message it ends its run with. Play measures are Phase 2, so they stay missing, and they are
 /// required only when the request asks for spins.
 pub fn run_lab(driver: &mut dyn Driver, request: &RunRequest) -> LabRun {
-    let messages = match driver.run(request) {
+    let outcome = driver.run(request);
+    let page = page_record(&outcome, driver.page_seen());
+    let messages = match outcome {
         Ok(messages) => messages,
-        Err(error) => return failed_run(driver.name(), request, &error, None, None),
+        Err(error) => return failed_run(driver.name(), request, &error, None, None, page),
     };
     // A run that fails after its `hello`, as one whose page iOS killed, still says what ran.
     let hello = hello_driver(&messages);
     let environment = hello.as_ref().map(|hello| driver.environment(hello));
     let timeline = timeline::read(&messages);
     if let Some(error) = final_error(&messages) {
-        return failed_run(driver.name(), request, &error, environment, timeline);
+        return failed_run(driver.name(), request, &error, environment, timeline, page);
     }
     let Some((mut measures, findings)) = lab::read(&messages, request) else {
         let error = DriverError::new(DriverErrorCode::Protocol, NEVER_IDLE);
-        return failed_run(driver.name(), request, &error, environment, timeline);
+        return failed_run(driver.name(), request, &error, environment, timeline, page);
     };
     if !driver.reads_heap() {
         heap_unsupported(&mut measures);
@@ -201,6 +253,41 @@ pub fn run_lab(driver: &mut dyn Driver, request: &RunRequest) -> LabRun {
         measures,
         findings,
         timeline,
+        page,
+    }
+}
+
+/// What dyno saw of a run's page, from the driver's outcome and what the driver itself saw.
+///
+/// The run got its `hello` when its messages hold one; a run that the driver ended with an error
+/// of its own has no messages, so the driver says. The end is the driver's when it knows it, as a
+/// connection that closed under a run that its messages end with `done`. Otherwise a run that
+/// ended with `done` ended by itself, and any other is `failed` after `hello` and
+/// `never_started` before it. The messages, and so the measures, are not changed by it.
+pub fn page_record(
+    outcome: &Result<Vec<DriverMessage>, DriverError>,
+    seen: PageSeen,
+) -> PageRecord {
+    let (hello, done) = match outcome {
+        Ok(messages) => (
+            messages
+                .iter()
+                .any(|message| matches!(message, DriverMessage::Hello { .. })),
+            matches!(messages.last(), Some(DriverMessage::Done { .. })),
+        ),
+        Err(_) => (seen.hello_before_error, false),
+    };
+    let end = match (seen.end, done, hello) {
+        (Some(end), _, _) => end,
+        (None, true, _) => PageEnd::Ended,
+        (None, false, true) => PageEnd::Failed,
+        (None, false, false) => PageEnd::NeverStarted,
+    };
+    PageRecord {
+        hello,
+        document: seen.document.unwrap_or(PageDocument::NotObserved),
+        probe: seen.probe,
+        end,
     }
 }
 
@@ -230,6 +317,7 @@ fn failed_run(
     error: &DriverError,
     environment: Option<Environment>,
     timeline: Option<Timeline>,
+    page: PageRecord,
 ) -> LabRun {
     let reason = match error.code() {
         DriverErrorCode::NotBuilt => NOT_BUILT_YET.to_owned(),
@@ -243,6 +331,7 @@ fn failed_run(
         measures,
         findings: incomplete_findings(LAB_RULES, &reason),
         timeline,
+        page,
     }
 }
 
@@ -317,6 +406,7 @@ mod tests {
         name: String,
         outcome: Result<Vec<DriverMessage>, DriverError>,
         reads_heap: bool,
+        seen: PageSeen,
     }
 
     impl Driver for TestDriver {
@@ -331,6 +421,10 @@ mod tests {
         fn reads_heap(&self) -> bool {
             self.reads_heap
         }
+
+        fn page_seen(&self) -> PageSeen {
+            self.seen
+        }
     }
 
     /// A driver named "failing" that returns an error.
@@ -339,6 +433,7 @@ mod tests {
             name: "failing".to_owned(),
             outcome: Err(DriverError::new(code, detail)),
             reads_heap: true,
+            seen: PageSeen::default(),
         }
     }
 
@@ -348,6 +443,7 @@ mod tests {
             name: "failing".to_owned(),
             outcome: Ok(messages),
             reads_heap: true,
+            seen: PageSeen::default(),
         }
     }
 
@@ -397,6 +493,7 @@ mod tests {
             name: "stub".to_owned(),
             outcome: Err(DriverError::not_built()),
             reads_heap: true,
+            seen: PageSeen::default(),
         }
     }
 
@@ -555,6 +652,115 @@ mod tests {
         let mut driver = returns_error(DriverErrorCode::Run, "no browser");
         let run = run_lab(&mut driver, &request(None));
         assert_every_reason_is(&run, "the failing driver failed (run): no browser");
+    }
+
+    fn page(hello: bool, document: PageDocument, end: PageEnd) -> PageRecord {
+        PageRecord {
+            hello,
+            document,
+            probe: None,
+            end,
+        }
+    }
+
+    #[test]
+    fn a_run_that_ends_with_done_ended_by_itself_and_got_its_hello() {
+        let mut messages = vec![hello(Some("Chromium 140"))];
+        messages.extend(went_idle());
+        let run = run_lab(&mut sends(messages), &request(None));
+        // An outside program says nothing that dyno saw of the game frame's documents.
+        assert_eq!(
+            run.page,
+            page(true, PageDocument::NotObserved, PageEnd::Ended)
+        );
+    }
+
+    #[test]
+    fn a_run_that_fails_after_its_hello_failed_unless_the_driver_says_how() {
+        let crashed = || vec![hello(Some("Chromium 140")), error_message("crashed")];
+        let run = run_lab(&mut sends(crashed()), &request(None));
+        assert_eq!(
+            run.page,
+            page(true, PageDocument::NotObserved, PageEnd::Failed)
+        );
+
+        let mut timed_out = TestDriver {
+            seen: PageSeen {
+                document: Some(PageDocument::Build),
+                end: Some(PageEnd::TimedOut),
+                ..PageSeen::default()
+            },
+            ..sends(crashed())
+        };
+        let run = run_lab(&mut timed_out, &request(None));
+        // The evidence that the document came is kept, though the run has no measures.
+        assert_eq!(run.page, page(true, PageDocument::Build, PageEnd::TimedOut));
+        assert_eq!(run.measures[0].status, MeasureStatus::Missing);
+    }
+
+    #[test]
+    fn a_run_that_fails_before_its_hello_never_started() {
+        let mut driver = returns_error(DriverErrorCode::Run, "no browser");
+        let run = run_lab(&mut driver, &request(None));
+        assert_eq!(
+            run.page,
+            page(false, PageDocument::NotObserved, PageEnd::NeverStarted)
+        );
+        let mut stub = stub_driver();
+        assert_eq!(
+            run_lab(&mut stub, &request(None)).page.end,
+            PageEnd::NeverStarted
+        );
+    }
+
+    #[test]
+    fn a_driver_that_ended_the_run_with_its_own_error_after_hello_says_so() {
+        let mut driver = TestDriver {
+            seen: PageSeen {
+                end: Some(PageEnd::TimedOut),
+                hello_before_error: true,
+                ..PageSeen::default()
+            },
+            ..returns_error(DriverErrorCode::Run, "the run did not end within 10 ms")
+        };
+        let run = run_lab(&mut driver, &request(None));
+        assert_eq!(
+            run.page,
+            page(true, PageDocument::NotObserved, PageEnd::TimedOut)
+        );
+    }
+
+    #[test]
+    fn what_the_driver_saw_of_the_end_wins_over_a_done_and_the_measures_stay() {
+        let seen = PageSeen {
+            document: Some(PageDocument::Build),
+            end: Some(PageEnd::ConnectionClosed),
+            ..PageSeen::default()
+        };
+        assert_eq!(
+            page_record(&Ok(went_idle()), seen).end,
+            PageEnd::ConnectionClosed
+        );
+        let mut closed = TestDriver {
+            seen,
+            ..sends(went_idle())
+        };
+        let run = run_lab(&mut closed, &request(None));
+        assert_eq!(run.page.end, PageEnd::ConnectionClosed);
+        let plain = run_lab(&mut sends(went_idle()), &request(None));
+        assert_eq!(run.measures, plain.measures);
+        assert_eq!(plain.page.end, PageEnd::Ended);
+    }
+
+    #[test]
+    fn the_probe_comes_from_the_driver() {
+        let seen = PageSeen {
+            probe: Some(ProbeHeard::Heard),
+            ..PageSeen::default()
+        };
+        let record = page_record(&Ok(went_idle()), seen);
+        assert_eq!(record.probe, Some(ProbeHeard::Heard));
+        assert_eq!(record.document, PageDocument::NotObserved);
     }
 
     #[test]

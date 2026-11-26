@@ -76,12 +76,18 @@ pub struct LoggedLine {
 }
 
 /// How much of the recording a source covers.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+///
+/// `until_epoch_ms` is what the device measures read, and it takes a source that sent something
+/// in the last [`SILENCE_MS`] and reported no error to have run to the stop. The record of a run
+/// says only what was seen, so the time of the last thing the source sent is kept as it was.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Coverage {
     /// Until when, in ms since the Unix epoch: the stop, or the last thing the source sent.
     pub until_epoch_ms: f64,
     /// Why the source ended before the stop. None when it covers the recording to the end.
     pub ended: Option<String>,
+    /// When the last thing the source sent arrived. None when it sent nothing.
+    pub last_epoch_ms: Option<f64>,
 }
 
 /// A finished recording.
@@ -240,16 +246,21 @@ impl Taken {
 /// What a source covers, from the last thing it sent and why it failed, if it did.
 fn coverage(
     what: &str,
-    last: Option<f64>,
+    last_sent: Option<f64>,
     failed: Option<String>,
     started: f64,
     stopped: f64,
 ) -> Coverage {
-    let last = last.unwrap_or(started);
+    let last = last_sent.unwrap_or(started);
+    let seen = Coverage {
+        last_epoch_ms: last_sent,
+        ..Coverage::default()
+    };
     match failed {
         Some(why) => Coverage {
             until_epoch_ms: last,
             ended: Some(why),
+            ..seen
         },
         None if stopped - last > SILENCE_MS => Coverage {
             until_epoch_ms: last,
@@ -257,10 +268,12 @@ fn coverage(
                 "no {what} came in the last {:.0} s",
                 (stopped - last) / 1_000.0
             )),
+            ..seen
         },
         None => Coverage {
             until_epoch_ms: stopped,
             ended: None,
+            ..seen
         },
     }
 }
@@ -382,6 +395,8 @@ pub(crate) mod tests {
             Some("the relay closed")
         );
         assert!(recording.samples_cover.until_epoch_ms >= recording.started_epoch_ms);
+        // The last thing each source sent is kept as it came.
+        assert!(recording.samples_cover.last_epoch_ms.is_some());
     }
 
     #[test]
@@ -416,6 +431,9 @@ pub(crate) mod tests {
         let recent = coverage("sample", Some(5_000.0), None, 0.0, 12_000.0);
         assert_eq!(recent.until_epoch_ms, 12_000.0);
         assert_eq!(recent.ended, None);
+        // The measures take it to the stop; the last thing it sent stays as it was.
+        assert_eq!(recent.last_epoch_ms, Some(5_000.0));
+        assert_eq!(never.last_epoch_ms, None);
     }
 
     #[test]

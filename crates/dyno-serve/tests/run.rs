@@ -9,12 +9,13 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use dyno_run::Driver;
+use dyno_run::{Driver, PageSeen, run_lab};
 use dyno_schema::ids::MeasureId;
 use dyno_schema::measure::MeasureStatus;
 use dyno_schema::probe::{MessageDirection, ProbeEvent};
 use dyno_schema::profile::{HostProfile, Scenario};
 use dyno_schema::result::ServePath;
+use dyno_schema::run_record::{PageDocument, PageEnd, PageRecord, ProbeHeard};
 use dyno_schema::runner::{DriverMessage, RUNNER_PROTOCOL_VERSION, RunMark, RunRequest};
 use dyno_serve::{ServeDriver, ServeOptions};
 
@@ -83,6 +84,11 @@ fn next_command(harness: &str) -> String {
     }
 }
 
+/// The probe's document message, as the harness page relays it.
+fn document_message() -> String {
+    r#"{"kind":"document","time_origin":1050,"device_pixel_ratio":3}"#.to_owned()
+}
+
 fn probe(event: &str) -> String {
     format!(
         r#"{{"kind":"probe","payload":{}}}"#,
@@ -127,6 +133,15 @@ fn a_browser_that_opens_the_harness_page_gives_a_full_run() {
     let run_request = request.clone();
     let run = thread::spawn(move || {
         let messages = driver.run(&run_request);
+        assert_eq!(
+            driver.page_seen(),
+            PageSeen {
+                document: None,
+                end: None,
+                probe: Some(ProbeHeard::Heard),
+                hello_before_error: false,
+            }
+        );
         (messages, driver.last_run())
     });
 
@@ -165,7 +180,7 @@ fn a_browser_that_opens_the_harness_page_gives_a_full_run() {
         "/__dyno/events",
         &format!(
             "[{},{},{},{}]",
-            r#"{"kind":"document","time_origin":1050,"device_pixel_ratio":3}"#,
+            document_message(),
             probe(r#"{"type":"first_frame","t_ms":40}"#),
             r#"{"kind":"host","name":"reels:ready","epoch_ms":1200}"#,
             r#"{"kind":"unknown_to_this_version"}"#,
@@ -344,6 +359,59 @@ fn a_run_that_no_browser_opens_fails_with_a_reason() {
             .detail()
             .contains("no browser opened the harness page")
     );
+    let run = run_lab(&mut driver, &request);
+    assert_eq!(
+        run.page,
+        PageRecord {
+            hello: false,
+            document: PageDocument::NotObserved,
+            probe: Some(ProbeHeard::NotHeard),
+            end: PageEnd::NeverStarted,
+        }
+    );
+}
+
+#[test]
+fn a_page_that_takes_no_command_after_its_document_is_said_to_have_taken_none() {
+    let options = ServeOptions {
+        host: Some("127.0.0.1".to_owned()),
+        tunnel_host: None,
+        port: 0,
+        wait_for_browser: Duration::from_secs(30),
+        open_with: None,
+    };
+    let (_build, mut driver, request) = page_run(&options);
+    let harness = driver.harness_url().to_owned();
+    let game = driver.game_url().to_owned();
+    let run = thread::spawn(move || run_lab(&mut driver, &request));
+
+    // The page says hello and its game's document posts, then the page goes: it never takes the
+    // self-check that dyno gives it once the frame is idle.
+    post(&harness, "/__dyno/hello", r#"{"user_agent":"curl/8.0"}"#);
+    get(&game, "/");
+    post(
+        &harness,
+        "/__dyno/events",
+        &format!("[{}]", document_message()),
+    );
+
+    let run = run.join().unwrap();
+    // The served run hears the probe; it does not see the frame's document.
+    assert_eq!(
+        run.page,
+        PageRecord {
+            hello: true,
+            document: PageDocument::NotObserved,
+            probe: Some(ProbeHeard::Heard),
+            end: PageEnd::CommandNotTaken,
+        }
+    );
+    // The lab measures are missing, with the run's own error as the reason.
+    let reason = run.measures[0].reason.as_deref().unwrap();
+    assert!(
+        reason.ends_with("the harness page did not answer the self-check"),
+        "{reason}"
+    );
 }
 
 #[test]
@@ -369,7 +437,10 @@ fn a_run_that_never_goes_idle_ends_with_an_error_and_bad_requests_are_refused() 
         idle_after_ms: 300,
         timeout_ms: 800,
     };
-    let run = thread::spawn(move || driver.run(&request));
+    let run = thread::spawn(move || {
+        let messages = driver.run(&request);
+        (messages, driver.page_seen())
+    });
 
     assert_eq!(
         post(&harness, "/__dyno/hello", "not json").0,
@@ -394,7 +465,18 @@ fn a_run_that_never_goes_idle_ends_with_an_error_and_bad_requests_are_refused() 
     // No document with the probe ever loads, so the frame never goes idle.
     assert_eq!(next_command(&harness), r#"{"command":"done"}"#);
 
-    let messages = run.join().unwrap().unwrap();
+    let (messages, seen) = run.join().unwrap();
+    let messages = messages.unwrap();
+    // The page kept asking for its next command, so it was there when the deadline came.
+    assert_eq!(
+        seen,
+        PageSeen {
+            document: None,
+            end: Some(PageEnd::TimedOut),
+            probe: Some(ProbeHeard::NotHeard),
+            hello_before_error: false,
+        }
+    );
     let DriverMessage::Hello { driver, .. } = &messages[0] else {
         panic!("the first message is not hello: {:?}", messages[0]);
     };
@@ -428,7 +510,10 @@ fn a_page_that_does_not_send_what_it_held_ends_the_run_with_an_error() {
         idle_after_ms: 300,
         timeout_ms: 20_000,
     };
-    let run = thread::spawn(move || driver.run(&request));
+    let run = thread::spawn(move || {
+        let messages = driver.run(&request);
+        (messages, driver.page_seen())
+    });
 
     post(&harness, "/__dyno/hello", r#"{"user_agent":"curl/8.0"}"#);
     get(&game, "/");
@@ -451,7 +536,11 @@ fn a_page_that_does_not_send_what_it_held_ends_the_run_with_an_error() {
     assert_eq!(next_command(&harness), r#"{"command":"flush"}"#);
     assert_eq!(next_command(&harness), r#"{"command":"done"}"#);
 
-    let messages = run.join().unwrap().unwrap();
+    let (messages, seen) = run.join().unwrap();
+    let messages = messages.unwrap();
+    // It took the command and kept asking, so it did not lose its link: it failed.
+    assert_eq!(seen.probe, Some(ProbeHeard::Heard));
+    assert_eq!(seen.end, Some(PageEnd::Failed));
     let Some(DriverMessage::Error { message, .. }) = messages.last() else {
         panic!("the run did not end with an error: {messages:?}");
     };
@@ -991,13 +1080,27 @@ fn a_browser_that_dyno_starts_gives_its_memory_before_the_last_message_and_is_st
         idle_after_ms: 300,
         timeout_ms: 800,
     };
-    let run = thread::spawn(move || driver.run(&request));
+    let run_request = request.clone();
+    let run = thread::spawn(move || {
+        let messages = driver.run(&run_request);
+        (messages, driver)
+    });
 
     post(&harness, "/__dyno/hello", r#"{"user_agent":"curl/8.0"}"#);
     // No document with the probe loads, so the run times out and ends with an error.
     assert_eq!(next_command(&harness), r#"{"command":"done"}"#);
 
-    let messages = run.join().unwrap().unwrap();
+    let (messages, mut driver) = run.join().unwrap();
+    let messages = messages.unwrap();
+    assert!(driver.last_run().is_some());
+    assert_eq!(driver.page_seen().end, Some(PageEnd::TimedOut));
+    // Run again, with the browser's program gone: the run fails before it serves, and keeps
+    // nothing of the run before.
+    fs::remove_file(build.path().join("browser.sh")).unwrap();
+    assert!(driver.run(&request).is_err());
+    assert_eq!(driver.page_seen(), PageSeen::nothing_heard());
+    assert_eq!(driver.last_run(), None);
+    assert_eq!(driver.serve_path(), None);
     assert!(
         matches!(messages.last(), Some(DriverMessage::Error { .. })),
         "{messages:?}"

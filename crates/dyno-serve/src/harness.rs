@@ -280,6 +280,19 @@ mod tests {
         assert!(!page("http://h/").contains("keepalive"));
     }
 
+    /// The SHA-256 of the harness page's template on the branch the run records were built on.
+    /// The records are evidence only, so the page sends exactly what it sent there.
+    const BASE_PAGE_SHA256: &str =
+        "30be87c012868aa3c965a22e2a3c1dad3db6b26698381bd77e55f77e3e238f52";
+
+    #[test]
+    fn the_page_is_byte_for_byte_the_page_the_records_were_built_on() {
+        assert_eq!(
+            dyno_schema::canonical::sha256_hex(PAGE.as_bytes()),
+            BASE_PAGE_SHA256
+        );
+    }
+
     #[test]
     fn the_page_uses_the_paths_the_server_answers() {
         let page = page("http://h/");

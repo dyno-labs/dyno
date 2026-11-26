@@ -32,6 +32,7 @@ pub mod profile;
 pub mod receipt;
 pub mod result;
 pub mod rule;
+pub mod run_record;
 pub mod runner;
 pub mod scrub;
 pub mod status;

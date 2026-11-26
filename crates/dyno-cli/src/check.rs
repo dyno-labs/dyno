@@ -18,7 +18,7 @@ use dyno_cdp::CdpDriver;
 use dyno_ios::Address;
 use dyno_ios::runs::{device_runs_measures, over_baseline_unsupported};
 use dyno_run::exec::ExecDriver;
-use dyno_run::{Driver, DriverError, LabRun};
+use dyno_run::{Driver, DriverError, LabRun, PageSeen};
 use dyno_schema::budget::{Budget, BudgetRef};
 use dyno_schema::catalogue::{CatalogueEntry, CatalogueResult, GameEntry, GamesFile, Shard};
 use dyno_schema::environment::{Environment, EnvironmentDevice, EnvironmentOs};
@@ -31,6 +31,7 @@ use dyno_schema::result::{
     Versions,
 };
 use dyno_schema::rule::Finding;
+use dyno_schema::run_record::{RunOf, RunRecord};
 use dyno_schema::runner::{DriverMessage, RUNNER_PROTOCOL_VERSION, RunRequest};
 use dyno_schema::status::Status;
 use dyno_schema::timeline::Timeline;
@@ -44,6 +45,7 @@ use dyno_serve::{
     BuildServer, DEFAULT_PORT, DEFAULT_SAY_NO_REQUEST_AFTER, DEFAULT_WAIT_FOR_BROWSER, ServeDriver,
     ServeError, ServeOptions,
 };
+use serde::Serialize;
 use uuid::Uuid;
 
 use crate::baseline::EmptyBuild;
@@ -80,6 +82,9 @@ pub struct CheckOptions {
     device_address: Address,
     /// Where `--device` saves its recording. None saves none.
     device_recording: Option<PathBuf>,
+    /// Where a check of `--runs` that an error stopped keeps the records of the runs it made:
+    /// beside `--out`. None keeps none.
+    kept_runs: Option<PathBuf>,
     /// Whether `--device` opens the page in the phone's Safari.
     device_open: bool,
     driver: DriverArg,
@@ -139,6 +144,12 @@ pub fn run(args: CheckArgs) -> Result<Status, CliError> {
             (Some(out), None) => Some(device::saved_recording(out)),
             _ => None,
         },
+        // Only `--runs` makes runs that an error can stop the check after.
+        kept_runs: args
+            .out
+            .as_deref()
+            .filter(|_| args.runs.is_some())
+            .map(kept_runs_path),
         device_open: !args.no_open,
         driver: args.driver,
         browser: args.browser,
@@ -186,7 +197,17 @@ pub fn run(args: CheckArgs) -> Result<Status, CliError> {
         version: args.release,
         game_id: args.game_id,
     };
-    let result = check_target(&target, release, &options)?;
+    // The runs of `--runs` that an error stops the check after are kept beside the result.
+    let mut made = Vec::new();
+    let result = check_target_keeping(&target, release, &options, &mut made).inspect_err(|_| {
+        keep_runs(
+            &options,
+            &[KeptRuns {
+                game: None,
+                runs: &made,
+            }],
+        );
+    })?;
     let json = output::json_text(&result)?;
     output::write_text(&json, args.out.as_deref())?;
     output::print_summary(&output::check_summary(&result, place));
@@ -235,9 +256,20 @@ pub fn check_target(
     release: Release,
     options: &CheckOptions,
 ) -> Result<CheckResult, CliError> {
+    check_target_keeping(target, release, options, &mut Vec::new())
+}
+
+/// [`check_target`], which leaves in `made` the record of each run that it made, so the caller
+/// keeps them when an error stops the check after some.
+fn check_target_keeping(
+    target: &CheckTarget,
+    release: Release,
+    options: &CheckOptions,
+    made: &mut Vec<RunRecord>,
+) -> Result<CheckResult, CliError> {
     check_run_flags(options, target)?;
     let release = linked_release(release, target)?;
-    check_one(target, release, options)
+    check_one(target, release, options, made)
 }
 
 /// The release with the game from the nearest `dyno.toml` above the build, when the caller gave no
@@ -300,6 +332,7 @@ impl CheckOptions {
             device_runs: None,
             device_address: Address::Usbmuxd { udid: None },
             device_recording: None,
+            kept_runs: None,
             device_open: true,
             driver: DriverArg::Cdp,
             browser: false,
@@ -390,9 +423,29 @@ fn check_catalogue(
         let release = linked_release(catalogue_release(game), &target).map_err(in_game(game))?;
         planned.push((game, target, release));
     }
-    let mut entries = Vec::new();
+    let mut entries: Vec<CatalogueEntry> = Vec::new();
     for (game, target, release) in planned {
-        let result = check_one(&target, release, options).map_err(in_game(game))?;
+        let mut made = Vec::new();
+        let checked = check_one(&target, release, options, &mut made);
+        let result = match checked {
+            Ok(result) => result,
+            Err(error) => {
+                // The games checked before keep their records with this game's runs so far.
+                let mut kept: Vec<KeptRuns> = entries
+                    .iter()
+                    .map(|entry| KeptRuns {
+                        game: Some(&entry.id),
+                        runs: entry.result.run.runs.as_deref().unwrap_or_default(),
+                    })
+                    .collect();
+                kept.push(KeptRuns {
+                    game: Some(&game.id),
+                    runs: &made,
+                });
+                keep_runs(options, &kept);
+                return Err(in_game(game)(error));
+            }
+        };
         entries.push(CatalogueEntry {
             id: game.id.clone(),
             result,
@@ -465,10 +518,13 @@ fn is_launch_url(value: &str) -> bool {
     lower.starts_with("https://") || lower.starts_with("http://")
 }
 
+/// One check. With `--runs`, `made` holds the record of each run as it is made, so that an error
+/// that stops the check after some leaves them to the caller.
 fn check_one(
     target: &CheckTarget,
     release: Release,
     options: &CheckOptions,
+    made: &mut Vec<RunRecord>,
 ) -> Result<CheckResult, CliError> {
     let clock = Clock::start();
     let run_id = Uuid::new_v4().to_string();
@@ -527,10 +583,16 @@ fn check_one(
         check_probe_path(build).map_err(serve_error)?;
     }
     let mut run_measures = model_measures(has_launch_url);
+    // `--baseline` checks dyno's own empty build, so its run is a run of the empty build.
+    let of = if target.baseline {
+        RunOf::EmptyBuild
+    } else {
+        RunOf::Game
+    };
     let browser = match (&served_build, device_runs) {
-        (Some(build), Some(runs)) => device_runs_run(build, runs, options)?,
-        (Some(build), None) => served_run(build, options)?,
-        (None, _) => browser_run(launch_url.as_ref(), options),
+        (Some(build), Some(runs)) => device_runs_run(build, runs, options, made)?,
+        (Some(build), None) => served_run(build, of, options)?,
+        (None, _) => browser_run(launch_url.as_ref(), of, options),
     };
     run_measures.extend(browser.measures);
 
@@ -595,6 +657,7 @@ fn check_one(
         findings: browser.findings,
         tier: provisional_tier(has_launch_url),
         timeline: browser.timeline,
+        runs: (!browser.runs.is_empty()).then_some(browser.runs),
     };
     CheckResult::new(deterministic, run).map_err(CliError::internal)
 }
@@ -610,11 +673,13 @@ struct BrowserRun {
     /// The path the browser took to a served run's page. None when dyno served no page, and
     /// when no browser asked for it.
     serve_path: Option<ServePath>,
+    /// What dyno saw of each run, in the order they ran. Empty when nothing ran.
+    runs: Vec<RunRecord>,
 }
 
 /// The browser run of a check with a launch URL, in the driver that `--driver` names. With no
 /// launch URL, nothing runs.
-fn browser_run(launch_url: Option<&LaunchUrl>, options: &CheckOptions) -> BrowserRun {
+fn browser_run(launch_url: Option<&LaunchUrl>, of: RunOf, options: &CheckOptions) -> BrowserRun {
     let Some(launch_url) = launch_url else {
         return BrowserRun::default();
     };
@@ -627,11 +692,17 @@ fn browser_run(launch_url: Option<&LaunchUrl>, options: &CheckOptions) -> Browse
         environment: lab.environment,
         timeline: lab.timeline,
         serve_path: None,
+        runs: vec![RunRecord {
+            of,
+            index: 1,
+            page: lab.page,
+            recording: None,
+        }],
     }
 }
 
 /// The run of a check that `--driver serve` serves, and with `--device` the device run around it.
-fn served_run(build: &Build, options: &CheckOptions) -> Result<BrowserRun, CliError> {
+fn served_run(build: &Build, of: RunOf, options: &CheckOptions) -> Result<BrowserRun, CliError> {
     // The recording starts before the person is told to open the page, so it sees the whole run.
     let mut device_run = options
         .device
@@ -647,7 +718,9 @@ fn served_run(build: &Build, options: &CheckOptions) -> Result<BrowserRun, CliEr
         environment: lab.environment,
         timeline: lab.timeline,
         serve_path: served.serve_path(),
+        runs: Vec::new(),
     };
+    let mut recording = None;
     if let Some(device_run) = device_run {
         let finished = device_run.finish(served.last_run());
         browser.environment = with_phone(browser.environment, finished.os, finished.device);
@@ -655,26 +728,27 @@ fn served_run(build: &Build, options: &CheckOptions) -> Result<BrowserRun, CliEr
         browser.timeline = browser.timeline.or(finished.timeline);
         browser.measures.extend(finished.measures);
         browser.measures.push(over_baseline_unsupported());
+        recording = Some(finished.recording);
     }
+    browser.runs = vec![RunRecord {
+        of,
+        index: 1,
+        page: lab.page,
+        recording,
+    }];
     Ok(browser)
-}
-
-/// What one run of `--runs` is a run of.
-#[derive(Clone, Copy)]
-enum RunOf {
-    EmptyBuild,
-    Game,
 }
 
 /// `--runs`: N runs of the empty build and N of the game, in turn, each served on its own and
 /// opened in a fresh Safari with its own recording. The lab measures, the driver, the browser,
 /// the timeline and the path the page took come from the first game run that completed, or else
 /// the first game run, and the phone from the first game run whose recording named it. The device
-/// measures come from every run.
+/// measures come from every run, and so does a record of each, in the order they ran.
 fn device_runs_run(
     build: &Build,
     runs: u32,
     options: &CheckOptions,
+    records: &mut Vec<RunRecord>,
 ) -> Result<BrowserRun, CliError> {
     let empty_build = EmptyBuild::write()?;
     // dyno wrote the empty build itself, and the check did not scan it, so it is scanned here.
@@ -696,10 +770,20 @@ fn device_runs_run(
                 .device_recording
                 .as_deref()
                 .map(|saved| device::run_recording(saved, recording_name, run));
-            let mut device_run = start_device_run(recording.as_deref(), options)?;
-            let (mut served, request) = bind(path, query, Some(&device_run), options)?;
-            let lab = run_served(&mut served, &request, Some(&mut device_run), options)?;
+            let step = (|| {
+                let mut device_run = start_device_run(recording.as_deref(), options)?;
+                let (mut served, request) = bind(path, query, Some(&device_run), options)?;
+                let lab = run_served(&mut served, &request, Some(&mut device_run), options)?;
+                Ok::<_, CliError>((device_run, served, lab))
+            })();
+            let (device_run, served, lab) = step?;
             let finished = device_run.finish(served.last_run());
+            records.push(RunRecord {
+                of,
+                index: run,
+                page: lab.page.clone(),
+                recording: Some(finished.recording),
+            });
             match of {
                 RunOf::EmptyBuild => empty_device.push(finished.measures),
                 RunOf::Game => {
@@ -735,7 +819,80 @@ fn device_runs_run(
         environment,
         timeline: lab.timeline.or(phone_timeline),
         serve_path,
+        runs: std::mem::take(records),
     })
+}
+
+/// The records of the runs that a check of `--runs` made, kept when an error stopped it: with the
+/// game's id in a games file, so each game keeps its own.
+#[derive(Serialize)]
+struct KeptRuns<'r> {
+    /// The game's id in the games file. Null for a check of one target.
+    game: Option<&'r str>,
+    runs: &'r [RunRecord],
+}
+
+/// Where a check that writes its result to `out` keeps the records of the runs that an error
+/// stopped it after: beside it, as `<name>.runs.json`, for one target and for a games file.
+fn kept_runs_path(out: &Path) -> PathBuf {
+    out.with_extension("runs.json")
+}
+
+/// Keeps the records of the runs that a check made before an error stopped it, beside `--out`,
+/// and says where. The check writes no result, as before, so these are the only evidence of the
+/// runs it made. With no `--out` or no `--runs`, or no run made, nothing is kept. The file is
+/// written whole or not at all, and never over a file that is there, such as a games file of
+/// that name: dyno then says so, and keeps nothing.
+fn keep_runs(options: &CheckOptions, kept: &[KeptRuns]) {
+    let Some(path) = options.kept_runs.as_deref() else {
+        return;
+    };
+    if kept.iter().all(|game| game.runs.is_empty()) {
+        return;
+    }
+    let written = serde_json::to_string_pretty(kept)
+        .map_err(|json| json.to_string())
+        .and_then(|json| write_whole(path, &(json + "\n")));
+    output::print_summary(&[match written {
+        Ok(()) => format!(
+            "dyno check: the record of each run made before the error is in {}.",
+            path.display()
+        ),
+        Err(why) => format!(
+            "dyno check: the record of each run made before the error was not saved: {why}."
+        ),
+    }]);
+}
+
+/// Writes `text` to `path` whole, where no file is: to a new file in the same folder first, with a
+/// name of its own that no file had, created so that nothing already there, a file or a link, is
+/// written through; then linked to `path` only if nothing is there. So a write that fails leaves
+/// neither half a file nor any file that was there changed, and the temporary file goes.
+fn write_whole(path: &Path, text: &str) -> Result<(), String> {
+    let cannot =
+        |error: &dyn std::fmt::Display| format!("cannot write {}: {error}", path.display());
+    let folder = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    let mut temporary = tempfile::Builder::new()
+        .prefix(".runs-")
+        .suffix(".part")
+        .tempfile_in(folder)
+        .map_err(|error| cannot(&error))?;
+    std::io::Write::write_all(&mut temporary, text.as_bytes()).map_err(|error| cannot(&error))?;
+    temporary
+        .persist_noclobber(path)
+        .map(drop)
+        .map_err(|error| match error.error.kind() {
+            std::io::ErrorKind::AlreadyExists => {
+                format!(
+                    "{} is there already, and dyno replaces no file",
+                    path.display()
+                )
+            }
+            _ => cannot(&error.error),
+        })
 }
 
 /// Starts recording the phone, and says so.
@@ -869,6 +1026,10 @@ impl Driver for Watched<'_> {
     fn environment(&self, hello: &DriverInfo) -> Environment {
         self.served.environment(hello)
     }
+
+    fn page_seen(&self) -> PageSeen {
+        self.served.page_seen()
+    }
 }
 
 /// The environment with the OS and the device of a device run's phone. They know the model, the
@@ -925,7 +1086,7 @@ fn build_link(target: &CheckTarget, served: bool) -> BuildLink {
 fn new_driver(driver: &DriverArg) -> Box<dyn Driver> {
     match driver {
         // A served run gets its driver from `serve`, bound to its build, so this is not reached.
-        DriverArg::Cdp | DriverArg::Serve => Box::new(CdpDriver),
+        DriverArg::Cdp | DriverArg::Serve => Box::new(CdpDriver::default()),
         DriverArg::Exec(program) => Box::new(ExecDriver::new(program)),
     }
 }
@@ -941,6 +1102,70 @@ fn serve_error(error: ServeError) -> CliError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_kept_runs_are_named_from_out_alone() {
+        assert_eq!(
+            kept_runs_path(Path::new("runs/catalogue.json")),
+            PathBuf::from("runs/catalogue.runs.json")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_whole_write_never_writes_through_a_link_or_a_file_already_at_a_temporary_name() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("result.runs.json");
+        let elsewhere = folder.path().join("elsewhere");
+        std::fs::write(&elsewhere, "not to be written").unwrap();
+        // Links at the names the earlier version used, and at a guess of the new one's.
+        for name in [
+            format!(".result.runs.json.{}.part", std::process::id()),
+            ".runs-.part".to_owned(),
+        ] {
+            std::os::unix::fs::symlink(&elsewhere, folder.path().join(name)).unwrap();
+        }
+        write_whole(&path, "the runs").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "the runs");
+        assert_eq!(
+            std::fs::read_to_string(&elsewhere).unwrap(),
+            "not to be written"
+        );
+        assert!(!std::fs::symlink_metadata(&path).unwrap().is_symlink());
+    }
+
+    #[test]
+    fn a_whole_write_never_replaces_a_file_that_is_there_and_leaves_no_sibling() {
+        let folder = tempfile::tempdir().unwrap();
+        // As `--games catalogue.runs.json --out catalogue.json` would have it.
+        let path = folder.path().join("catalogue.runs.json");
+        std::fs::write(&path, "the games file").unwrap();
+        let refused = write_whole(&path, "the runs").unwrap_err();
+        assert!(refused.ends_with("dyno replaces no file"), "{refused}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "the games file");
+        let names: Vec<_> = std::fs::read_dir(folder.path()).unwrap().collect();
+        assert_eq!(names.len(), 1);
+        // Where nothing is, the file is written.
+        let fresh = folder.path().join("result.runs.json");
+        write_whole(&fresh, "the runs").unwrap();
+        assert_eq!(std::fs::read_to_string(&fresh).unwrap(), "the runs");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_write_that_fails_leaves_the_earlier_file_whole() {
+        use std::os::unix::fs::PermissionsExt;
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("result.runs.json");
+        std::fs::write(&path, "earlier").unwrap();
+        // The folder takes no new file, so the sibling cannot be written.
+        let mode = |bits| std::fs::Permissions::from_mode(bits);
+        std::fs::set_permissions(folder.path(), mode(0o555)).unwrap();
+        let written = write_whole(&path, "later");
+        std::fs::set_permissions(folder.path(), mode(0o755)).unwrap();
+        assert!(written.unwrap_err().starts_with("cannot write"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "earlier");
+    }
 
     fn targets(values: &[&str]) -> Result<CheckTarget, CliError> {
         let values: Vec<String> = values.iter().map(|value| (*value).to_owned()).collect();

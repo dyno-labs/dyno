@@ -1239,6 +1239,19 @@ expression: json(&outcome)
       "version": "v1"
     },
     "run_id": "[run_id]",
+    "runs": [
+      {
+        "index": 1,
+        "of": "game",
+        "page": {
+          "document": "no_document",
+          "end": "never_started",
+          "hello": false,
+          "probe": null
+        },
+        "recording": null
+      }
+    ],
     "serve_path": null,
     "started_at": "[started_at]",
     "target": {

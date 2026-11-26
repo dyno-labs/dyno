@@ -152,3 +152,19 @@ fn the_types_package_ships_the_json_schemas() {
     );
     assert_eq!(package["exports"]["./json/*"], "./json/*");
 }
+
+#[test]
+fn the_run_records_may_be_null_in_the_json_schema_and_the_typescript_type() {
+    // Rust reads a null `runs` as left out (tests/result_hash.rs), so the other two take it too.
+    let schema: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(package_dir().join("json/result.schema.json")).unwrap(),
+    )
+    .unwrap();
+    let types = &schema["$defs"]["RunInfo"]["properties"]["runs"]["type"];
+    assert_eq!(*types, serde_json::json!(["array", "null"]));
+    let typescript = fs::read_to_string(package_dir().join("ts/RunInfo.ts")).unwrap();
+    assert!(
+        typescript.contains("runs?: Array<RunRecord> | null"),
+        "{typescript}"
+    );
+}

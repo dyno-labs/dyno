@@ -6,8 +6,12 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::thread;
 
+use dyno_cdp::CdpDriver;
+use dyno_run::run_lab;
+use dyno_schema::measure::MeasureStatus;
 use dyno_schema::probe::{AudioState, ContextKind, MessageDirection, ProbeEvent, SourceKind};
 use dyno_schema::profile::{HostProfile, Scenario};
+use dyno_schema::run_record::{PageDocument, PageEnd, PageRecord};
 use dyno_schema::runner::{DriverMessage, RUNNER_PROTOCOL_VERSION, RunMark, RunRequest};
 use dyno_schema::timeline::ProcessRole;
 
@@ -159,7 +163,29 @@ fn serve_game() -> String {
             let head = String::from_utf8_lossy(&buffer[..read]);
             let target = head.split_whitespace().nth(1).unwrap_or("/");
             let path = target.split('?').next().unwrap_or(target).to_owned();
+            // The routes that answer with another status, or send the frame into the harness
+            // page's site: `localhost` is the harness page's host when the game is on 127.0.0.1.
+            let to_localhost = format!("http://localhost:{port}/busy");
+            let other = match path.as_str() {
+                "/missing" => Some(("404 Not Found", String::new())),
+                "/to-localhost" => Some(("302 Found", format!("Location: {to_localhost}\r\n"))),
+                _ => None,
+            };
+            if let Some((status, header)) = other {
+                let body = b"<!doctype html><title>not here</title><p>not here";
+                let head = format!(
+                    "HTTP/1.1 {status}\r\n{header}Content-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(head.as_bytes());
+                let _ = stream.write_all(body);
+                continue;
+            }
+            let script_to_localhost = format!(
+                "<script>setTimeout(() => location.replace({to_localhost:?}), 300)</script>"
+            );
             let (kind, body): (&str, &[u8]) = match path.as_str() {
+                "/script-to-localhost" => ("text/html", script_to_localhost.as_bytes()),
                 "/" => ("text/html", PAGE.as_bytes()),
                 "/game.js" => ("text/javascript", GAME.as_bytes()),
                 "/data.json" => ("application/json", b"{\"lines\": 20}"),
@@ -168,6 +194,11 @@ fn serve_game() -> String {
                 "/stuck" => (
                     "text/html",
                     b"<script>fetch('data.json'); while (true) {}</script>",
+                ),
+                // A game that keeps loading, so the frame never has a quiet second.
+                "/busy" => (
+                    "text/html",
+                    b"<script>setInterval(() => fetch('data.json'), 200)</script>",
                 ),
                 "/tex.svg" => (
                     "image/svg+xml",
@@ -580,4 +611,96 @@ fn a_game_stuck_in_a_loop_times_out_near_the_deadline() {
     );
     // The deadline, the browser's 5 s to exit, and a margin.
     assert!(started.elapsed().as_secs() < 12, "{:?}", started.elapsed());
+}
+
+#[test]
+#[ignore = "needs Chromium"]
+fn a_game_that_never_goes_quiet_times_out_and_keeps_the_evidence_that_its_document_came() {
+    let mut busy = request(format!("{}busy", serve_game()));
+    busy.timeout_ms = 4_000;
+    let run = run_lab(&mut CdpDriver::default(), &busy);
+    assert_eq!(
+        run.page,
+        PageRecord {
+            hello: true,
+            document: PageDocument::Build,
+            probe: None,
+            end: PageEnd::TimedOut,
+        }
+    );
+    // The run has no measures, so only the record says the game itself was there.
+    assert!(
+        run.measures
+            .iter()
+            .all(|measure| measure.status == MeasureStatus::Missing)
+    );
+}
+
+#[test]
+#[ignore = "needs Chromium"]
+fn a_launch_url_that_nothing_serves_ends_on_the_error_page_and_not_on_the_game() {
+    // A port that was free a moment ago, with nothing on it now.
+    let port = TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let mut nothing = request(format!("http://127.0.0.1:{port}/"));
+    nothing.timeout_ms = 4_000;
+    let run = run_lab(&mut CdpDriver::default(), &nothing);
+    assert!(run.page.hello, "{:?}", run.page);
+    assert_eq!(run.page.end, PageEnd::TimedOut, "{:?}", run.page);
+    assert_eq!(run.page.document, PageDocument::ErrorPage, "{:?}", run.page);
+}
+
+#[test]
+#[ignore = "needs Chromium"]
+fn a_full_run_ended_by_itself_on_the_builds_own_document() {
+    let run = run_lab(&mut CdpDriver::default(), &request(serve_game()));
+    assert_eq!(
+        run.page,
+        PageRecord {
+            hello: true,
+            document: PageDocument::Build,
+            probe: None,
+            end: PageEnd::Ended,
+        }
+    );
+}
+
+#[test]
+#[ignore = "needs Chromium"]
+fn a_same_origin_404_page_is_an_http_error_and_not_the_build() {
+    let mut missing = request(format!("{}missing", serve_game()));
+    missing.timeout_ms = 4_000;
+    let run = run_lab(&mut CdpDriver::default(), &missing);
+    assert_eq!(run.page.document, PageDocument::HttpError, "{:?}", run.page);
+}
+
+#[test]
+#[ignore = "needs Chromium"]
+fn an_http_redirect_into_the_harness_site_is_followed_on_the_pages_session() {
+    let mut redirected = request(format!("{}to-localhost", serve_game()));
+    redirected.timeout_ms = 4_000;
+    let run = run_lab(&mut CdpDriver::default(), &redirected);
+    assert_eq!(run.page.document, PageDocument::OtherUrl, "{:?}", run.page);
+    assert_eq!(run.page.end, PageEnd::TimedOut, "{:?}", run.page);
+}
+
+#[test]
+#[ignore = "needs Chromium"]
+fn a_script_redirect_into_the_harness_site_does_not_keep_the_document_before() {
+    let mut redirected = request(format!("{}script-to-localhost", serve_game()));
+    redirected.timeout_ms = 4_000;
+    let run = run_lab(&mut CdpDriver::default(), &redirected);
+    // The frame leaves its own session for the page's. The run reports where it went, or that
+    // it cannot tell, and never the build's document from before.
+    assert!(
+        matches!(
+            run.page.document,
+            PageDocument::OtherUrl | PageDocument::NotObserved
+        ),
+        "{:?}",
+        run.page
+    );
 }

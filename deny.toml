@@ -8,6 +8,13 @@ all-features = true
 [advisories]
 # The RustSec advisory database. A crate with an advisory, or a yanked version, is an error.
 yanked = "deny"
+# chrono has no maintainer, and no version is without the advisory. The advisory is about
+# maintenance, not a known defect. dyno's own code does not use chrono: rmcp cannot be built
+# without it, and idevice's syslog relay, which the device run reads kills from, needs it. Remove
+# this exception when the tree has no chrono.
+ignore = [
+  { id = "RUSTSEC-2026-0543", reason = "chrono comes only through rmcp and idevice, which need it" },
+]
 
 [licenses]
 # Permissive licences only. Our own crates are MIT OR Apache-2.0 and are checked too. A crate

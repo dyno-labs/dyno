@@ -27,12 +27,28 @@ impl Clock {
 
     /// RFC 3339 UTC, to the millisecond.
     pub fn started_at(&self) -> String {
-        humantime::format_rfc3339_millis(self.wall_start).to_string()
+        rfc3339_millis(self.wall_start)
     }
 
     pub fn elapsed_ms(&self) -> u64 {
         u64::try_from(self.monotonic_start.elapsed().as_millis()).unwrap_or(u64::MAX)
     }
+}
+
+/// A time as RFC 3339 in UTC with three digits of the second, as in `2026-01-02T03:04:05.006Z`.
+/// The digits after the third are cut off, not rounded.
+fn rfc3339_millis(at: SystemTime) -> String {
+    let at = time::OffsetDateTime::from(at);
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        at.year(),
+        u8::from(at.month()),
+        at.day(),
+        at.hour(),
+        at.minute(),
+        at.second(),
+        at.millisecond()
+    )
 }
 
 /// This machine, without its host name or user name.
@@ -59,5 +75,24 @@ pub fn tool_build() -> ToolBuild {
         version: TOOL_VERSION.to_owned(),
         git_sha: GIT_SHA.map(str::to_owned),
         profile: profile.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, UNIX_EPOCH};
+
+    use super::*;
+
+    #[test]
+    fn a_timestamp_is_rfc_3339_in_utc_with_three_digits_of_the_second() {
+        assert_eq!(rfc3339_millis(UNIX_EPOCH), "1970-01-01T00:00:00.000Z");
+    }
+
+    #[test]
+    fn the_digits_after_the_millisecond_are_cut_off() {
+        // The last second of 29 February in a leap year.
+        let leap_day = UNIX_EPOCH + Duration::new(1_709_251_199, 6_999_999);
+        assert_eq!(rfc3339_millis(leap_day), "2024-02-29T23:59:59.006Z");
     }
 }

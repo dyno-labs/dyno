@@ -24,16 +24,17 @@ dyno-static = { path = "crates/dyno-static" }
 
 # Used by the skeleton.
 clap = { version = "4.6.7", features = ["derive"] }
-humantime = "2.4.0"
 schemars = "1.2.3"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 serde_json_canonicalizer = "0.4.1"
 sha2 = "0.11.1"
 thiserror = "2.0.21"
+# The date and time of a result's timestamp. Already in the tree through plist.
+time = { version = "0.3.55", default-features = false, features = ["std"] }
 toml = "1.2.1"
 ts-rs = "12.0.1"
-url = "2.5.8"
+url = "2.5.9"
 # Run ids and game ids. Already in the tree through rmcp.
 uuid = { version = "1.29.1", default-features = false, features = ["std"] }
 

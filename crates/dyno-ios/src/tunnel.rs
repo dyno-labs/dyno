@@ -278,16 +278,20 @@ mod tests {
     }
 
     #[test]
-    fn a_documentation_address_has_no_tunnel_behind_it_on_any_machine() {
-        // RFC 3849: no tunnel has it. A machine with no IPv6 route has no route to it, and one
-        // with a route to the internet starts from its own address there.
+    fn the_system_s_own_route_gives_an_address_only_when_it_is_the_other_end_of_a_tunnel() {
+        // RFC 3849 keeps this address for documents, so no phone has it. But the test cannot say
+        // what this machine's routing gives for it: a machine with no IPv6 route has no route to
+        // it, one with a route to the internet starts from its own address there, and a container
+        // network can use the documentation range, so that a machine has this address itself.
+        // So each outcome is checked against the address that the system's routing gave.
         let phone = address("2001:db8::1");
         match host_address_for(phone, route_source) {
             Err(NoTunnelAddress::NoRoute { phone: to, .. }) => assert_eq!(to, phone),
             Err(NoTunnelAddress::NotInTheTunnel { phone: to, host }) => {
                 assert_eq!(to, phone);
-                assert!(!same_network(host, phone));
+                assert!(!is_tunnel_pair(host, phone), "{host}");
             }
+            Ok(host) => assert!(is_tunnel_pair(host, phone), "{host}"),
             other => panic!("{other:?}"),
         }
     }

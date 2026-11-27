@@ -17,22 +17,22 @@ min_version = "2026.9.14"
 [tools]
 # The probe build (crates/dyno-cdp/probe/build.ts), the TypeScript checks and the npm package in
 # packages/schema. TypeScript itself is in package.json.
-node = "26.13.0"
+node = "26.13.1"
 # The formatter and the linter of the TypeScript, and the formatter of the JSON, Markdown, YAML,
 # TOML, CSS and HTML: each with its defaults (.oxfmtrc.json and .oxlintrc.json only leave files
 # out).
 "npm:oxfmt" = "0.77.0"
-"npm:oxlint" = "1.92.0"
+"npm:oxlint" = "1.95.0"
 # The shell scripts' linter and formatter. actionlint also runs shellcheck on each `run:` script.
 shellcheck = "0.11.0"
 shfmt = "3.14.1"
 # The Python scripts' linter and formatter (examples/webkit/open.py), with their defaults.
-ruff = "0.17.2"
+ruff = "0.17.6"
 # The workflows' linter, and their security check (.github/zizmor.yml).
 actionlint = "1.7.12"
-zizmor = "1.32.0"
+zizmor = "1.33.1"
 # Test coverage (coverage:rust). It needs the llvm-tools component, which the task adds.
-"github:taiki-e/cargo-llvm-cov" = "0.9.1"
+"github:taiki-e/cargo-llvm-cov" = "0.9.2"
 # The versions that deny.toml, about.toml and about.hbs were written for.
 cargo-deny = "0.20.2"
 "github:EmbarkStudios/cargo-about" = "0.9.3"

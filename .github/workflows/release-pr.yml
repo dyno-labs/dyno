@@ -92,10 +92,10 @@ jobs:
           if [[ -n "$number" ]]; then
             gh pr close "$number" --comment "Main has no change files now, so there is nothing to release."
           fi
-      - uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
+      - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         if: steps.changes.outputs.found == 'true'
         with:
-          version: 2026.10.17
+          version: 2026.11.14
           install_args: rust github:knope-dev/knope node npm:oxfmt
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         if: steps.changes.outputs.found == 'true'

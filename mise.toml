@@ -43,7 +43,7 @@ cargo-dist = "0.34.0"
 "github:knope-dev/knope" = { version = "0.23.2", version_prefix = "knope/v" }
 # The toolchain CI uses. The minimum version is rust-version in Cargo.toml (see test:msrv). It is
 # last, so that the tools above come before ~/.cargo/bin on the PATH.
-rust = { version = "1.99.1", components = "clippy,rustfmt", profile = "minimal" }
+rust = { version = "1.100.0", components = "clippy,rustfmt", profile = "minimal" }
 
 [tasks.health]
 description = "Fast static checks: every health:* task"

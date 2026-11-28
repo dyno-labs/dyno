@@ -21,7 +21,7 @@ The script gets the newest release's archive for your machine and puts `dyno` in
 
 ## Build
 
-Needs Rust 1.97 or later. CI uses 1.99.1.
+Needs Rust 1.97 or later. CI uses 1.100.0.
 
 ```sh
 cargo build                      # the binary is target/debug/dyno

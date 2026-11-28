@@ -5,7 +5,7 @@ of a contribution.
 
 ## Build and test
 
-Needs Rust 1.97 or later. CI uses 1.99.1.
+Needs Rust 1.97 or later. CI uses 1.100.0.
 
 ```sh
 cargo build

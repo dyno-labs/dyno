@@ -1,71 +1,71 @@
 {
-  "dyno_version": "0.1.3",
+  "dyno_version": "0.1.4",
   "checks": {
     "audio-formats": {
       "input": "fixtures/audio-formats/build",
       "status": "incomplete",
       "exit_code": 2,
-      "result_hash": "f1cd334098657ba4abd5029cf6dd2f3d7cecdca8c37b21b1d527ac1607127187"
+      "result_hash": "b067b484fcc49a2a61cd8fd42112dbb6496bf5ebe1c9cb15a4dc70d0ac8ae3a4"
     },
     "broken": {
       "input": "fixtures/broken/build",
       "status": "incomplete",
       "exit_code": 2,
-      "result_hash": "e3a0d7358084f29e6cf920e2c07e06a6681f3d3a973209b226cb2c7bc47b1d6b"
+      "result_hash": "1a702eabce76a4837cd09f7bd6a28080dd16814da264ec51b0a6bf0b34abbc44"
     },
     "duplicates": {
       "input": "fixtures/duplicates/build",
       "status": "warn",
       "exit_code": 0,
-      "result_hash": "0a2d071631de5471e2d146e8968919a18b370f1d11e92f02e30e16f4b58b5355"
+      "result_hash": "3dc0283bb0ba5aa556b0fe0817338ec1344a6b3502f4a4313e1dfb75980033f9"
     },
     "howler-sprites": {
       "input": "fixtures/howler-sprites/build",
       "status": "warn",
       "exit_code": 0,
-      "result_hash": "4e63aa8d466fbef25b502ade6ac265c7e505b39caffeab2e979b46943d7e42ac"
+      "result_hash": "529cff5903d9fbaf41188dc332f4bdd5e9f7606f5c25d83d732bd34b17aece91"
     },
     "images": {
       "input": "fixtures/images/build",
       "status": "incomplete",
       "exit_code": 2,
-      "result_hash": "ac37ae79bbccc2a050da631e7b46d1b952dd897daa03f1b24735150e43fb1d1a"
+      "result_hash": "e5d3e97ac501255fd310e23b194b6176af035e851b69db64e8fa43a46d00e2a5"
     },
     "over-budget": {
       "input": "fixtures/over-budget/build",
       "status": "fail",
       "exit_code": 1,
-      "result_hash": "391b74fc8f8d19f9f617555f59adffc19d1ee9a68144a0b800d4558dae2c9153"
+      "result_hash": "012389636cd9cb5b7b0762884b88e7cfa525932982f91391ce5ffee35bd17c38"
     },
     "pixi7-aa": {
       "input": "fixtures/pixi7-aa/build",
       "status": "warn",
       "exit_code": 0,
-      "result_hash": "bcb0eb379da59898d7c02f026453ab3a3e3e1bde1ea03bc452342f6f866d16ef"
+      "result_hash": "0d66e7c1a26f4c95f751a41233c8c37b003c41d4259c00ed211119572b74c81b"
     },
     "pixi7-opts": {
       "input": "fixtures/pixi7-opts/build",
       "status": "warn",
       "exit_code": 0,
-      "result_hash": "70ec8d0d6b84d614d422272dea091eb2a06989a70b061921a55aca8cb80e6fde"
+      "result_hash": "135dae706bc3f7dc75f3541b1ca88c10595f5869dfbf63d36ca997d7996e1bc6"
     },
     "pixi8-inline": {
       "input": "fixtures/pixi8-inline/build",
       "status": "warn",
       "exit_code": 0,
-      "result_hash": "9cf6f82cbcd45ebe792c1dd8986697ac12169a88b9cbc87726da7c8f8e40851b"
+      "result_hash": "648c5488dc841b48974952ef392ba22b709d9b16ebf8060c78c7b34f5ca71e6e"
     },
     "pixi8-webgpu": {
       "input": "fixtures/pixi8-webgpu/build",
       "status": "pass",
       "exit_code": 0,
-      "result_hash": "5e5167377b496e40ffe511c38b6ba82291e175b98a4f1308b0eb77bf4fe4bf8f"
+      "result_hash": "5edc7552c429d819efe8b443561295c643940138f46928ab22ee665a6b851332"
     },
     "zip-input": {
       "input": "fixtures/zip-input/build.zip",
       "status": "warn",
       "exit_code": 0,
-      "result_hash": "0a2d071631de5471e2d146e8968919a18b370f1d11e92f02e30e16f4b58b5355"
+      "result_hash": "3dc0283bb0ba5aa556b0fe0817338ec1344a6b3502f4a4313e1dfb75980033f9"
     }
   }
 }

@@ -5,6 +5,89 @@ share one version. The release pull request writes each section from the change 
 `.changeset/`, and the section becomes the notes of the GitHub Release. See
 [`docs/releasing.md`](docs/releasing.md).
 
+## 0.1.4 (2026-11-28)
+
+### Features
+
+#### A result says what dyno saw of each run
+
+A result's measures say what each value is, but not whether the run under them really ran. Someone who runs dyno for other people could not tell, from the result alone, a run that measured the game from one that failed for a reason of the lab's own. A new field in the run part, outside the result hash, says it, and says only what dyno observed: where it cannot tell, it says `not_observed`, or null. It is evidence only: no measure, run coverage, status, verdict, result hash or exit code changes with it. A lab's receipt signs the whole result file, so it covers the records too.
+
+- `run.runs`: one record per run, in the order the runs went. A browser run has one; `--runs N` with `--device` has one per run of the empty build and of the game. Each says which build it was and its number; whether the page said `hello`; the game frame's document at the end (`build`, `http_error`, `error_page`, `other_url`, `no_document`, or `not_observed`); for a served run, whether a probe's document message was heard; and how the page's run ended (`ended`, `timed_out`, `command_not_taken`, `no_request`, `connection_closed`, `failed` or `never_started`). With `--device` it also says what the phone's samples and its log each gave in the run, when each last sent, and the stop each reported; a summary of the samples of each distinct page process pid, and when, which is of the pid and not of one process; and the first kill of a page process that the log gave, with when its line arrived. It writes what dyno saw, and no conclusion that this does not settle. A check with no browser run leaves the field out.
+
+So a Chromium run that timed out on a game that never went quiet now shows that the game's own document came, where one on Chromium's error page shows `error_page` and one on a 404 page `http_error`. A served run whose page stopped taking dyno's commands after its `hello` shows `command_not_taken`, even when the phone's recording gave every device measure. A run of the empty build whose log stopped shows it.
+
+When a later run of `--runs` stops the check, as a phone that left does, dyno still writes no result and exits as before, but with `--out` it keeps the records of the runs already made beside it, as `<name>.runs.json`, with each game's id under `--games`. It never replaces a file of that name.
+
+The fake phone of the tests (`DYNO_FAKE_PHONE`) takes three more settings: `sampled-after-ms`, for a page that the samples do not have yet; `log-fails-in`, for a log that closes in chosen recordings only; and `connect-fails-in`, for a phone that does not connect for chosen recordings.
+
+[`docs/design/run-evidence.md`](docs/design/run-evidence.md) gives each rule, what a kill in the record rests on, the open questions where the record and a measure disagree, and what is not yet proven on a real phone.
+
+#### A phone run serves its page over the device link, and a result names its lab
+
+`dyno check <build> --driver serve --device` on a Mac now serves the harness page and the game at the Mac's address inside the device link's tunnel to the phone, when the Mac has such a tunnel. The phone's Safari then needs no network path to the Mac, which a guest Wi-Fi or a cloud device lab often does not give. dyno finds the address with `xcrun devicectl list devices` and the Mac's own routing, with no interface name, and takes it only when it and the phone's address are two different addresses in one /64 network. `--serve-host` still wins, and is then the only address.
+
+A tunnel can go away before Safari asks for the page. So dyno serves at the Mac's local network address too, and prints both URLs. It asks Safari for the tunnel address, once. When no request has come there after 30 s, and dyno has finished asking Safari, dyno says so and waits on: open the local network URL on the phone by hand, or run again with `--serve-host <address>`. When there is no tunnel address, dyno serves at the local network address as before, and says why. On Linux, dyno serves on the local network as before: the software tunnel that the `idevice` crate builds takes no connections from the phone. [`docs/cli.md`](docs/cli.md#where-the-page-is-served) says what it would need, and what is not yet proven on a real Mac.
+
+A device run now goes in this order: record the phone, serve the page, open it in the phone's Safari once the servers answer. So `dyno check` prints the "recording" line and the URL before the "opened the page" line.
+
+Two new fields in the run part, outside the result hash:
+
+- `run.serve_path`: the path the browser took to the page of a served run: `tunnel`, `local_network`, `loopback` or `given` (the address that `--serve-host` gave). It is the address that the page which ran said hello at, so it is the path that was used, and it is null when no page ran.
+- `run.lab`: the kind of lab that ran the check, from the new `--lab <NAME>` flag, such as `desk`, `rig` or `devicefarm`. The name is a short word in lower case: it starts with a letter, and has at most 32 letters a to z, digits and `-`. No flag records no name.
+
+The served run's two servers now refuse a TLS connection at once, with a TLS alert. Safari tries HTTPS on a port before it falls back to plain HTTP, and the servers used to leave that try without an answer until Safari gave up.
+
+#### Only the page that dyno asked for can drive a served run
+
+With `--driver serve`, the harness page took a run's events from any browser that reached its port. On a shared network, such as a lab where several phones run checks on one host, the game of one check could start or end another check's run, or feed it false events. Now each run has a key of 128 random bits, a new one for each run of `--runs` too, and the harness page's URL holds it: `http://<host>:7370/?key=<32 hex digits>`. dyno opens that URL in the phone's Safari, and prints it for you to open by hand. A request to the harness server without the key gets `403 Forbidden` and changes nothing.
+
+The game cannot learn the key: it is on another origin, the page and its frame send no referrer, and the probe in the frame holds no key. It reports to the page around it, which takes only events of its own frame, so the game can neither say hello nor end a run.
+
+The game server now answers no one before the page says hello, and after it only the address that the hello came from. So no other device can add game requests to the run, or load the build while it runs.
+
+Each run's game now has a port of its own: with `--serve-port` P, the first run's game is at P + 1, the second's at P + 2, and so on up to P + 64, with a busy port skipped. When those are used up, the next run stops with an error that says so. Open P to P + 64 on a firewall: 7370 to 7434 by default. A page whose key is refused stops and removes its game frame. So a tab that missed the end of its run reaches neither the next run's harness page nor its game, even on the same phone.
+
+Each run's URL is new, so a bookmark of the harness page no longer opens a run: open the URL that dyno prints. The key is in no result and no saved recording. It is no secret from a party that reads the plain HTTP on the network. [`docs/cli.md`](docs/cli.md#who-can-drive-a-served-run) says what the key guards against, and what it does not. The CDP driver and `--driver exec:` are as before.
+
+#### `dyno verify`: check a lab's signed receipt for a result
+
+A result can come from a lab: someone who owns real phones and runs dyno for people who do not. A lab now signs a small receipt for each result, and `dyno verify` checks it, so that you can trust the lab's phone readings for exactly the files you hold, without running the check again:
+
+```sh
+dyno verify receipt.json --keys https://lab.example/keys.json --result result.json --build ./dist
+```
+
+It checks that a public key you gave signed the receipt (`--key`, or the lab's keys document with `--keys`), that the result file is the one the receipt is for (`--result`), and that your files have the receipt's build id (`--build`), with the code that `dyno check` uses. It writes a JSON verdict and exits with 0 when the receipt is verified and 1 when it is not. With no key it refuses: a receipt that brought its own key would prove nothing. It also refuses a receipt, a result or a keys document in which an object has one name twice, because parsers differ in which value they keep.
+
+The receipt format is open, and anyone can run a lab. `dyno receipt keygen` makes a lab's Ed25519 key pair, and `dyno receipt sign` signs the receipt for a result of a check with a run on a device. `docs/receipts.md` gives the format, version 1, and a known-answer receipt in `fixtures/receipts/` for other implementations to test against.
+
+`@dyno-cloud/schema` has the new types `ReceiptEnvelope`, `Receipt`, `PublicKeys` and `VerifyResult`, and the JSON Schema files `receipt.schema.json`, `receipt-keys.schema.json` and `verify.schema.json`.
+
+### Fixes
+
+#### A .zip that names a file twice is refused
+
+A zip file can name one file twice in its central directory, the list of entries at its end. Programs that unpack it differ in which of the two entries they keep, so such a zip is not one build: dyno could scan one file while a server or a player gets the other. `dyno check` and `dyno verify --build` now refuse such a .zip with a usage error (64) that says so. Before, dyno read one of the two entries and said nothing. A zip that names a folder twice is refused too.
+
+A zip's content is what its central directory names. dyno does not compare it with the headers before each entry's bytes, so a program that unpacks a build must follow the central directory.
+
+#### A served build exposes exactly the files its build id covers
+
+The static scan leaves some files out of a build, and so out of its build id: `.DS_Store`, `Thumbs.db`, `desktop.ini`, anything in a `__MACOSX` or `.git` folder, and anything reached through a symbolic link. But the file server of `--driver serve` and `--browser` read the folder itself, by a rule of its own, and gave a browser any file in it. So a page under test could load a file that the build id did not cover, and a result with `run.build_link` of `served` then named a build that was not all of what ran.
+
+The file server now gives the bytes that the scan read, from memory, and nothing else. A file that the scan skips gets a 404. So does a file that was added to the folder after the scan, and a file that was edited or swapped after the scan is served as the scan read it. A game that loaded a file through a symbolic link in its build folder must now have that file in the folder itself. dyno keeps the scan's one copy of the build in memory until the check ends, and writes each response from it.
+
+A served build now answers exact names only, whatever volume its folder is on. A request names a file by its path as the scan listed it, in the same case: `/` finds `index.html`, and not `Index.html`. A Mac's default volume gives a file under a name in another case, so a game that asked for a file by another spelling loaded from a folder on a Mac. It now gets a 404, as it would on most hosts.
+
+On the game's port of a served run, only `/__dyno/probe.js` is dyno's now, not everything under `/__dyno/`. A build file beside it is served, and a build with a file of its own at that very path is a usage error before the run.
+
+#### The url crate is 2.5.9, and humantime is gone
+
+`url` 2.5.8 has a security advisory, RUSTSEC-2026-0592: a URL with many `blob:` prefixes could stop a program that asks for its origin. dyno does not ask for a URL's origin, but the release binary now has `url` 2.5.9, which has the fix. With 2.5.9, a `^` in the path of a launch URL is written as `%5E` in a result, as a browser sends it.
+
+`humantime` has no maintainer (RUSTSEC-2026-0542), so the `time` crate now writes a result's `started_at`. The text is the same as before.
+
 ## 0.1.3 (2026-11-11)
 
 ### Features

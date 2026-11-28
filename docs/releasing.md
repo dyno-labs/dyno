@@ -161,7 +161,7 @@ dist build --artifacts=local --target x86_64-unknown-linux-gnu
 After a change to `dist-workspace.toml`, or with a new cargo-dist, run `mise run release:generate`
 and commit the new workflow. It runs `dist generate` and makes the one change above, which is why
 `dist-workspace.toml` has `allow-dirty = ["ci"]`: cargo-dist then does not refuse a workflow that
-differs from its own. Never edit `release.yml` by hand. The tools are cargo-deny 0.20.2, cargo-about 0.9.3, cargo-dist 0.34.0
+differs from its own. Never edit `release.yml` by hand. The tools are cargo-deny 0.22.1, cargo-about 0.9.3, cargo-dist 0.34.0
 and knope 0.23.2. `mise install` installs them at these versions (`mise.toml`).
 
 ## The npm types
